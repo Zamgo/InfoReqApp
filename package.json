@@ -1,0 +1,30 @@
+{
+  "name": "inforeqapp",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run ensure:schema && vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "build:schema": "tsx scripts/build_schema_index.ts",
+    "ensure:schema": "node scripts/checkSchemaIndex.js"
+  },
+  "dependencies": {
+    "idb-keyval": "^6.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "fast-xml-parser": "^4.4.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.15",
+    "tsx": "^4.19.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}
