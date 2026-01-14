@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { XMLParser } from "fast-xml-parser";
 
 type PropertyDefinition = {
   name: string;
@@ -33,6 +34,7 @@ type SchemaIndex = {
 };
 
 const INPUT_PATH = path.resolve("IFC_4x3.json");
+const PSET_QTO_DIR = path.resolve("IFC_4x3_Pset_Qto_Def");
 const OUTPUT_DIR = path.resolve("public/ifc");
 const OUTPUT_PATH = path.join(OUTPUT_DIR, "schema_index_ifc4x3.json");
 
@@ -54,6 +56,12 @@ const fallbackDataTypes = [
   "IfcPowerMeasure",
   "IfcPressureMeasure",
   "IfcThermodynamicTemperatureMeasure",
+  "IfcQuantityCount",
+  "IfcQuantityLength",
+  "IfcQuantityArea",
+  "IfcQuantityVolume",
+  "IfcQuantityWeight",
+  "IfcQuantityTime",
 ];
 
 const ensureDir = (dir: string) => {
@@ -68,6 +76,80 @@ const readJson = (file: string) => {
   }
   const content = fs.readFileSync(file, "utf-8");
   return JSON.parse(content);
+};
+
+const parser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "",
+  allowBooleanAttributes: true,
+});
+
+const loadPsetXml = (name: string): PropertyDefinition[] | null => {
+  const file = path.join(PSET_QTO_DIR, `${name}.xml`);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const xml = fs.readFileSync(file, "utf-8");
+    const parsed = parser.parse(xml);
+    const defs = parsed?.PropertySetDef?.PropertyDefs?.PropertyDef;
+    if (!defs) return null;
+    const arr = Array.isArray(defs) ? defs : [defs];
+    const properties: PropertyDefinition[] = [];
+    for (const d of arr) {
+      const propName = d?.Name;
+      if (!propName) continue;
+      const pt = d?.PropertyType;
+      let dataType = "UNKNOWN";
+      let allowedValues: string[] | undefined;
+      if (pt?.TypePropertySingleValue?.DataType?.type) {
+        dataType = pt.TypePropertySingleValue.DataType.type;
+      } else if (pt?.TypePropertyEnumeratedValue?.EnumList) {
+        const list = pt.TypePropertyEnumeratedValue.EnumList;
+        dataType = list?.name || "ENUM";
+        const items = list?.EnumItem;
+        if (items) {
+          allowedValues = (Array.isArray(items) ? items : [items]).map(String);
+        }
+      }
+      properties.push({ name: propName, dataType, allowedValues });
+    }
+    return properties;
+  } catch (err) {
+    console.warn(`⚠️ Nepodařilo se načíst ${file}:`, err);
+    return null;
+  }
+};
+
+const QTO_TYPE_MAP: Record<string, string> = {
+  Q_COUNT: "IfcQuantityCount",
+  Q_LENGTH: "IfcQuantityLength",
+  Q_AREA: "IfcQuantityArea",
+  Q_VOLUME: "IfcQuantityVolume",
+  Q_WEIGHT: "IfcQuantityWeight",
+  Q_TIME: "IfcQuantityTime",
+};
+
+const loadQtoXml = (name: string): PropertyDefinition[] | null => {
+  const file = path.join(PSET_QTO_DIR, `${name}.xml`);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const xml = fs.readFileSync(file, "utf-8");
+    const parsed = parser.parse(xml);
+    const defs = parsed?.QtoSetDef?.QtoDefs?.QtoDef;
+    if (!defs) return null;
+    const arr = Array.isArray(defs) ? defs : [defs];
+    const quantities: PropertyDefinition[] = [];
+    for (const d of arr) {
+      const qtoName = d?.Name;
+      if (!qtoName) continue;
+      const qtoType = d?.QtoType ?? "UNKNOWN";
+      const dataType = QTO_TYPE_MAP[qtoType] ?? qtoType;
+      quantities.push({ name: qtoName, dataType });
+    }
+    return quantities;
+  } catch (err) {
+    console.warn(`⚠️ Nepodařilo se načíst ${file}:`, err);
+    return null;
+  }
 };
 
 const derivePredefined = (
@@ -183,6 +265,29 @@ const buildIndex = (): SchemaIndex => {
     }
     entity.predefinedTypeValues = Array.from(new Set(entity.predefinedTypeValues));
   }
+
+  // Override pset definitions from XML source when available
+  for (const [name, def] of psets.entries()) {
+    const xmlProps = loadPsetXml(name);
+    if (xmlProps && xmlProps.length) {
+      psets.set(name, { ...def, properties: xmlProps });
+    }
+  }
+
+  // Override qto definitions from XML source when available
+  for (const [name, def] of qtos.entries()) {
+    const xmlQtos = loadQtoXml(name);
+    if (xmlQtos && xmlQtos.length) {
+      qtos.set(name, { ...def, quantities: xmlQtos });
+    }
+  }
+
+  // Filter out "Attributes" from standardPsets (it's not a real Pset)
+  for (const entity of Object.values(entities)) {
+    entity.standardPsets = entity.standardPsets.filter((n) => n !== "Attributes");
+  }
+  // Also remove "Attributes" from psets map entirely
+  psets.delete("Attributes");
 
   return {
     entities,

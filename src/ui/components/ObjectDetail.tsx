@@ -80,18 +80,78 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     return ensureUserDefined.length ? ensureUserDefined : ["USERDEFINED"];
   }, [selectedEntity]);
 
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+  const groupKey = (source: PropertyRequirement["source"], psetName?: string) => `${source}:${psetName || "(custom)"}`;
+
+  const isGroupAllowed = (source: PropertyRequirement["source"], psetName?: string) => {
+    if (source === "CUSTOM") return true;
+    if (!psetName || !selectedEntity) return false;
+    const list = source === "PSET" ? allowedPsets : allowedQtos;
+    return list.some((p) => p.name === psetName);
+  };
+
+  const getSchemaDefs = (source: PropertyRequirement["source"], psetName: string | undefined) => {
+    if (!schema || !isGroupAllowed(source, psetName)) return [];
+    const rawDefs =
+      source === "PSET"
+        ? schema.psets[psetName ?? ""]?.properties ?? []
+        : source === "QTO"
+          ? schema.qtos[psetName ?? ""]?.quantities ?? []
+          : [];
+    const seen = new Set<string>();
+    return rawDefs.filter((d) => {
+      if (seen.has(d.name)) return false;
+      seen.add(d.name);
+      return true;
+    });
+  };
+
+  const propertyGroups = useMemo(() => {
+    const map = new Map<string, { key: string; source: PropertyRequirement["source"]; psetName?: string; properties: PropertyRequirement[] }>();
+    object.requirements.properties.forEach((prop) => {
+      const key = groupKey(prop.source, prop.psetName);
+      if (!map.has(key)) {
+        map.set(key, { key, source: prop.source, psetName: prop.psetName, properties: [] });
+      }
+      map.get(key)!.properties.push(prop);
+    });
+    return Array.from(map.values());
+  }, [object.requirements.properties]);
+
+  const propertyOptionsForGroup = (
+    source: PropertyRequirement["source"],
+    psetName: string | undefined,
+    currentId?: string,
+  ) => {
+    const defs = getSchemaDefs(source, psetName);
+    if (!defs.length) return defs;
+    const used = new Set(
+      object.requirements.properties
+        .filter((p) => p.id !== currentId && p.source === source && (p.psetName || "") === (psetName || ""))
+        .map((p) => p.propertyName),
+    );
+    return defs.filter((d) => !used.has(d.name));
+  };
+
+  const normalizeAssignment = (item: any) => {
+    if (!item) return { name: "" };
+    if (typeof item === "string") return { name: item as string, forPredefinedType: undefined as string | undefined };
+    return { name: item.name as string, forPredefinedType: item.forPredefinedType as string | undefined };
+  };
+
   const allowedPsets = useMemo(() => {
     if (!selectedEntity) return [];
-    return selectedEntity.standardPsets.filter(
-      (p) => !p.forPredefinedType || (selectedPredefinedValue && p.forPredefinedType === selectedPredefinedValue),
-    );
+    return (selectedEntity.standardPsets || [])
+      .map((p) => normalizeAssignment(p))
+      .filter((p) => !p.forPredefinedType || (selectedPredefinedValue && p.forPredefinedType === selectedPredefinedValue));
   }, [selectedEntity, selectedPredefinedValue]);
 
   const allowedQtos = useMemo(() => {
     if (!selectedEntity) return [];
-    return selectedEntity.standardQtoSets.filter(
-      (q) => !q.forPredefinedType || (selectedPredefinedValue && q.forPredefinedType === selectedPredefinedValue),
-    );
+    return (selectedEntity.standardQtoSets || [])
+      .map((q) => normalizeAssignment(q))
+      .filter((q) => !q.forPredefinedType || (selectedPredefinedValue && q.forPredefinedType === selectedPredefinedValue));
   }, [selectedEntity, selectedPredefinedValue]);
 
   const updateObject = (partial: Partial<ProjectObject>) => onChange({ ...object, ...partial });
@@ -135,31 +195,127 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     });
   };
 
-  const addProperty = (source: PropertyRequirement["source"]) => {
+  const addPropertyGroup = (source: PropertyRequirement["source"]) => {
     const initialPset =
       source === "PSET" ? allowedPsets[0]?.name ?? "" : source === "QTO" ? allowedQtos[0]?.name ?? "" : "";
-    const defs =
-      source === "PSET"
-        ? schema?.psets[initialPset]?.properties ?? []
-        : source === "QTO"
-          ? schema?.qtos[initialPset]?.quantities ?? []
-          : [];
-    const firstDef = defs[0];
+    const firstOption = source === "CUSTOM" ? undefined : propertyOptionsForGroup(source, initialPset)[0];
     updateRequirements((reqs) => {
       reqs.properties.push({
         id: makeId(),
         source,
         psetName: initialPset,
-        propertyName: firstDef?.name ?? "",
-        dataType: firstDef?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
+        propertyName: source === "CUSTOM" ? "" : firstOption?.name ?? "",
+        dataType: source === "CUSTOM" ? schema?.dataTypes?.[0] ?? "IfcText" : firstOption?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
         constraint: "EXISTS",
         value: "",
-        unit: firstDef?.unit ?? "",
+        unit: source === "CUSTOM" ? "" : firstOption?.unit ?? "",
         extensions: {},
         phases: [],
       });
     });
+  };
+
+  const addPropertyToGroup = (groupKeyValue: string) => {
+    const group = propertyGroups.find((g) => g.key === groupKeyValue);
+    if (!group) return;
+    if (!isGroupAllowed(group.source, group.psetName)) return;
+    const options = propertyOptionsForGroup(group.source, group.psetName);
+    const firstUnused = options[0];
+    if (group.source !== "CUSTOM" && !firstUnused) return;
+    updateRequirements((reqs) => {
+      reqs.properties.push({
+        id: makeId(),
+        source: group.source,
+        psetName: group.psetName ?? "",
+        propertyName: group.source === "CUSTOM" ? "" : firstUnused?.name ?? "",
+        dataType: group.source === "CUSTOM" ? schema?.dataTypes?.[0] ?? "IfcText" : firstUnused?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
+        required: true,
+        constraint: "EXISTS",
+        value: "",
+        unit: group.source === "CUSTOM" ? "" : firstUnused?.unit ?? "",
+        extensions: {},
+        phases: [],
+      });
+    });
+  };
+
+  const addAllFromSchema = (groupKeyValue: string) => {
+    const group = propertyGroups.find((g) => g.key === groupKeyValue);
+    if (!group || group.source === "CUSTOM" || !group.psetName || !isGroupAllowed(group.source, group.psetName)) return;
+    const defs = propertyOptionsForGroup(group.source, group.psetName);
+    if (!defs.length) return;
+    updateRequirements((reqs) => {
+      defs.forEach((def) => {
+        reqs.properties.push({
+          id: makeId(),
+          source: group.source,
+          psetName: group.psetName ?? "",
+          propertyName: def.name,
+          dataType: def.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
+          required: true,
+          constraint: "EXISTS",
+          value: "",
+          unit: def.unit ?? "",
+          extensions: {},
+          phases: [],
+        });
+      });
+    });
+  };
+
+  const copyGroup = (groupKeyValue: string) => {
+    const group = propertyGroups.find((g) => g.key === groupKeyValue);
+    if (!group) return;
+    const newName = `${group.psetName || "Custom"}_copy_${makeId().slice(0, 4)}`;
+    updateRequirements((reqs) => {
+      group.properties.forEach((p) => {
+        reqs.properties.push({
+          ...p,
+          id: makeId(),
+          psetName: newName,
+        });
+      });
+    });
+  };
+
+  const deleteGroup = (groupKeyValue: string) => {
+    updateRequirements((reqs) => {
+      reqs.properties = reqs.properties.filter((p) => groupKey(p.source, p.psetName) !== groupKeyValue);
+    });
+  };
+
+  const renameGroup = (groupKeyValue: string, newName: string) => {
+    const trimmed = newName.trim();
+    const guessedSource = groupKeyValue.startsWith("PSET")
+      ? "PSET"
+      : groupKeyValue.startsWith("QTO")
+        ? "QTO"
+        : "CUSTOM";
+    if (trimmed && !isGroupAllowed(guessedSource as PropertyRequirement["source"], trimmed)) return;
+    updateRequirements((reqs) => {
+      reqs.properties = reqs.properties.map((p) => {
+        if (groupKey(p.source, p.psetName) !== groupKeyValue) return p;
+        const updated = { ...p, psetName: trimmed };
+        if (p.source === "CUSTOM") return updated;
+        const options = propertyOptionsForGroup(p.source, trimmed, p.id);
+        const stillValid = options.some((d) => d.name === updated.propertyName);
+        if (!stillValid) {
+          const first = options[0];
+          return {
+            ...updated,
+            propertyName: first?.name ?? "",
+            dataType: first?.dataType ?? updated.dataType,
+            unit: first?.unit ?? updated.unit,
+          };
+        }
+        return updated;
+      });
+    });
+  };
+
+  const toggleGroup = (groupKeyValue: string) => {
+    setExpandedGroups((prev) => ({ ...prev, [groupKeyValue]: !(prev[groupKeyValue] ?? true) }));
   };
 
   const addRelation = () => {
@@ -212,25 +368,41 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       if (idx >= 0) {
         let next = { ...reqs.properties[idx], ...patch };
         const isSchemaBound = next.source === "PSET" || next.source === "QTO";
-        if (schema && isSchemaBound) {
-          const defs =
-            next.source === "PSET"
-              ? schema.psets[next.psetName]?.properties ?? []
-              : schema.qtos[next.psetName]?.quantities ?? [];
+        const key = groupKey(next.source, next.psetName);
+
+        if (isSchemaBound && (patch.psetName !== undefined || patch.propertyName !== undefined)) {
+          const duplicateName =
+            patch.propertyName !== undefined &&
+            reqs.properties.some(
+              (p) =>
+                p.id !== id &&
+                groupKey(p.source, p.psetName) === key &&
+                p.propertyName === patch.propertyName,
+            );
+          if (duplicateName) return;
+
           if (patch.psetName !== undefined) {
-            const first = defs[0];
-            const stillValid = defs.some((d) => d.name === next.propertyName);
+            const options = propertyOptionsForGroup(next.source, next.psetName, id);
+            const stillValid = options.some((d) => d.name === next.propertyName);
             if (!stillValid) {
-              next = { ...next, propertyName: first?.name ?? "", dataType: first?.dataType ?? next.dataType, unit: first?.unit ?? next.unit };
+              const first = options[0];
+              next = {
+                ...next,
+                propertyName: first?.name ?? "",
+                dataType: first?.dataType ?? next.dataType,
+                unit: first?.unit ?? next.unit,
+              };
             }
           }
+
           if (patch.propertyName !== undefined) {
-            const def = defs.find((d) => d.name === patch.propertyName);
+            const def = getSchemaDefs(next.source, next.psetName).find((d) => d.name === patch.propertyName);
             if (def) {
-              next = { ...next, dataType: def.dataType, unit: def.unit ?? "" };
+              next = { ...next, dataType: def.dataType ?? next.dataType, unit: def.unit ?? "" };
             }
           }
         }
+
         reqs.properties[idx] = next;
       }
     });
@@ -249,8 +421,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     });
   };
 
-  const dataTypeOptions =
+  const baseDataTypes =
     schema?.dataTypes ?? ["IfcLabel", "IfcText", "IfcIdentifier", "IfcBoolean", "IfcInteger", "IfcReal", "IfcDate", "IfcDateTime", "IfcTime", "IfcDuration"];
+  
+  const getDataTypeOptionsForProp = (prop: PropertyRequirement) => {
+    if (prop.dataType && !baseDataTypes.includes(prop.dataType)) {
+      return [prop.dataType, ...baseDataTypes];
+    }
+    return baseDataTypes;
+  };
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -498,153 +677,191 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold text-slate-800">Vlastnosti (Pset i Qto)</div>
-                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addProperty("PSET")}>
+                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addPropertyGroup("PSET")}>
                   Přidat Pset
                 </button>
-                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addProperty("QTO")}>
+                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addPropertyGroup("QTO")}>
                   Přidat Qto
                 </button>
-                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addProperty("CUSTOM")}>
+                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addPropertyGroup("CUSTOM")}>
                   Přidat vlastní
                 </button>
               </div>
-              <div className="overflow-auto rounded border border-slate-200">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                    <tr>
-                      <th className="px-2 py-2">Zdroj</th>
-                      <th className="px-2 py-2">Pset/Qto</th>
-                      <th className="px-2 py-2">Vlastnost</th>
-                      <th className="px-2 py-2">Typ</th>
-                      <th className="px-2 py-2">Podmínka</th>
-                      <th className="px-2 py-2">Hodnota</th>
-                      <th className="px-2 py-2">Jednotka</th>
-                      <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-right">Akce</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {object.requirements.properties.map((prop) => (
-                      <tr key={prop.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <select
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={prop.source}
-                            onChange={(e) =>
-                              updatePropertyField(prop.id, {
-                                source: e.target.value as PropertyRequirement["source"],
-                                psetName: "",
-                                propertyName: "",
-                                dataType: schema?.dataTypes?.[0] ?? "IfcText",
-                                unit: "",
-                              })
-                            }
-                          >
-                            {["PSET", "QTO", "CUSTOM"].map((s) => (
-                              <option key={s} value={s}>
-                                {s}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          {prop.source === "CUSTOM" ? (
-                            <input
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                              value={prop.psetName}
-                              onChange={(e) => updatePropertyField(prop.id, { psetName: e.target.value })}
-                              placeholder="Název skupiny"
-                            />
-                          ) : (
+
+              {propertyGroups.length === 0 && (
+                <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
+                  Žádné vlastnosti. Přidejte skupinu Pset/Qto nebo vlastní.
+                </div>
+              )}
+
+              <div className="max-h-[65vh] overflow-auto space-y-3 pr-1">
+                {propertyGroups.map((group) => {
+                const expanded = expandedGroups[group.key] ?? true;
+                const isSchemaBound = group.source !== "CUSTOM";
+                const schemaOptions = group.source === "PSET" ? allowedPsets : allowedQtos;
+                const propertyOptions = (currentId?: string) =>
+                  isSchemaBound ? propertyOptionsForGroup(group.source, group.psetName, currentId) : [];
+                const headerLabel =
+                  group.psetName && group.psetName.length ? group.psetName : group.source === "CUSTOM" ? "Vlastní skupina" : "Nová skupina";
+                  const docHref =
+                    isSchemaBound && group.psetName
+                      ? `https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical/${group.psetName}.htm`
+                      : undefined;
+
+                return (
+                  <div key={group.key} className="rounded border border-slate-200 bg-white shadow-sm">
+                    <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                          onClick={() => toggleGroup(group.key)}
+                        >
+                          {expanded ? "Skrýt" : "Zobrazit"}
+                        </button>
+                        <span className="rounded bg-slate-100 px-2 py-1 text-[11px] font-semibold uppercase text-slate-700">
+                          {group.source === "PSET" ? "Pset dle IFC" : group.source === "QTO" ? "Qto dle IFC" : "Vlastní"}
+                        </span>
+                        {group.source === "CUSTOM" ? (
+                          <input
+                            className="rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={group.psetName ?? ""}
+                            onChange={(e) => renameGroup(group.key, e.target.value)}
+                            placeholder="Název skupiny"
+                          />
+                        ) : (
+                          <div className="flex items-center gap-2">
                             <select
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                              value={prop.psetName}
-                              onChange={(e) => updatePropertyField(prop.id, { psetName: e.target.value })}
+                              className="rounded border border-slate-300 px-2 py-1 text-sm"
+                              value={group.psetName ?? ""}
+                              onChange={(e) => renameGroup(group.key, e.target.value)}
                             >
-                              <option value="">— vybrat —</option>
-                              {(prop.source === "PSET" ? allowedPsets : allowedQtos).map((item) => (
+                              <option value="">— vybrat Pset/Qto —</option>
+                              {!schemaOptions.some((o) => o.name === group.psetName) && group.psetName && (
+                                <option value={group.psetName}>{group.psetName}</option>
+                              )}
+                              {schemaOptions.map((item) => (
                                 <option key={item.name} value={item.name}>
                                   {item.name}
                                 </option>
                               ))}
                             </select>
-                          )}
-                        </td>
-                        <td className="px-2 py-2">
-                          {prop.source === "CUSTOM" ? (
-                            <input
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                              value={prop.propertyName}
-                              onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
-                              placeholder="Vlastnost"
-                            />
-                          ) : (
-                            <select
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                              value={prop.propertyName}
-                              onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
-                              disabled={!prop.psetName}
-                            >
-                              <option value="">— vybrat —</option>
-                              {(prop.source === "PSET"
-                                ? schema?.psets[prop.psetName]?.properties ?? []
-                                : schema?.qtos[prop.psetName]?.quantities ?? []
-                              ).map((pdef) => (
-                                <option key={pdef.name} value={pdef.name}>
-                                  {pdef.name}
-                                </option>
-                              ))}
-                            </select>
-                          )}
-                        </td>
-                        <td className="px-2 py-2">
-                          <select
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={prop.dataType}
-                            onChange={(e) => updatePropertyField(prop.id, { dataType: e.target.value })}
-                            disabled={prop.source !== "CUSTOM"}
-                          >
-                            {dataTypeOptions.map((dt) => (
-                              <option key={dt} value={dt}>
-                                {dt}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.constraint ?? "EXISTS"} onChange={(e) => updatePropertyField(prop.id, { constraint: e.target.value as any })}>
-                            {["EXISTS", "EQUALS", "PATTERN", "RANGE"].map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.value ?? ""} onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })} />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.unit ?? ""} onChange={(e) => updatePropertyField(prop.id, { unit: e.target.value })} />
-                        </td>
-                        <td className="px-2 py-2">
-                          <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
-                        </td>
-                        <td className="px-2 py-2 text-right">
-                          <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("properties", prop.id)}>
-                            Odebrat
+                            <DocLink href={docHref} label={group.psetName ?? ""} />
+                          </div>
+                        )}
+                        <span className="text-sm font-semibold text-slate-800">{headerLabel}</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addPropertyToGroup(group.key)}>
+                          Přidat vlastnost
+                        </button>
+                        {isSchemaBound && group.psetName && (
+                          <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addAllFromSchema(group.key)}>
+                            Přidat všechny dle IFC
                           </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {!object.requirements.properties.length && (
-                      <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={9}>
-                          Žádné vlastnosti.
-                        </td>
-                      </tr>
+                        )}
+                        <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => copyGroup(group.key)}>
+                          Kopírovat skupinu
+                        </button>
+                        <button className="rounded border border-red-300 px-2 py-1 text-[11px] text-red-600 hover:bg-red-50" onClick={() => deleteGroup(group.key)}>
+                          Smazat skupinu
+                        </button>
+                      </div>
+                    </div>
+
+                    {expanded && (
+                      <div className="overflow-auto px-3 py-2">
+                        {group.properties.length === 0 && (
+                          <div className="rounded border border-dashed border-slate-200 p-2 text-xs text-slate-600">
+                            Skupina je prázdná. Přidejte vlastnost.
+                          </div>
+                        )}
+                        {group.properties.length > 0 && (
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                              <tr>
+                                <th className="px-2 py-2">Vlastnost</th>
+                                <th className="px-2 py-2">Typ</th>
+                                <th className="px-2 py-2">Podmínka</th>
+                                <th className="px-2 py-2">Hodnota</th>
+                                <th className="px-2 py-2">Jednotka</th>
+                                <th className="px-2 py-2">Fáze</th>
+                                <th className="px-2 py-2 text-right">Akce</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.properties.map((prop) => (
+                                <tr key={prop.id} className="border-t border-slate-200">
+                                  <td className="px-2 py-2">
+                                    {group.source === "CUSTOM" ? (
+                                      <input
+                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                        value={prop.propertyName}
+                                        onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
+                                        placeholder="Vlastnost"
+                                      />
+                                    ) : (
+                                      <select
+                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                        value={prop.propertyName}
+                                        onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
+                                        disabled={!group.psetName}
+                                      >
+                                        <option value="">— vybrat —</option>
+                                        {propertyOptions(prop.id).map((pdef) => (
+                                          <option key={pdef.name} value={pdef.name}>
+                                            {pdef.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <select
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                      value={prop.dataType}
+                                      onChange={(e) => updatePropertyField(prop.id, { dataType: e.target.value })}
+                                      disabled={group.source !== "CUSTOM"}
+                                    >
+                                      {getDataTypeOptionsForProp(prop).map((dt) => (
+                                        <option key={dt} value={dt}>
+                                          {dt}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.constraint ?? "EXISTS"} onChange={(e) => updatePropertyField(prop.id, { constraint: e.target.value as any })}>
+                                      {["EXISTS", "EQUALS", "PATTERN", "RANGE"].map((c) => (
+                                        <option key={c} value={c}>
+                                          {c}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.value ?? ""} onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })} />
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.unit ?? ""} onChange={(e) => updatePropertyField(prop.id, { unit: e.target.value })} />
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
+                                  </td>
+                                  <td className="px-2 py-2 text-right">
+                                    <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("properties", prop.id)}>
+                                      Odebrat
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
                     )}
-                  </tbody>
-                </table>
+                  </div>
+                );
+                })}
               </div>
             </div>
           )}
