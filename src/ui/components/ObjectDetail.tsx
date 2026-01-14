@@ -431,6 +431,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     return baseDataTypes;
   };
 
+  const getPropertyDefinition = (prop: PropertyRequirement) => {
+    if (prop.source === "CUSTOM" || !prop.psetName || !prop.propertyName) return undefined;
+    const defs = getSchemaDefs(prop.source, prop.psetName);
+    return defs.find((d) => d.name === prop.propertyName);
+  };
+
+  const getEnumAllowedValues = (prop: PropertyRequirement): string[] | undefined => {
+    // Only restrict values for properties from IFC schema (PSET/QTO), not CUSTOM
+    if (prop.source === "CUSTOM") return undefined;
+    
+    const def = getPropertyDefinition(prop);
+    // If property definition has allowedValues from IFC XML schema, use them
+    if (def?.allowedValues && def.allowedValues.length > 0) {
+      return def.allowedValues;
+    }
+    
+    return undefined;
+  };
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
@@ -839,7 +858,32 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     </select>
                                   </td>
                                   <td className="px-2 py-2">
-                                    <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.value ?? ""} onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })} />
+                                    {(() => {
+                                      const enumValues = getEnumAllowedValues(prop);
+                                      if (enumValues && enumValues.length > 0) {
+                                        return (
+                                          <select
+                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                            value={prop.value ?? ""}
+                                            onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                          >
+                                            <option value="">— vybrat hodnotu —</option>
+                                            {enumValues.map((val) => (
+                                              <option key={val} value={val}>
+                                                {val}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        );
+                                      }
+                                      return (
+                                        <input
+                                          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                          value={prop.value ?? ""}
+                                          onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                        />
+                                      );
+                                    })()}
                                   </td>
                                   <td className="px-2 py-2">
                                     <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.unit ?? ""} onChange={(e) => updatePropertyField(prop.id, { unit: e.target.value })} />
