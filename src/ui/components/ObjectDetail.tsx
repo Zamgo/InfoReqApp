@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
@@ -65,6 +65,23 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
   "IFCRELFILLSELEMENT",
 ];
 
+// Mapování hodnot podmínky pro zobrazení
+const CONSTRAINT_LABELS: Record<string, string> = {
+  FILLED: "Žádné",
+  ENUM: "Výčet",
+  PATTERN: "Vzor",
+  RANGE: "Ohraničení",
+  LENGTH: "Délka",
+};
+
+const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "FILLED", label: "Žádné" },
+  { value: "ENUM", label: "Výčet" },
+  { value: "PATTERN", label: "Vzor" },
+  { value: "RANGE", label: "Ohraničení" },
+  { value: "LENGTH", label: "Délka" },
+];
+
 export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases }) => {
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
 
@@ -85,6 +102,24 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [customGroupErrors, setCustomGroupErrors] = useState<Record<string, string>>({});
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [selectedProperties, setSelectedProperties] = useState<Set<string>>(new Set());
+  // Ref pro uložení aktuálních hodnot selectedGroups a selectedProperties pro mazání
+  const selectedGroupsRef = useRef<Set<string>>(new Set());
+  const selectedPropertiesRef = useRef<Set<string>>(new Set());
+  
+  // Synchronizovat ref s state
+  useEffect(() => {
+    selectedGroupsRef.current = selectedGroups;
+  }, [selectedGroups]);
+  
+  useEffect(() => {
+    selectedPropertiesRef.current = selectedProperties;
+  }, [selectedProperties]);
+
+  // Ref pro uložení onChange callbacku, aby se nemusel přidávat do závislostí
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   // Vyčistit propertyName, které obsahují _NEW_ nebo se shodují s psetName
   useEffect(() => {
@@ -110,9 +145,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         classifications: [...object.requirements.classifications],
         materials: [...object.requirements.materials],
       };
-      onChange({ ...object, requirements: next });
+      onChangeRef.current({ ...object, requirements: next });
     }
-  }, [object.requirements.properties, object, onChange]);
+  }, [object.requirements.properties, object]);
 
   const groupKey = (source: PropertyRequirement["source"], psetName?: string) => `${source}:${psetName || "(custom)"}`;
 
@@ -188,7 +223,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const updateObject = (partial: Partial<ProjectObject>) => onChange({ ...object, ...partial });
 
-  const updateRequirements = (updater: (requirements: ProjectObject["requirements"]) => void) => {
+  const updateRequirements = useCallback((updater: (requirements: ProjectObject["requirements"]) => void) => {
     const next = {
       ...object.requirements,
       attributes: [...object.requirements.attributes],
@@ -198,8 +233,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       materials: [...object.requirements.materials],
     };
     updater(next);
-    onChange({ ...object, requirements: next });
-  };
+    // Vždy vytvořit nové pole pro properties (pro React re-render)
+    next.properties = [...next.properties];
+    onChangeRef.current({ ...object, requirements: next });
+  }, [object]);
 
   const handlePredefinedChange = (value: string) => {
     if (!value) {
@@ -219,7 +256,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         id: makeId(),
         attribute: "Name",
         required: true,
-        constraint: "EXISTS",
+        constraint: "FILLED",
         value: "",
         extensions: {},
         phases: [],
@@ -240,7 +277,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         propertyName: "",
         dataType: schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
-        constraint: "EXISTS",
+        occurrence: "optional",
+        constraint: "FILLED",
         value: "",
         unit: "",
         extensions: {},
@@ -270,7 +308,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         propertyName: newPropertyName,
         dataType: group.source === "CUSTOM" || isTempGroup ? schema?.dataTypes?.[0] ?? "IfcText" : firstUnused?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
-        constraint: "EXISTS",
+        occurrence: "optional",
+        constraint: "FILLED",
         value: "",
         unit: group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.unit ?? "",
         extensions: {},
@@ -296,7 +335,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           propertyName: def.name,
           dataType: def.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
           required: true,
-          constraint: "EXISTS",
+          occurrence: "optional",
+          constraint: "FILLED",
           value: "",
           unit: def.unit ?? "",
           extensions: {},
@@ -323,7 +363,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const deleteGroup = (groupKeyValue: string) => {
     updateRequirements((reqs) => {
-      reqs.properties = reqs.properties.filter((p) => groupKey(p.source, p.psetName) !== groupKeyValue);
+      // Vytvořit nové pole s filtrovanými vlastnostmi
+      const filteredProperties = reqs.properties.filter((p) => groupKey(p.source, p.psetName) !== groupKeyValue);
+      reqs.properties = filteredProperties;
     });
   };
 
@@ -441,21 +483,22 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const deleteSelectedItems = () => {
+    // Získat aktuální hodnoty z ref (vždy aktuální)
+    const groupKeysToDelete = Array.from(selectedGroupsRef.current);
+    const propertyIdsToDelete = Array.from(selectedPropertiesRef.current);
+    
+    // Smazat vlastnosti
     updateRequirements((reqs) => {
-      // Smazat označené skupiny (všechny vlastnosti v označených skupinách)
-      const groupKeysToDelete = Array.from(selectedGroups);
-      reqs.properties = reqs.properties.filter(
-        (p) => !groupKeysToDelete.includes(groupKey(p.source, p.psetName))
+      // Vytvořit nové pole s filtrovanými vlastnostmi (smazat označené skupiny i jednotlivé vlastnosti)
+      const filteredProperties = reqs.properties.filter(
+        (p) => !groupKeysToDelete.includes(groupKey(p.source, p.psetName)) && !propertyIdsToDelete.has(p.id)
       );
-
-      // Smazat označené jednotlivé vlastnosti
-      const propertyIdsToDelete = Array.from(selectedProperties);
-      reqs.properties = reqs.properties.filter((p) => !propertyIdsToDelete.has(p.id));
-
-      // Vyčistit označení
-      setSelectedGroups(new Set());
-      setSelectedProperties(new Set());
+      reqs.properties = filteredProperties;
     });
+    
+    // Vyčistit označení
+    setSelectedGroups(new Set());
+    setSelectedProperties(new Set());
   };
 
   const toggleGroup = (groupKeyValue: string) => {
@@ -585,12 +628,19 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     });
   };
 
-  const baseDataTypes =
-    schema?.dataTypes ?? ["IfcLabel", "IfcText", "IfcIdentifier", "IfcBoolean", "IfcInteger", "IfcReal", "IfcDate", "IfcDateTime", "IfcTime", "IfcDuration"];
+  // Filtrovat pouze IFC datové typy (začínají na "Ifc")
+  const baseDataTypes = useMemo(() => {
+    const allTypes = schema?.dataTypes ?? ["IfcLabel", "IfcText", "IfcIdentifier", "IfcBoolean", "IfcInteger", "IfcReal", "IfcDate", "IfcDateTime", "IfcTime", "IfcDuration"];
+    return allTypes.filter((dt) => dt.startsWith("Ifc"));
+  }, [schema?.dataTypes]);
   
   const getDataTypeOptionsForProp = (prop: PropertyRequirement) => {
+    // Pokud má vlastnost datový typ, který není v seznamu, přidat ho (ale pouze pokud začíná na "Ifc")
     if (prop.dataType && !baseDataTypes.includes(prop.dataType)) {
-      return [prop.dataType, ...baseDataTypes];
+      // Pokud typ začíná na "Ifc", přidat ho, jinak ignorovat
+      if (prop.dataType.startsWith("Ifc")) {
+        return [prop.dataType, ...baseDataTypes];
+      }
     }
     return baseDataTypes;
   };
@@ -1027,10 +1077,28 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               <tr>
                                 <th className="w-8 px-2 py-2"></th>
                                 <th className="px-2 py-2">Vlastnost</th>
-                                <th className="px-2 py-2">Typ</th>
-                                <th className="px-2 py-2">Podmínka</th>
+                                <th className="px-2 py-2">Datový typ</th>
+                                <th className="px-2 py-2">Výskyt</th>
+                                <th className="px-2 py-2">
+                                  <div className="flex items-center gap-1">
+                                    <span>Omezení</span>
+                                    <a 
+                                      href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" 
+                                      target="_blank" 
+                                      rel="noreferrer" 
+                                      className="text-slate-500 hover:text-indigo-600" 
+                                      title="Otevřít dokumentaci k omezením"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3">
+                                        <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
+                                      </svg>
+                                    </a>
+                                  </div>
+                                </th>
                                 <th className="px-2 py-2">Hodnota</th>
                                 <th className="px-2 py-2">Jednotka</th>
+                                <th className="px-2 py-2">Poznámka</th>
                                 <th className="px-2 py-2">Fáze</th>
                                 <th className="px-2 py-2 text-right">Akce</th>
                               </tr>
@@ -1102,23 +1170,235 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     </select>
                                   </td>
                                   <td className="px-2 py-2">
-                                    <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.constraint ?? "EXISTS"} onChange={(e) => updatePropertyField(prop.id, { constraint: e.target.value as any })}>
-                                      {["EXISTS", "EQUALS", "PATTERN", "RANGE"].map((c) => (
-                                        <option key={c} value={c}>
-                                          {c}
+                                    <select 
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                                      value={prop.occurrence ?? "optional"} 
+                                      onChange={(e) => updatePropertyField(prop.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
+                                    >
+                                      <option value="required">Požadováno (required)</option>
+                                      <option value="prohibited">Zakázáno (prohibited)</option>
+                                      <option value="optional">Možné (optional)</option>
+                                    </select>
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <select 
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                                      value={prop.constraint ?? "FILLED"} 
+                                      onChange={(e) => updatePropertyField(prop.id, { constraint: e.target.value as any })}
+                                    >
+                                      {CONSTRAINT_OPTIONS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>
+                                          {opt.label}
                                         </option>
                                       ))}
                                     </select>
                                   </td>
                                   <td className="px-2 py-2">
                                     {(() => {
+                                      const isDisabled = prop.constraint === "FILLED" || prop.constraint === undefined;
+                                      const isLength = prop.constraint === "LENGTH";
                                       const enumValues = getEnumAllowedValues(prop);
+                                      
+                                      // Pro LENGTH zobrazit speciální UI pro zadávání délky
+                                      if (isLength && !isDisabled) {
+                                        // Parsování hodnoty délky
+                                        const lengthValue = prop.value ?? "";
+                                        const parseLengthValue = (val: string) => {
+                                          if (!val) return { type: "exact", exact: "", min: "", max: "" };
+                                          if (val.startsWith("min:")) {
+                                            return { type: "min", exact: "", min: val.replace("min:", ""), max: "" };
+                                          }
+                                          if (val.startsWith("max:")) {
+                                            return { type: "max", exact: "", min: "", max: val.replace("max:", "") };
+                                          }
+                                          // Pokud je to jen číslo, je to přesná délka
+                                          if (/^\d+$/.test(val)) {
+                                            return { type: "exact", exact: val, min: "", max: "" };
+                                          }
+                                          return { type: "exact", exact: val, min: "", max: "" };
+                                        };
+                                        
+                                        const parsed = parseLengthValue(lengthValue);
+                                        // Použít parsed.type jako výchozí, ale při změně selectu se aktualizuje přes prop.value
+                                        const currentType = parsed.type;
+                                        
+                                        // Získat aktuální hodnotu podle typu
+                                        const getCurrentValue = () => {
+                                          if (currentType === "exact") return parsed.exact;
+                                          if (currentType === "min") return parsed.min;
+                                          if (currentType === "max") return parsed.max;
+                                          return "";
+                                        };
+                                        
+                                        const handleTypeChange = (newType: string) => {
+                                          // Při změně typu zachovat číselnou hodnotu pokud existuje, jinak nastavit na 1
+                                          const currentValue = getCurrentValue();
+                                          const valueToUse = currentValue || "1";
+                                          let newValue = "";
+                                          if (newType === "exact") {
+                                            newValue = valueToUse;
+                                          } else if (newType === "min") {
+                                            newValue = `min:${valueToUse}`;
+                                          } else if (newType === "max") {
+                                            newValue = `max:${valueToUse}`;
+                                          }
+                                          updatePropertyField(prop.id, { value: newValue });
+                                        };
+                                        
+                                        const handleValueChange = (newValue: string) => {
+                                          // Pokud je hodnota prázdná, použít 1
+                                          const valueToUse = newValue || "1";
+                                          let valueToSave = "";
+                                          if (currentType === "exact") {
+                                            valueToSave = valueToUse;
+                                          } else if (currentType === "min") {
+                                            valueToSave = `min:${valueToUse}`;
+                                          } else if (currentType === "max") {
+                                            valueToSave = `max:${valueToUse}`;
+                                          }
+                                          updatePropertyField(prop.id, { value: valueToSave });
+                                        };
+                                        
+                                        return (
+                                          <div className="flex flex-col gap-1">
+                                            <select
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                                              value={currentType}
+                                              onChange={(e) => handleTypeChange(e.target.value)}
+                                            >
+                                              <option value="exact">Přesná délka</option>
+                                              <option value="min">Minimální délka</option>
+                                              <option value="max">Maximální délka</option>
+                                            </select>
+                                            <input
+                                              type="number"
+                                              min="1"
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                              value={getCurrentValue() || "1"}
+                                              onChange={(e) => handleValueChange(e.target.value)}
+                                              placeholder="Počet znaků"
+                                            />
+                                          </div>
+                                        );
+                                      }
+                                      
+                                      // Pro RANGE/Bounds zobrazit speciální UI pro zadávání ohraničení
+                                      const isRange = prop.constraint === "RANGE";
+                                      if (isRange && !isDisabled) {
+                                        // Parsování hodnoty bounds - formát: "min:3:inclusive" nebo "max:10:exclusive" nebo "min:3:inclusive|max:10:inclusive"
+                                        const rangeValue = prop.value ?? "";
+                                        const parseRangeValue = (val: string) => {
+                                          if (!val) return { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
+                                          
+                                          const parts = val.split("|");
+                                          let result = { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
+                                          
+                                          parts.forEach(part => {
+                                            if (part.startsWith("min:")) {
+                                              const minPart = part.replace("min:", "");
+                                              const [minVal, inclusive] = minPart.split(":");
+                                              result.hasMin = true;
+                                              result.min = minVal;
+                                              result.minInclusive = inclusive !== "exclusive";
+                                            } else if (part.startsWith("max:")) {
+                                              const maxPart = part.replace("max:", "");
+                                              const [maxVal, inclusive] = maxPart.split(":");
+                                              result.hasMax = true;
+                                              result.max = maxVal;
+                                              result.maxInclusive = inclusive !== "exclusive";
+                                            }
+                                          });
+                                          
+                                          return result;
+                                        };
+                                        
+                                        const parsed = parseRangeValue(rangeValue);
+                                        
+                                        const handleRangeChange = (hasMin: boolean, min: string, minInclusive: boolean, hasMax: boolean, max: string, maxInclusive: boolean) => {
+                                          const parts: string[] = [];
+                                          if (hasMin && min) {
+                                            parts.push(`min:${min}:${minInclusive ? "inclusive" : "exclusive"}`);
+                                          }
+                                          if (hasMax && max) {
+                                            parts.push(`max:${max}:${maxInclusive ? "inclusive" : "exclusive"}`);
+                                          }
+                                          const newValue = parts.join("|");
+                                          if (newValue) {
+                                            updatePropertyField(prop.id, { value: newValue });
+                                          } else {
+                                            updatePropertyField(prop.id, { value: "" });
+                                          }
+                                        };
+                                        
+                                        return (
+                                          <div className="flex flex-col gap-2">
+                                            <div className="flex items-center gap-2">
+                                              <input
+                                                type="checkbox"
+                                                checked={parsed.hasMin}
+                                                onChange={(e) => handleRangeChange(e.target.checked, parsed.min, parsed.minInclusive, parsed.hasMax, parsed.max, parsed.maxInclusive)}
+                                                className="h-4 w-4"
+                                              />
+                                              <label className="text-xs text-slate-600">Minimum</label>
+                                              {parsed.hasMin && (
+                                                <>
+                                                  <input
+                                                    type="number"
+                                                    className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+                                                    value={parsed.min}
+                                                    onChange={(e) => handleRangeChange(true, e.target.value, parsed.minInclusive, parsed.hasMax, parsed.max, parsed.maxInclusive)}
+                                                    placeholder="Hodnota"
+                                                  />
+                                                  <select
+                                                    className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                                    value={parsed.minInclusive ? "inclusive" : "exclusive"}
+                                                    onChange={(e) => handleRangeChange(true, parsed.min, e.target.value === "inclusive", parsed.hasMax, parsed.max, parsed.maxInclusive)}
+                                                  >
+                                                    <option value="inclusive">≥ (větší nebo rovno)</option>
+                                                    <option value="exclusive">&gt; (větší než)</option>
+                                                  </select>
+                                                </>
+                                              )}
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              <input
+                                                type="checkbox"
+                                                checked={parsed.hasMax}
+                                                onChange={(e) => handleRangeChange(parsed.hasMin, parsed.min, parsed.minInclusive, e.target.checked, parsed.max, parsed.maxInclusive)}
+                                                className="h-4 w-4"
+                                              />
+                                              <label className="text-xs text-slate-600">Maximum</label>
+                                              {parsed.hasMax && (
+                                                <>
+                                                  <input
+                                                    type="number"
+                                                    className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+                                                    value={parsed.max}
+                                                    onChange={(e) => handleRangeChange(parsed.hasMin, parsed.min, parsed.minInclusive, true, e.target.value, parsed.maxInclusive)}
+                                                    placeholder="Hodnota"
+                                                  />
+                                                  <select
+                                                    className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                                    value={parsed.maxInclusive ? "inclusive" : "exclusive"}
+                                                    onChange={(e) => handleRangeChange(parsed.hasMin, parsed.min, parsed.minInclusive, true, parsed.max, e.target.value === "inclusive")}
+                                                  >
+                                                    <option value="inclusive">≤ (menší nebo rovno)</option>
+                                                    <option value="exclusive">&lt; (menší než)</option>
+                                                  </select>
+                                                </>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+                                      
                                       if (enumValues && enumValues.length > 0) {
                                         return (
                                           <select
-                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isDisabled ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
                                             value={prop.value ?? ""}
                                             onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                            disabled={isDisabled}
                                           >
                                             <option value="">— vybrat hodnotu —</option>
                                             {enumValues.map((val) => (
@@ -1131,15 +1411,24 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       }
                                       return (
                                         <input
-                                          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                          className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isDisabled ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
                                           value={prop.value ?? ""}
                                           onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                          disabled={isDisabled}
                                         />
                                       );
                                     })()}
                                   </td>
                                   <td className="px-2 py-2">
                                     <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.unit ?? ""} onChange={(e) => updatePropertyField(prop.id, { unit: e.target.value })} />
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <input 
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                                      value={prop.note ?? ""} 
+                                      onChange={(e) => updatePropertyField(prop.id, { note: e.target.value })}
+                                      placeholder="Všeobecný popis" 
+                                    />
                                   </td>
                                   <td className="px-2 py-2">
                                     <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />

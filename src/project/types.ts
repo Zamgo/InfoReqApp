@@ -35,7 +35,8 @@ export interface PropertyRequirement extends RequirementBase {
   propertyName: string;
   dataType: string;
   required: boolean;
-  constraint?: "EXISTS" | "EQUALS" | "PATTERN" | "RANGE";
+  occurrence?: "required" | "prohibited" | "optional";
+  constraint?: "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH";
   value?: string;
   unit?: string;
   note?: string;

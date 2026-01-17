@@ -144,6 +144,10 @@ const AppInner: React.FC = () => {
       updatedAt: new Date().toISOString(),
     };
     updateProjectWithHistory(next);
+    // Aktualizovat selectedObject, pokud je to aktuálně vybraný objekt
+    if (selectedObject && selectedObject.code === obj.code) {
+      setSelectedObject(obj);
+    }
   };
 
   const onImportProject = async (file: File) => {
