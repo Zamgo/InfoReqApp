@@ -81,6 +81,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   }, [selectedEntity]);
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [customGroupNames, setCustomGroupNames] = useState<Record<string, string>>({});
+  const [customGroupErrors, setCustomGroupErrors] = useState<Record<string, string>>({});
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
+  const [selectedProperties, setSelectedProperties] = useState<Set<string>>(new Set());
 
   const groupKey = (source: PropertyRequirement["source"], psetName?: string) => `${source}:${psetName || "(custom)"}`;
 
@@ -196,20 +200,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const addPropertyGroup = (source: PropertyRequirement["source"]) => {
-    const initialPset =
-      source === "PSET" ? allowedPsets[0]?.name ?? "" : source === "QTO" ? allowedQtos[0]?.name ?? "" : "";
-    const firstOption = source === "CUSTOM" ? undefined : propertyOptionsForGroup(source, initialPset)[0];
+    // Pro novou skupinu vytvoříme vlastnost s dočasným unikátním identifikátorem v psetName
+    // Tím zajistíme, že každá nová skupina bude samostatná
+    // Uživatel pak vybere název ze selectu, což nahradí tento dočasný identifikátor
+    const tempId = `_NEW_${makeId()}`;
     updateRequirements((reqs) => {
       reqs.properties.push({
         id: makeId(),
         source,
-        psetName: initialPset,
-        propertyName: source === "CUSTOM" ? "" : firstOption?.name ?? "",
-        dataType: source === "CUSTOM" ? schema?.dataTypes?.[0] ?? "IfcText" : firstOption?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
+        psetName: tempId,
+        propertyName: "",
+        dataType: schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
         constraint: "EXISTS",
         value: "",
-        unit: source === "CUSTOM" ? "" : firstOption?.unit ?? "",
+        unit: "",
         extensions: {},
         phases: [],
       });
@@ -219,21 +224,24 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const addPropertyToGroup = (groupKeyValue: string) => {
     const group = propertyGroups.find((g) => g.key === groupKeyValue);
     if (!group) return;
-    if (!isGroupAllowed(group.source, group.psetName)) return;
+    // Pro custom skupiny a dočasné skupiny vždy povolíme přidání vlastnosti
+    const isTempGroup = group.psetName?.startsWith("_NEW_");
+    if (group.source !== "CUSTOM" && !isTempGroup && !isGroupAllowed(group.source, group.psetName)) return;
     const options = propertyOptionsForGroup(group.source, group.psetName);
     const firstUnused = options[0];
-    if (group.source !== "CUSTOM" && !firstUnused) return;
+    // Pro PSET/QTO skupiny, které ještě nemají vybraný název (dočasné), povolíme přidání vlastnosti s prázdným propertyName
+    if (group.source !== "CUSTOM" && !isTempGroup && !firstUnused) return;
     updateRequirements((reqs) => {
       reqs.properties.push({
         id: makeId(),
         source: group.source,
         psetName: group.psetName ?? "",
-        propertyName: group.source === "CUSTOM" ? "" : firstUnused?.name ?? "",
-        dataType: group.source === "CUSTOM" ? schema?.dataTypes?.[0] ?? "IfcText" : firstUnused?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
+        propertyName: group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.name ?? "",
+        dataType: group.source === "CUSTOM" || isTempGroup ? schema?.dataTypes?.[0] ?? "IfcText" : firstUnused?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
         constraint: "EXISTS",
         value: "",
-        unit: group.source === "CUSTOM" ? "" : firstUnused?.unit ?? "",
+        unit: group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.unit ?? "",
         extensions: {},
         phases: [],
       });
@@ -242,7 +250,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const addAllFromSchema = (groupKeyValue: string) => {
     const group = propertyGroups.find((g) => g.key === groupKeyValue);
-    if (!group || group.source === "CUSTOM" || !group.psetName || !isGroupAllowed(group.source, group.psetName)) return;
+    if (!group || group.source === "CUSTOM" || !group.psetName) return;
+    // Kontrola, že nejde o dočasnou skupinu
+    if (group.psetName.startsWith("_NEW_")) return;
+    if (!isGroupAllowed(group.source, group.psetName)) return;
     const defs = propertyOptionsForGroup(group.source, group.psetName);
     if (!defs.length) return;
     updateRequirements((reqs) => {
@@ -285,19 +296,62 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     });
   };
 
-  const renameGroup = (groupKeyValue: string, newName: string) => {
-    const trimmed = newName.trim();
+  const renameGroup = (groupKeyValue: string, newName: string, isCustomInput = false) => {
     const guessedSource = groupKeyValue.startsWith("PSET")
       ? "PSET"
       : groupKeyValue.startsWith("QTO")
         ? "QTO"
         : "CUSTOM";
+    
+    // Pro custom input - ulož lokální hodnotu, ale neaktualizuj globální state okamžitě
+    if (isCustomInput && guessedSource === "CUSTOM") {
+      // Validace: vlastní název nesmí začínat "Qto_" nebo "Pset_"
+      const trimmedLower = newName.trim().toLowerCase();
+      if (trimmedLower.startsWith("qto_") || trimmedLower.startsWith("pset_")) {
+        setCustomGroupErrors((prev) => ({
+          ...prev,
+          [groupKeyValue]: "Takovýto název není ve vlastní skupině vlastností povolen",
+        }));
+        return; // Neuložit, pokud začíná zakázaným prefixem
+      }
+      // Vymazat chybu, pokud je hodnota validní
+      setCustomGroupErrors((prev) => {
+        const next = { ...prev };
+        delete next[groupKeyValue];
+        return next;
+      });
+      setCustomGroupNames((prev) => ({ ...prev, [groupKeyValue]: newName }));
+      return;
+    }
+    
+    const trimmed = newName.trim();
+    
+    // Validace pro custom: nesmí začínat "Qto_" nebo "Pset_"
+    if (guessedSource === "CUSTOM") {
+      if (trimmed.toLowerCase().startsWith("qto_") || trimmed.toLowerCase().startsWith("pset_")) {
+        return; // Neuložit
+      }
+    }
+    
     if (trimmed && !isGroupAllowed(guessedSource as PropertyRequirement["source"], trimmed)) return;
     updateRequirements((reqs) => {
       reqs.properties = reqs.properties.map((p) => {
         if (groupKey(p.source, p.psetName) !== groupKeyValue) return p;
         const updated = { ...p, psetName: trimmed };
-        if (p.source === "CUSTOM") return updated;
+        if (p.source === "CUSTOM") {
+          // Vymazat lokální hodnotu a chybu po úspěšné aktualizaci
+          setCustomGroupNames((prev) => {
+            const next = { ...prev };
+            delete next[groupKeyValue];
+            return next;
+          });
+          setCustomGroupErrors((prev) => {
+            const next = { ...prev };
+            delete next[groupKeyValue];
+            return next;
+          });
+          return updated;
+        }
         const options = propertyOptionsForGroup(p.source, trimmed, p.id);
         const stillValid = options.some((d) => d.name === updated.propertyName);
         if (!stillValid) {
@@ -311,6 +365,60 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         }
         return updated;
       });
+    });
+  };
+
+  const handleCustomGroupBlur = (groupKeyValue: string) => {
+    const localValue = customGroupNames[groupKeyValue];
+    if (localValue !== undefined) {
+      renameGroup(groupKeyValue, localValue, false); // Uložit trimnutou hodnotu při blur
+    }
+  };
+
+  const toggleGroupSelection = (groupKey: string) => {
+    setSelectedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  };
+
+  const togglePropertySelection = (propertyId: string) => {
+    setSelectedProperties((prev) => {
+      const next = new Set(prev);
+      if (next.has(propertyId)) {
+        next.delete(propertyId);
+      } else {
+        next.add(propertyId);
+      }
+      return next;
+    });
+  };
+
+  const selectAllGroups = () => {
+    const allGroupKeys = propertyGroups.map((g) => g.key);
+    setSelectedGroups(new Set(allGroupKeys));
+  };
+
+  const deleteSelectedItems = () => {
+    updateRequirements((reqs) => {
+      // Smazat označené skupiny (všechny vlastnosti v označených skupinách)
+      const groupKeysToDelete = Array.from(selectedGroups);
+      reqs.properties = reqs.properties.filter(
+        (p) => !groupKeysToDelete.includes(groupKey(p.source, p.psetName))
+      );
+
+      // Smazat označené jednotlivé vlastnosti
+      const propertyIdsToDelete = Array.from(selectedProperties);
+      reqs.properties = reqs.properties.filter((p) => !propertyIdsToDelete.has(p.id));
+
+      // Vyčistit označení
+      setSelectedGroups(new Set());
+      setSelectedProperties(new Set());
     });
   };
 
@@ -577,7 +685,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-hidden">
         <div className="flex items-center border-b border-slate-200 bg-white px-4">
           {(Object.keys(TAB_LABELS) as TabKey[]).map((key) => (
             <button
@@ -590,7 +698,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           ))}
         </div>
 
-        <div className="h-full overflow-auto p-4">
+        <div className="flex-1 min-h-0 overflow-auto p-4">
           {activeTab === "attributes" && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -696,15 +804,34 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <div className="text-sm font-semibold text-slate-800">Vlastnosti (Pset i Qto)</div>
-                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addPropertyGroup("PSET")}>
+                <button className="rounded border border-blue-300 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100" onClick={() => addPropertyGroup("PSET")}>
                   Přidat Pset
                 </button>
-                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addPropertyGroup("QTO")}>
+                <button className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100" onClick={() => addPropertyGroup("QTO")}>
                   Přidat Qto
                 </button>
-                <button className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-100" onClick={() => addPropertyGroup("CUSTOM")}>
+                <button className="rounded border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100" onClick={() => addPropertyGroup("CUSTOM")}>
                   Přidat vlastní
                 </button>
+                {propertyGroups.length > 0 && (
+                  <>
+                    <div className="h-4 w-px bg-slate-300" />
+                    <button
+                      className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={selectAllGroups}
+                    >
+                      Označit všechny skupiny
+                    </button>
+                    {(selectedGroups.size > 0 || selectedProperties.size > 0) && (
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                        onClick={deleteSelectedItems}
+                      >
+                        Smazat označené ({selectedGroups.size + selectedProperties.size})
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
 
               {propertyGroups.length === 0 && (
@@ -713,49 +840,97 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </div>
               )}
 
-              <div className="max-h-[65vh] overflow-auto space-y-3 pr-1">
+              <div className="space-y-3 pr-1">
                 {propertyGroups.map((group) => {
                 const expanded = expandedGroups[group.key] ?? true;
                 const isSchemaBound = group.source !== "CUSTOM";
                 const schemaOptions = group.source === "PSET" ? allowedPsets : allowedQtos;
                 const propertyOptions = (currentId?: string) =>
                   isSchemaBound ? propertyOptionsForGroup(group.source, group.psetName, currentId) : [];
+                const isTempGroup = group.psetName?.startsWith("_NEW_");
+                const displayPsetName = isTempGroup ? "" : (group.psetName ?? "");
                 const headerLabel =
-                  group.psetName && group.psetName.length ? group.psetName : group.source === "CUSTOM" ? "Vlastní skupina" : "Nová skupina";
+                  group.psetName && group.psetName.length && !isTempGroup ? group.psetName : group.source === "CUSTOM" ? "Vlastní skupina" : "Nová skupina";
                   const docHref =
-                    isSchemaBound && group.psetName
+                    isSchemaBound && group.psetName && !isTempGroup
                       ? `https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical/${group.psetName}.htm`
                       : undefined;
 
+                const groupColors = {
+                  PSET: {
+                    border: "border-blue-300",
+                    badge: "bg-blue-100 text-blue-800",
+                    rowBorder: "border-l-4 border-blue-400",
+                  },
+                  QTO: {
+                    border: "border-emerald-300",
+                    badge: "bg-emerald-100 text-emerald-800",
+                    rowBorder: "border-l-4 border-emerald-400",
+                  },
+                  CUSTOM: {
+                    border: "border-amber-300",
+                    badge: "bg-amber-100 text-amber-800",
+                    rowBorder: "border-l-4 border-amber-400",
+                  },
+                };
+                const colors = groupColors[group.source] || groupColors.CUSTOM;
+
                 return (
-                  <div key={group.key} className="rounded border border-slate-200 bg-white shadow-sm">
-                    <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
+                  <div key={group.key} className={`rounded border-2 ${colors.border} bg-white shadow-sm`}>
+                    <div className={`flex items-center justify-between border-b ${colors.border} px-3 py-2`}>
                       <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          checked={selectedGroups.has(group.key)}
+                          onChange={() => toggleGroupSelection(group.key)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
                         <button
-                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                          className="flex items-center justify-center rounded border border-slate-300 p-1.5 hover:bg-slate-50"
                           onClick={() => toggleGroup(group.key)}
+                          title={expanded ? "Skrýt" : "Zobrazit"}
                         >
-                          {expanded ? "Skrýt" : "Zobrazit"}
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className={`h-4 w-4 text-slate-600 transition-transform ${expanded ? "rotate-180" : ""}`}
+                          >
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
                         </button>
-                        <span className="rounded bg-slate-100 px-2 py-1 text-[11px] font-semibold uppercase text-slate-700">
+                        <span className={`rounded px-2 py-1 text-[11px] font-semibold uppercase ${colors.badge}`}>
                           {group.source === "PSET" ? "Pset dle IFC" : group.source === "QTO" ? "Qto dle IFC" : "Vlastní"}
                         </span>
                         {group.source === "CUSTOM" ? (
-                          <input
-                            className="rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={group.psetName ?? ""}
-                            onChange={(e) => renameGroup(group.key, e.target.value)}
-                            placeholder="Název skupiny"
-                          />
+                          <div className="flex items-center gap-2">
+                            <input
+                              className={`rounded border px-2 py-1 text-sm ${
+                                customGroupErrors[group.key] ? "border-red-300 bg-red-50" : "border-slate-300"
+                              }`}
+                              value={customGroupNames[group.key] !== undefined ? customGroupNames[group.key] : (group.psetName ?? "")}
+                              onChange={(e) => renameGroup(group.key, e.target.value, true)}
+                              onBlur={() => handleCustomGroupBlur(group.key)}
+                              placeholder="Název skupiny"
+                            />
+                            {customGroupErrors[group.key] && (
+                              <span className="text-xs text-red-600 whitespace-nowrap">{customGroupErrors[group.key]}</span>
+                            )}
+                          </div>
                         ) : (
                           <div className="flex items-center gap-2">
                             <select
                               className="rounded border border-slate-300 px-2 py-1 text-sm"
-                              value={group.psetName ?? ""}
+                              value={displayPsetName}
                               onChange={(e) => renameGroup(group.key, e.target.value)}
                             >
                               <option value="">— vybrat Pset/Qto —</option>
-                              {!schemaOptions.some((o) => o.name === group.psetName) && group.psetName && (
+                              {!schemaOptions.some((o) => o.name === group.psetName) && group.psetName && !isTempGroup && (
                                 <option value={group.psetName}>{group.psetName}</option>
                               )}
                               {schemaOptions.map((item) => (
@@ -767,20 +942,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <DocLink href={docHref} label={group.psetName ?? ""} />
                           </div>
                         )}
-                        <span className="text-sm font-semibold text-slate-800">{headerLabel}</span>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addPropertyToGroup(group.key)}>
                           Přidat vlastnost
                         </button>
-                        {isSchemaBound && group.psetName && (
+                        {isSchemaBound && displayPsetName && displayPsetName.length > 0 && (
                           <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addAllFromSchema(group.key)}>
                             Přidat všechny dle IFC
                           </button>
                         )}
-                        <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => copyGroup(group.key)}>
-                          Kopírovat skupinu
-                        </button>
                         <button className="rounded border border-red-300 px-2 py-1 text-[11px] text-red-600 hover:bg-red-50" onClick={() => deleteGroup(group.key)}>
                           Smazat skupinu
                         </button>
@@ -798,6 +969,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           <table className="min-w-full text-sm">
                             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                               <tr>
+                                <th className="w-8 px-2 py-2"></th>
                                 <th className="px-2 py-2">Vlastnost</th>
                                 <th className="px-2 py-2">Typ</th>
                                 <th className="px-2 py-2">Podmínka</th>
@@ -809,7 +981,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             </thead>
                             <tbody>
                               {group.properties.map((prop) => (
-                                <tr key={prop.id} className="border-t border-slate-200">
+                                <tr key={prop.id} className={`border-t border-slate-200 ${colors.rowBorder}`}>
+                                  <td className="px-2 py-2">
+                                    <input
+                                      type="checkbox"
+                                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                      checked={selectedProperties.has(prop.id)}
+                                      onChange={() => togglePropertySelection(prop.id)}
+                                    />
+                                  </td>
                                   <td className="px-2 py-2">
                                     {group.source === "CUSTOM" ? (
                                       <input
