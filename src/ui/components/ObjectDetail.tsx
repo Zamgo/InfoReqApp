@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
@@ -85,6 +85,34 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [customGroupErrors, setCustomGroupErrors] = useState<Record<string, string>>({});
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [selectedProperties, setSelectedProperties] = useState<Set<string>>(new Set());
+
+  // Vyčistit propertyName, které obsahují _NEW_ nebo se shodují s psetName
+  useEffect(() => {
+    const needsCleanup = object.requirements.properties.some((prop) => {
+      const propPropertyName = prop.propertyName || "";
+      const propPsetName = prop.psetName || "";
+      return propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName;
+    });
+
+    if (needsCleanup) {
+      const next = {
+        ...object.requirements,
+        attributes: [...object.requirements.attributes],
+        properties: object.requirements.properties.map((prop) => {
+          const propPropertyName = prop.propertyName || "";
+          const propPsetName = prop.psetName || "";
+          if (propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName) {
+            return { ...prop, propertyName: "" };
+          }
+          return prop;
+        }),
+        relations: [...object.requirements.relations],
+        classifications: [...object.requirements.classifications],
+        materials: [...object.requirements.materials],
+      };
+      onChange({ ...object, requirements: next });
+    }
+  }, [object.requirements.properties, object, onChange]);
 
   const groupKey = (source: PropertyRequirement["source"], psetName?: string) => `${source}:${psetName || "(custom)"}`;
 
@@ -232,11 +260,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     // Pro PSET/QTO skupiny, které ještě nemají vybraný název (dočasné), povolíme přidání vlastnosti s prázdným propertyName
     if (group.source !== "CUSTOM" && !isTempGroup && !firstUnused) return;
     updateRequirements((reqs) => {
+      // Pro CUSTOM a dočasné skupiny vždy nastavíme prázdný propertyName
+      const newPropertyName = group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.name ?? "";
+      
       reqs.properties.push({
         id: makeId(),
         source: group.source,
         psetName: group.psetName ?? "",
-        propertyName: group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.name ?? "",
+        propertyName: newPropertyName,
         dataType: group.source === "CUSTOM" || isTempGroup ? schema?.dataTypes?.[0] ?? "IfcText" : firstUnused?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
         constraint: "EXISTS",
@@ -353,6 +384,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           return updated;
         }
         const options = propertyOptionsForGroup(p.source, trimmed, p.id);
+        // Pokud je propertyName prázdný, ponecháme ho prázdný - uživatel si vybere sám
+        if (!updated.propertyName || updated.propertyName === "") {
+          return updated;
+        }
+        // Pouze pokud propertyName není prázdný a není validní, nastavíme první dostupnou hodnotu
         const stillValid = options.some((d) => d.name === updated.propertyName);
         if (!stillValid) {
           const first = options[0];
@@ -475,6 +511,20 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       const idx = reqs.properties.findIndex((p) => p.id === id);
       if (idx >= 0) {
         let next = { ...reqs.properties[idx], ...patch };
+        
+        // Zajistíme, že propertyName nikdy nebude obsahovat psetName (zejména pro dočasné skupiny)
+        const isTempPsetName = next.psetName?.startsWith("_NEW_");
+        
+        // Pokud propertyName obsahuje _NEW_ nebo se shoduje s psetName, vždy nastav prázdný string
+        if (next.propertyName?.startsWith("_NEW_") || next.propertyName === next.psetName) {
+          next.propertyName = "";
+        }
+        
+        // Pokud je to dočasná skupina a propertyName není prázdné, ale obsahuje něco divného, vyčisti to
+        if (isTempPsetName && next.propertyName && next.propertyName !== "" && next.propertyName === next.psetName) {
+          next.propertyName = "";
+        }
+        
         const isSchemaBound = next.source === "PSET" || next.source === "QTO";
         const key = groupKey(next.source, next.psetName);
 
@@ -491,15 +541,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           if (patch.psetName !== undefined) {
             const options = propertyOptionsForGroup(next.source, next.psetName, id);
-            const stillValid = options.some((d) => d.name === next.propertyName);
-            if (!stillValid) {
-              const first = options[0];
-              next = {
-                ...next,
-                propertyName: first?.name ?? "",
-                dataType: first?.dataType ?? next.dataType,
-                unit: first?.unit ?? next.unit,
-              };
+            // Pokud je propertyName prázdný, ponecháme ho prázdný - uživatel si vybere sám
+            if (!next.propertyName || next.propertyName === "") {
+              // Pouze aktualizujeme dataType a unit, pokud je to vhodné, ale propertyName zůstane prázdný
+            } else {
+              // Pouze pokud propertyName není prázdný a není validní, nastavíme první dostupnou hodnotu
+              const stillValid = options.some((d) => d.name === next.propertyName);
+              if (!stillValid) {
+                const first = options[0];
+                next = {
+                  ...next,
+                  propertyName: first?.name ?? "",
+                  dataType: first?.dataType ?? next.dataType,
+                  unit: first?.unit ?? next.unit,
+                };
+              }
             }
           }
 
@@ -913,10 +969,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               className={`rounded border px-2 py-1 text-sm ${
                                 customGroupErrors[group.key] ? "border-red-300 bg-red-50" : "border-slate-300"
                               }`}
-                              value={customGroupNames[group.key] !== undefined ? customGroupNames[group.key] : (group.psetName ?? "")}
+                              value={customGroupNames[group.key] !== undefined ? customGroupNames[group.key] : (group.psetName && !group.psetName.startsWith("_NEW_") ? group.psetName : "")}
                               onChange={(e) => renameGroup(group.key, e.target.value, true)}
                               onBlur={() => handleCustomGroupBlur(group.key)}
-                              placeholder="Název skupiny"
+                              placeholder="Vyplnit název"
                             />
                             {customGroupErrors[group.key] && (
                               <span className="text-xs text-red-600 whitespace-nowrap">{customGroupErrors[group.key]}</span>
@@ -929,7 +985,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               value={displayPsetName}
                               onChange={(e) => renameGroup(group.key, e.target.value)}
                             >
-                              <option value="">— vybrat Pset/Qto —</option>
+                              <option value="">Vyplnit název</option>
                               {!schemaOptions.some((o) => o.name === group.psetName) && group.psetName && !isTempGroup && (
                                 <option value={group.psetName}>{group.psetName}</option>
                               )}
@@ -991,11 +1047,28 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     />
                                   </td>
                                   <td className="px-2 py-2">
-                                    {group.source === "CUSTOM" ? (
+                                    {group.source === "CUSTOM" || isTempGroup ? (
                                       <input
                                         className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                        value={prop.propertyName}
-                                        onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
+                                        value={(() => {
+                                          const propPropertyName = prop.propertyName || "";
+                                          const propPsetName = prop.psetName || "";
+                                          
+                                          // Vždy zobraz prázdný string, pokud propertyName obsahuje _NEW_ nebo se shoduje s psetName
+                                          if (propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName) {
+                                            return "";
+                                          }
+                                          return propPropertyName;
+                                        })()}
+                                        onChange={(e) => {
+                                          const newValue = e.target.value;
+                                          // Pokud uživatel zadá text začínající na _NEW_, ignoruj to a nastav prázdný string
+                                          if (newValue.startsWith("_NEW_")) {
+                                            updatePropertyField(prop.id, { propertyName: "" });
+                                          } else {
+                                            updatePropertyField(prop.id, { propertyName: newValue });
+                                          }
+                                        }}
                                         placeholder="Vlastnost"
                                       />
                                     ) : (

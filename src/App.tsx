@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ClassificationPanel } from "./ui/components/ClassificationPanel";
 import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { parseClassificationTsv, collectLeaves, findNodeByCode } from "./classification/parser";
@@ -25,6 +25,11 @@ const AppInner: React.FC = () => {
   const [selectedCode, setSelectedCode] = useState<string>();
   const [selectedObject, setSelectedObject] = useState<ProjectObject | null>(null);
   const [status, setStatus] = useState<string>("");
+  
+  // Undo/Redo history
+  const historyRef = useRef<Project[]>([]);
+  const historyIndexRef = useRef<number>(-1);
+  const isUndoRedoRef = useRef<boolean>(false);
 
   const migrateProject = (input: Project): Project => {
     // ensure phases and structure
@@ -58,6 +63,9 @@ const AppInner: React.FC = () => {
       const parsed = parseClassificationTsv(text, "Klasifikace_IfcEntity.txt");
       setClassification(parsed);
       const newProject = createEmptyProject(parsed);
+      // Reset history for new project
+      historyRef.current = [JSON.parse(JSON.stringify(newProject))];
+      historyIndexRef.current = 0;
       setProject(newProject);
       const leaves = collectLeaves(parsed.nodes);
       setSelectedCode(leaves[0]?.code);
@@ -99,8 +107,11 @@ const AppInner: React.FC = () => {
     if (!project.objects[node.code]) {
       const nextProject = { ...project, objects: { ...project.objects } };
       const ensured = ensureObject(nextProject, node.code, node.description, node.ifcEntity);
+      // Don't add to history when auto-creating object on selection
+      isUndoRedoRef.current = true;
       setProject(nextProject);
       saveProjectToStorage(nextProject);
+      isUndoRedoRef.current = false;
       setSelectedObject(ensured);
     } else {
       setSelectedObject(project.objects[node.code]);
@@ -116,6 +127,9 @@ const AppInner: React.FC = () => {
     const parsed = parseClassificationTsv(text, file.name);
     setClassification(parsed);
     const newProject = createEmptyProject(parsed);
+    // Reset history for new project
+    historyRef.current = [JSON.parse(JSON.stringify(newProject))];
+    historyIndexRef.current = 0;
     setProject(newProject);
     const leaves = collectLeaves(parsed.nodes);
     setSelectedCode(leaves[0]?.code);
@@ -129,14 +143,16 @@ const AppInner: React.FC = () => {
       objects: { ...project.objects, [obj.code]: obj },
       updatedAt: new Date().toISOString(),
     };
-    setProject(next);
-    saveProjectToStorage(next);
+    updateProjectWithHistory(next);
   };
 
   const onImportProject = async (file: File) => {
     try {
       const imported = await importProjectFile(file);
       const migrated = migrateProject(imported);
+      // Reset history for imported project
+      historyRef.current = [JSON.parse(JSON.stringify(migrated))];
+      historyIndexRef.current = 0;
       setProject(migrated);
       setClassification(migrated.classification);
       const leaves = collectLeaves(migrated.classification.nodes);
@@ -161,24 +177,103 @@ const AppInner: React.FC = () => {
       phases: ensurePhaseList([...project.phases, phase]),
       updatedAt: new Date().toISOString(),
     };
-    setProject(next);
-    saveProjectToStorage(next);
+    updateProjectWithHistory(next);
   };
 
   const onUpdatePhase = (phase: Phase) => {
     if (!project) return;
     const nextPhases = project.phases.map((p) => (p.id === phase.id ? phase : p));
     const next = ensureProjectPhases({ ...project, phases: nextPhases });
-    setProject(next);
-    saveProjectToStorage(next);
+    updateProjectWithHistory(next);
   };
 
   const onDeletePhase = (phaseId: string) => {
     if (!project) return;
     const next = removePhaseFromProject(project, phaseId);
-    setProject(next);
-    saveProjectToStorage(next);
+    updateProjectWithHistory(next);
   };
+
+  // Undo/Redo functions
+  const updateProjectWithHistory = (newProject: Project) => {
+    if (isUndoRedoRef.current) {
+      setProject(newProject);
+      saveProjectToStorage(newProject);
+      return;
+    }
+
+    // Remove any history after current index (when doing new action after undo)
+    if (historyIndexRef.current < historyRef.current.length - 1) {
+      historyRef.current = historyRef.current.slice(0, historyIndexRef.current + 1);
+    }
+
+    // Add new state to history
+    historyRef.current.push(JSON.parse(JSON.stringify(newProject))); // Deep clone
+    historyIndexRef.current = historyRef.current.length - 1;
+
+    // Limit history size to 50 states
+    if (historyRef.current.length > 50) {
+      historyRef.current.shift();
+      historyIndexRef.current--;
+    }
+
+    setProject(newProject);
+    saveProjectToStorage(newProject);
+  };
+
+  const canUndo = () => {
+    return historyIndexRef.current > 0;
+  };
+
+  const canRedo = () => {
+    return historyIndexRef.current < historyRef.current.length - 1;
+  };
+
+  const handleUndo = useCallback(() => {
+    if (historyIndexRef.current <= 0) return;
+    isUndoRedoRef.current = true;
+    historyIndexRef.current--;
+    const previousProject = historyRef.current[historyIndexRef.current];
+    setProject(previousProject);
+    saveProjectToStorage(previousProject);
+    isUndoRedoRef.current = false;
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return;
+    isUndoRedoRef.current = true;
+    historyIndexRef.current++;
+    const nextProject = historyRef.current[historyIndexRef.current];
+    setProject(nextProject);
+    saveProjectToStorage(nextProject);
+    isUndoRedoRef.current = false;
+  }, []);
+
+  // Initialize history when project is first loaded from storage
+  useEffect(() => {
+    if (project && !isUndoRedoRef.current) {
+      // Only initialize if history is empty (first load)
+      if (historyRef.current.length === 0) {
+        historyRef.current = [JSON.parse(JSON.stringify(project))];
+        historyIndexRef.current = 0;
+      }
+    }
+  }, []);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleUndo, handleRedo]);
 
   return (
     <div className="flex h-screen flex-col bg-slate-100">
@@ -190,6 +285,22 @@ const AppInner: React.FC = () => {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleUndo}
+            disabled={!canUndo() || !project}
+            title="Zpět (Ctrl+Z)"
+          >
+            ↶ Zpět
+          </button>
+          <button
+            className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleRedo}
+            disabled={!canRedo() || !project}
+            title="Vpřed (Ctrl+Y)"
+          >
+            ↷ Vpřed
+          </button>
           <button
             className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50"
             onClick={() => void loadDefaultClassification()}

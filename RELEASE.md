@@ -61,3 +61,4 @@ git push origin v1.0.1
 - **Nikdy necommitujte** soubory v `node_modules/` nebo `dist/` - ty jsou automaticky ignorované
 - Před každou verzí zkontrolujte, že projekt funguje: `npm run dev`
 - Tagy pomáhají označit konkrétní verze v historii projektu
+¨
