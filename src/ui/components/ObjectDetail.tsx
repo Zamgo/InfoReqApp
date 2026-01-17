@@ -1313,81 +1313,73 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         };
                                         
                                         const parsed = parseRangeValue(rangeValue);
-                                        
-                                        const handleRangeChange = (hasMin: boolean, min: string, minInclusive: boolean, hasMax: boolean, max: string, maxInclusive: boolean) => {
-                                          const parts: string[] = [];
-                                          if (hasMin && min) {
-                                            parts.push(`min:${min}:${minInclusive ? "inclusive" : "exclusive"}`);
-                                          }
-                                          if (hasMax && max) {
-                                            parts.push(`max:${max}:${maxInclusive ? "inclusive" : "exclusive"}`);
-                                          }
-                                          const newValue = parts.join("|");
-                                          if (newValue) {
-                                            updatePropertyField(prop.id, { value: newValue });
-                                          } else {
-                                            updatePropertyField(prop.id, { value: "" });
-                                          }
+                                        const handleTypeChange = (newType: string) => {
+                                          const v = (parsed as any).min || (parsed as any).max || "0";
+                                          let newValue = "";
+                                          if (newType === "min-inclusive") newValue = `min:${v}:inclusive`;
+                                          else if (newType === "min-exclusive") newValue = `min:${v}:exclusive`;
+                                          else if (newType === "max-inclusive") newValue = `max:${v}:inclusive`;
+                                          else if (newType === "max-exclusive") newValue = `max:${v}:exclusive`;
+                                          else if (newType === "range") newValue = `min:${v}:inclusive|max:${(parsed as any).max || "0"}:inclusive`;
+                                          updatePropertyField(prop.id, { value: newValue });
                                         };
-                                        
+
+                                        const handleValueChange = (v1: string, v2?: string) => {
+                                          const p = parsed as any;
+                                          let newValue = "";
+                                          const type = p.hasMin && p.hasMax ? "range" : p.hasMin ? (p.minInclusive ? "min-inclusive" : "min-exclusive") : (p.maxInclusive ? "max-inclusive" : "max-exclusive");
+                                          
+                                          if (type === "min-inclusive") newValue = `min:${v1}:inclusive`;
+                                          else if (type === "min-exclusive") newValue = `min:${v1}:exclusive`;
+                                          else if (type === "max-inclusive") newValue = `max:${v1}:inclusive`;
+                                          else if (type === "max-exclusive") newValue = `max:${v1}:exclusive`;
+                                          else if (type === "range") newValue = `min:${v1}:inclusive|max:${v2 ?? p.max}:inclusive`;
+                                          updatePropertyField(prop.id, { value: newValue });
+                                        };
+
+                                        const p = parsed as any;
+                                        const currentType = p.hasMin && p.hasMax ? "range" : p.hasMin ? (p.minInclusive ? "min-inclusive" : "min-exclusive") : (p.maxInclusive ? "max-inclusive" : "max-exclusive");
+
                                         return (
-                                          <div className="flex flex-col gap-2">
-                                            <div className="flex items-center gap-2">
+                                          <div className="flex flex-col gap-1">
+                                            <select
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                                              value={currentType}
+                                              onChange={(e) => handleTypeChange(e.target.value)}
+                                            >
+                                              <option value="min-inclusive">≥ (větší nebo rovno)</option>
+                                              <option value="min-exclusive">&gt; (větší než)</option>
+                                              <option value="max-inclusive">≤ (menší nebo rovno)</option>
+                                              <option value="max-exclusive">&lt; (menší než)</option>
+                                              <option value="range">Rozmezí (od-do)</option>
+                                            </select>
+                                            {currentType === "range" ? (
+                                              <div className="flex items-center gap-1">
+                                                <input
+                                                  type="number"
+                                                  className="w-full rounded border border-slate-300 px-1 py-1 text-sm"
+                                                  value={p.min}
+                                                  onChange={(e) => handleValueChange(e.target.value, p.max)}
+                                                  placeholder="Min"
+                                                />
+                                                <span className="text-xs text-slate-400">-</span>
+                                                <input
+                                                  type="number"
+                                                  className="w-full rounded border border-slate-300 px-1 py-1 text-sm"
+                                                  value={p.max}
+                                                  onChange={(e) => handleValueChange(p.min, e.target.value)}
+                                                  placeholder="Max"
+                                                />
+                                              </div>
+                                            ) : (
                                               <input
-                                                type="checkbox"
-                                                checked={parsed.hasMin}
-                                                onChange={(e) => handleRangeChange(e.target.checked, parsed.min, parsed.minInclusive, parsed.hasMax, parsed.max, parsed.maxInclusive)}
-                                                className="h-4 w-4"
+                                                type="number"
+                                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                                value={p.hasMin ? p.min : p.max}
+                                                onChange={(e) => handleValueChange(e.target.value)}
+                                                placeholder="Hodnota"
                                               />
-                                              <label className="text-xs text-slate-600">Minimum</label>
-                                              {parsed.hasMin && (
-                                                <>
-                                                  <input
-                                                    type="number"
-                                                    className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
-                                                    value={parsed.min}
-                                                    onChange={(e) => handleRangeChange(true, e.target.value, parsed.minInclusive, parsed.hasMax, parsed.max, parsed.maxInclusive)}
-                                                    placeholder="Hodnota"
-                                                  />
-                                                  <select
-                                                    className="rounded border border-slate-300 px-2 py-1 text-xs"
-                                                    value={parsed.minInclusive ? "inclusive" : "exclusive"}
-                                                    onChange={(e) => handleRangeChange(true, parsed.min, e.target.value === "inclusive", parsed.hasMax, parsed.max, parsed.maxInclusive)}
-                                                  >
-                                                    <option value="inclusive">≥ (větší nebo rovno)</option>
-                                                    <option value="exclusive">&gt; (větší než)</option>
-                                                  </select>
-                                                </>
-                                              )}
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              <input
-                                                type="checkbox"
-                                                checked={parsed.hasMax}
-                                                onChange={(e) => handleRangeChange(parsed.hasMin, parsed.min, parsed.minInclusive, e.target.checked, parsed.max, parsed.maxInclusive)}
-                                                className="h-4 w-4"
-                                              />
-                                              <label className="text-xs text-slate-600">Maximum</label>
-                                              {parsed.hasMax && (
-                                                <>
-                                                  <input
-                                                    type="number"
-                                                    className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
-                                                    value={parsed.max}
-                                                    onChange={(e) => handleRangeChange(parsed.hasMin, parsed.min, parsed.minInclusive, true, e.target.value, parsed.maxInclusive)}
-                                                    placeholder="Hodnota"
-                                                  />
-                                                  <select
-                                                    className="rounded border border-slate-300 px-2 py-1 text-xs"
-                                                    value={parsed.maxInclusive ? "inclusive" : "exclusive"}
-                                                    onChange={(e) => handleRangeChange(parsed.hasMin, parsed.min, parsed.minInclusive, true, parsed.max, e.target.value === "inclusive")}
-                                                  >
-                                                    <option value="inclusive">≤ (menší nebo rovno)</option>
-                                                    <option value="exclusive">&lt; (menší než)</option>
-                                                  </select>
-                                                </>
-                                              )}
-                                            </div>
+                                            )}
                                           </div>
                                         );
                                       }
