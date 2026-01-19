@@ -85,10 +85,76 @@ const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "LENGTH", label: "Délka" },
 ];
 
+const isIfcBooleanType = (dataType?: string) => (dataType ?? "").trim().toLowerCase() === "ifcboolean";
+
+const isIfcTextLikeType = (dataType?: string) => {
+  const dt = (dataType ?? "").trim().toLowerCase();
+  return (
+    dt === "ifclabel" ||
+    dt === "ifctext" ||
+    dt === "ifcidentifier" ||
+    dt === "ifcurireference" ||
+    dt === "ifcgloballyuniqueid"
+  );
+};
+
+const isIfcNumericLikeType = (dataType?: string) => {
+  const dt = (dataType ?? "").trim().toLowerCase();
+  if (!dt) return false;
+  if (dt === "ifcinteger" || dt === "ifcreal" || dt === "ifccountmeasure") return true;
+  // common IFC measure types
+  if (dt.endsWith("measure")) return true;
+  // common IFC numeric types
+  if (dt.includes("integer") || dt.includes("real") || dt.includes("number")) return true;
+  return false;
+};
+
+const isConstraintAllowedForDataType = (dataType: string | undefined, constraint: string) => {
+  const c = (constraint ?? "").trim().toUpperCase();
+  // Always allow "none"
+  if (c === "FILLED") return true;
+  // IfcBoolean: only "ENUM" makes sense (besides "FILLED")
+  if (isIfcBooleanType(dataType)) return c === "ENUM";
+  // Text-like: RANGE doesn't make sense
+  if (isIfcTextLikeType(dataType)) return c !== "RANGE";
+  // Numeric-like: LENGTH doesn't make sense
+  if (isIfcNumericLikeType(dataType)) return c !== "LENGTH";
+  // Other/sporné typy neomezujeme
+  return true;
+};
+
+const UNIT_PRESETS: Array<{ value: string; label?: string }> = [
+  { value: "", label: "—" },
+  { value: "mm" },
+  { value: "cm" },
+  { value: "m" },
+  { value: "m2" },
+  { value: "m3" },
+  { value: "kg" },
+  { value: "t" },
+  { value: "N" },
+  { value: "kN" },
+  { value: "Pa" },
+  { value: "kPa" },
+  { value: "MPa" },
+  { value: "%" },
+  { value: "°C" },
+  { value: "s" },
+  { value: "min" },
+  { value: "h" },
+  { value: "d" },
+];
+
+const isPresetUnit = (unit?: string) => {
+  const u = (unit ?? "").trim();
+  return UNIT_PRESETS.some((p) => p.value === u);
+};
+
 export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, onSaveEnumAsCodeList }) => {
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [enumDraftByPropId, setEnumDraftByPropId] = useState<Record<string, string>>({});
   const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[] }>(null);
+  const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
 
   const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
   const selectedEntity = object.ifcEntity ? schema?.entities[object.ifcEntity] : undefined;
@@ -303,6 +369,24 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     // Pro PSET/QTO skupiny, které ještě nemají vybraný název (dočasné), povolíme přidání vlastnosti s prázdným propertyName
     if (group.source !== "CUSTOM" && !isTempGroup && !firstUnused) return;
     updateRequirements((reqs) => {
+      // Pokud už ve skupině existuje prázdný řádek (typicky první po přidání Pset/Qto),
+      // využij ho místo přidání nové vlastnosti.
+      if (group.source !== "CUSTOM" && !isTempGroup && firstUnused) {
+        const emptyIdx = reqs.properties.findIndex(
+          (p) => groupKey(p.source, p.psetName) === groupKeyValue && (!p.propertyName || p.propertyName === ""),
+        );
+        if (emptyIdx >= 0) {
+          const prev = reqs.properties[emptyIdx];
+          reqs.properties[emptyIdx] = {
+            ...prev,
+            propertyName: firstUnused.name,
+            dataType: firstUnused.dataType ?? prev.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
+            unit: firstUnused.unit ?? "",
+          };
+          return;
+        }
+      }
+
       // Pro CUSTOM a dočasné skupiny vždy nastavíme prázdný propertyName
       const newPropertyName = group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.name ?? "";
       
@@ -332,7 +416,28 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     const defs = propertyOptionsForGroup(group.source, group.psetName);
     if (!defs.length) return;
     updateRequirements((reqs) => {
-      defs.forEach((def) => {
+      // Nejdřív vyplň existující prázdné řádky ve skupině, aby po akci nezůstaly viset.
+      const emptyIdxs: number[] = [];
+      reqs.properties.forEach((p, idx) => {
+        if (groupKey(p.source, p.psetName) !== groupKeyValue) return;
+        if (!p.propertyName || p.propertyName === "") emptyIdxs.push(idx);
+      });
+
+      const remaining = [...defs];
+      emptyIdxs.forEach((idx) => {
+        const def = remaining.shift();
+        if (!def) return;
+        const prev = reqs.properties[idx];
+        reqs.properties[idx] = {
+          ...prev,
+          propertyName: def.name,
+          dataType: def.dataType ?? prev.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
+          unit: def.unit ?? "",
+        };
+      });
+
+      // Pak přidej zbytek vlastností dle IFC.
+      remaining.forEach((def) => {
         reqs.properties.push({
           id: makeId(),
           source: group.source,
@@ -558,7 +663,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     updateRequirements((reqs) => {
       const idx = reqs.properties.findIndex((p) => p.id === id);
       if (idx >= 0) {
-        let next = { ...reqs.properties[idx], ...patch };
+        const prev = reqs.properties[idx];
+        let next = { ...prev, ...patch };
         
         // Zajistíme, že propertyName nikdy nebude obsahovat psetName (zejména pro dočasné skupiny)
         const isTempPsetName = next.psetName?.startsWith("_NEW_");
@@ -575,6 +681,19 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         
         const isSchemaBound = next.source === "PSET" || next.source === "QTO";
         const key = groupKey(next.source, next.psetName);
+
+        // If type changes from IfcBoolean -> anything else, clear TRUE/FALSE leftovers
+        if (isIfcBooleanType(prev.dataType) && !isIfcBooleanType(next.dataType)) {
+          const v = (next.value ?? "").trim().toUpperCase();
+          if (next.constraint === "ENUM" && (v === "TRUE" || v === "FALSE")) {
+            next = { ...next, value: "" };
+          }
+        }
+
+        // Enforce meaningful constraints for common data types
+        if (next.constraint && !isConstraintAllowedForDataType(next.dataType, next.constraint)) {
+          next = { ...next, constraint: "FILLED", value: "" };
+        }
 
         if (isSchemaBound && (patch.psetName !== undefined || patch.propertyName !== undefined)) {
           const duplicateName =
@@ -956,6 +1075,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 const expanded = expandedGroups[group.key] ?? true;
                 const isSchemaBound = group.source !== "CUSTOM";
                 const schemaOptions = group.source === "PSET" ? allowedPsets : allowedQtos;
+                const usedSchemaGroupNames = new Set(
+                  propertyGroups
+                    .filter(
+                      (g) =>
+                        g.key !== group.key &&
+                        g.source === group.source &&
+                        g.source !== "CUSTOM" &&
+                        g.psetName &&
+                        !g.psetName.startsWith("_NEW_"),
+                    )
+                    .map((g) => g.psetName as string),
+                );
+                const schemaOptionsFiltered = schemaOptions.filter(
+                  (item) => item.name === group.psetName || !usedSchemaGroupNames.has(item.name),
+                );
                 const propertyOptions = (currentId?: string) =>
                   isSchemaBound ? propertyOptionsForGroup(group.source, group.psetName, currentId) : [];
                 const isTempGroup = group.psetName?.startsWith("_NEW_");
@@ -1044,7 +1178,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               {!schemaOptions.some((o) => o.name === group.psetName) && group.psetName && !isTempGroup && (
                                 <option value={group.psetName}>{group.psetName}</option>
                               )}
-                              {schemaOptions.map((item) => (
+                              {schemaOptionsFiltered.map((item) => (
                                 <option key={item.name} value={item.name}>
                                   {item.name}
                                 </option>
@@ -1191,11 +1325,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       value={prop.constraint ?? "FILLED"} 
                                       onChange={(e) => updatePropertyField(prop.id, { constraint: e.target.value as any })}
                                     >
-                                      {CONSTRAINT_OPTIONS.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>
+                                      {CONSTRAINT_OPTIONS.map((opt) => {
+                                        const allowed = isConstraintAllowedForDataType(prop.dataType, opt.value);
+                                        return (
+                                        <option key={opt.value} value={opt.value} disabled={!allowed}>
                                           {opt.label}
                                         </option>
-                                      ))}
+                                      );})}
                                     </select>
                                   </td>
                                   <td className="px-2 py-2">
@@ -1207,6 +1343,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       const enumValues = getEnumAllowedValues(prop);
                                       const linkedCodeListId = (prop.extensions?.[ENUM_CODELIST_ID_KEY] as string | undefined) ?? undefined;
                                       const linkedCodeList = linkedCodeListId ? codeLists.find((c) => c.id === linkedCodeListId) : undefined;
+                                      const isBool = isIfcBooleanType(prop.dataType);
                                       
                                       // Pro PATTERN zobrazit speciální UI + odkazy (IDS + tester)
                                       if (isPattern && !isDisabled) {
@@ -1231,6 +1368,20 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                               </svg>
                                             </a>
                                           </div>
+                                        );
+                                      }
+
+                                      // IfcBoolean + ENUM: only TRUE/FALSE
+                                      if (isBool && isEnum && !isDisabled) {
+                                        return (
+                                          <select
+                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                            value={(prop.value ?? "").toUpperCase() === "FALSE" ? "FALSE" : "TRUE"}
+                                            onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                          >
+                                            <option value="TRUE">TRUE</option>
+                                            <option value="FALSE">FALSE</option>
+                                          </select>
                                         );
                                       }
 
@@ -1599,7 +1750,53 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     })()}
                                   </td>
                                   <td className="px-2 py-2">
-                                    <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.unit ?? ""} onChange={(e) => updatePropertyField(prop.id, { unit: e.target.value })} />
+                                    {(() => {
+                                      const unit = prop.unit ?? "";
+                                      const derived =
+                                        unit.trim() !== "" && isPresetUnit(unit) ? unit.trim() : unit.trim() === "" ? "" : "__CUSTOM__";
+                                      const mode = unitModeByPropId[prop.id] ?? derived;
+                                      return (
+                                        <div className="flex flex-col gap-1">
+                                          <select
+                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                            value={mode}
+                                            onChange={(e) => {
+                                              const v = e.target.value;
+                                              if (v === "__CUSTOM__") {
+                                                // switch to custom input mode
+                                                setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: "__CUSTOM__" }));
+                                                // if previously a preset (incl. empty), clear to make space for typing
+                                                if (isPresetUnit(unit)) updatePropertyField(prop.id, { unit: "" });
+                                                return;
+                                              }
+                                              setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: v }));
+                                              updatePropertyField(prop.id, { unit: v });
+                                            }}
+                                          >
+                                            <option value="__CUSTOM__">Vlastní</option>
+                                            {UNIT_PRESETS.map((p) => (
+                                              <option key={p.value} value={p.value}>
+                                                {p.label ?? (p.value || "—")}
+                                              </option>
+                                            ))}
+                                          </select>
+                                          {mode === "__CUSTOM__" && (
+                                            <input
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                              placeholder="Zadejte jednotku"
+                                              value={unit}
+                                              onChange={(e) => {
+                                                // ensure we stay in custom mode while typing
+                                                if (unitModeByPropId[prop.id] !== "__CUSTOM__") {
+                                                  setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: "__CUSTOM__" }));
+                                                }
+                                                updatePropertyField(prop.id, { unit: e.target.value });
+                                              }}
+                                            />
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
                                   </td>
                                   <td className="px-2 py-2">
                                     <input 
