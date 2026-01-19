@@ -4,7 +4,7 @@ import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { parseClassificationTsv, collectLeaves, findNodeByCode } from "./classification/parser";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
-import type { Phase, Project, ProjectObject } from "./project/types";
+import type { CodeList, Phase, Project, ProjectObject } from "./project/types";
 import {
   createEmptyProject,
   ensureObject,
@@ -14,9 +14,37 @@ import {
   saveProjectToStorage,
 } from "./project/storage";
 import { ensurePhaseList, ensureProjectPhases, removePhaseFromProject } from "./project/phases";
+import { ENUM_CODELIST_ID_KEY, formatEnumValues } from "./project/enumeration";
 import "./index.css";
+import { makeId } from "./utils/id";
 
 const DEFAULT_CLASSIFICATION_PATH = "/classification/Klasifikace_IfcEntity.txt";
+
+const applyCodeListPropagation = (project: Project, list: CodeList): Project => {
+  // Update all properties that are linked to this code list
+  const nextObjects: Project["objects"] = { ...project.objects };
+  let changed = false;
+
+  Object.entries(nextObjects).forEach(([code, obj]) => {
+    let objChanged = false;
+    const nextReqs = { ...obj.requirements };
+    const nextProps = obj.requirements.properties.map((p) => {
+      const id = (p.extensions?.[ENUM_CODELIST_ID_KEY] as string | undefined) ?? undefined;
+      if (p.constraint !== "ENUM" || !id || id !== list.id) return p;
+        const nextValue = formatEnumValues(list.values ?? []);
+      if ((p.value ?? "") === nextValue) return p;
+      objChanged = true;
+      return { ...p, value: nextValue };
+    });
+    if (objChanged) {
+      changed = true;
+      nextReqs.properties = nextProps;
+      nextObjects[code] = { ...obj, requirements: nextReqs };
+    }
+  });
+
+  return changed ? { ...project, objects: nextObjects } : project;
+};
 
 const AppInner: React.FC = () => {
   const { index: schemaIndex, loading: schemaLoading, error: schemaError } = useSchema();
@@ -35,6 +63,7 @@ const AppInner: React.FC = () => {
     // ensure phases and structure
     return ensureProjectPhases({
       ...input,
+      codeLists: input.codeLists ?? [],
       phases: ensurePhaseList(input.phases),
       classifications: input.classifications ?? [
         {
@@ -197,6 +226,102 @@ const AppInner: React.FC = () => {
     updateProjectWithHistory(next);
   };
 
+  const onAddCodeList = (list: CodeList) => {
+    if (!project) return;
+    const next: Project = {
+      ...project,
+      codeLists: [...(project.codeLists ?? []), list],
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
+  const onUpdateCodeList = (id: string, updates: Partial<CodeList>) => {
+    if (!project) return;
+    const existing = (project.codeLists ?? []).find((c) => c.id === id);
+    const nextLists = (project.codeLists ?? []).map((c) => (c.id === id ? { ...c, ...updates } : c));
+    let next: Project = ensureProjectPhases({ ...project, codeLists: nextLists });
+    const updated = existing ? nextLists.find((c) => c.id === id) : undefined;
+    if (updated) next = applyCodeListPropagation(next, updated);
+    updateProjectWithHistory(next);
+  };
+
+  const onDeleteCodeList = (id: string) => {
+    if (!project) return;
+    const nextLists = (project.codeLists ?? []).filter((c) => c.id !== id);
+    const next: Project = ensureProjectPhases({ ...project, codeLists: nextLists });
+    updateProjectWithHistory(next);
+  };
+
+  const onSaveEnumAsCodeList = (opts: {
+    objectCode: string;
+    propertyId: string;
+    name: string;
+    values: string[];
+    link: boolean;
+  }) => {
+    if (!project) return;
+    const list: CodeList = {
+      id: makeId(),
+      name: (opts.name || "").trim() || "Číselník",
+      values: opts.values ?? [],
+    };
+
+    let next: Project = {
+      ...project,
+      codeLists: [...(project.codeLists ?? []), list],
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (opts.link) {
+      const obj = next.objects[opts.objectCode];
+      if (obj) {
+        const nextReqs = { ...obj.requirements };
+        nextReqs.properties = obj.requirements.properties.map((p) => {
+          if (p.id !== opts.propertyId) return p;
+          const nextExtensions = { ...(p.extensions ?? {}) } as Record<string, unknown>;
+          nextExtensions[ENUM_CODELIST_ID_KEY] = list.id;
+          return {
+            ...p,
+            constraint: "ENUM",
+            value: formatEnumValues(list.values),
+            extensions: nextExtensions,
+          };
+        });
+        next = {
+          ...next,
+          objects: {
+            ...next.objects,
+            [opts.objectCode]: { ...obj, requirements: nextReqs },
+          },
+        };
+      }
+    }
+
+    updateProjectWithHistory(next);
+  };
+
+  const codeListUsage = useMemo(() => {
+    const usage: Record<
+      string,
+      Array<{ objectCode: string; objectDescription?: string; propertyLabel?: string }>
+    > = {};
+    if (!project) return usage;
+    Object.values(project.objects).forEach((obj) => {
+      obj.requirements.properties.forEach((p) => {
+        const id = (p.extensions?.[ENUM_CODELIST_ID_KEY] as string | undefined) ?? undefined;
+        if (!id || p.constraint !== "ENUM") return;
+        const label = `${p.psetName || ""}${p.propertyName ? `.${p.propertyName}` : ""}`.trim() || undefined;
+        (usage[id] ??= []).push({
+          objectCode: obj.code,
+          objectDescription: obj.description,
+          propertyLabel: label,
+        });
+      });
+    });
+    return usage;
+  }, [project]);
+
   // Undo/Redo functions
   const updateProjectWithHistory = (newProject: Project) => {
     if (isUndoRedoRef.current) {
@@ -348,6 +473,11 @@ const AppInner: React.FC = () => {
           onAddPhase={onAddPhase}
           onUpdatePhase={onUpdatePhase}
           onDeletePhase={onDeletePhase}
+          codeLists={project?.codeLists ?? []}
+          onAddCodeList={onAddCodeList}
+          onUpdateCodeList={onUpdateCodeList}
+          onDeleteCodeList={onDeleteCodeList}
+          codeListUsage={codeListUsage}
         />
 
         <div className="flex-1 overflow-hidden">
@@ -369,6 +499,8 @@ const AppInner: React.FC = () => {
               schema={schemaIndex}
               onChange={onUpdateObject}
               phases={project?.phases ?? []}
+              codeLists={project?.codeLists ?? []}
+              onSaveEnumAsCodeList={onSaveEnumAsCodeList}
             />
           )}
         </div>

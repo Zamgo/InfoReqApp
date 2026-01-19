@@ -90,6 +90,17 @@ export interface ProjectObject {
   requirements: ObjectRequirements;
 }
 
+export interface CodeList {
+  /** Unique identifier */
+  id: string;
+  /** Human-readable name shown in UI */
+  name: string;
+  /** Allowed values (enumeration entries) */
+  values: string[];
+  /** Optional note/description */
+  note?: string;
+}
+
 export interface Project {
   projectId: string;
   name: string;
@@ -101,4 +112,6 @@ export interface Project {
   primaryClassificationId: string;
   phases: Phase[];
   objects: Record<string, ProjectObject>;
+  /** User-managed code lists for ENUM (výčet) restrictions */
+  codeLists?: CodeList[];
 }

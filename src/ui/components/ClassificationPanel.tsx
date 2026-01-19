@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from "react";
 import { filterTree } from "../../classification/parser";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
-import type { Phase } from "../../project/types";
+import type { CodeList, Phase } from "../../project/types";
 import { PhaseManager } from "./PhaseManager";
+import { CodeListManager } from "./CodeListManager";
 
 interface Props {
   classification: ClassificationData | null;
@@ -14,6 +15,18 @@ interface Props {
   onAddPhase: (phase: Phase) => void;
   onUpdatePhase: (phase: Phase) => void;
   onDeletePhase: (id: string) => void;
+  codeLists: CodeList[];
+  onAddCodeList: (list: CodeList) => void;
+  onUpdateCodeList: (id: string, updates: Partial<CodeList>) => void;
+  onDeleteCodeList: (id: string) => void;
+  codeListUsage?: Record<
+    string,
+    Array<{
+      objectCode: string;
+      objectDescription?: string;
+      propertyLabel?: string;
+    }>
+  >;
 }
 
 const TreeItem: React.FC<{
@@ -82,9 +95,14 @@ export const ClassificationPanel: React.FC<Props> = ({
   onAddPhase,
   onUpdatePhase,
   onDeletePhase,
+  codeLists,
+  onAddCodeList,
+  onUpdateCodeList,
+  onDeleteCodeList,
+  codeListUsage,
 }) => {
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"hierarchy" | "phases">("hierarchy");
+  const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists">("hierarchy");
 
   const filteredNodes = useMemo(() => {
     if (!classification) return [];
@@ -106,6 +124,7 @@ export const ClassificationPanel: React.FC<Props> = ({
         {[
           { key: "hierarchy", label: "Hierarchie" },
           { key: "phases", label: "Fáze" },
+          { key: "codelists", label: "Číselníky" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -182,6 +201,18 @@ export const ClassificationPanel: React.FC<Props> = ({
             onAddPhase={onAddPhase}
             onUpdatePhase={onUpdatePhase}
             onDeletePhase={onDeletePhase}
+          />
+        </div>
+      )}
+
+      {activeTab === "codelists" && (
+        <div className="flex h-full flex-col p-3">
+          <CodeListManager
+            codeLists={codeLists}
+            usage={codeListUsage}
+            onAdd={onAddCodeList}
+            onUpdate={onUpdateCodeList}
+            onDelete={onDeleteCodeList}
           />
         </div>
       )}

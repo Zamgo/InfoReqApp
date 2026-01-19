@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
-import type { Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
+import type { CodeList, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
+import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "ids";
 
@@ -46,6 +47,8 @@ interface Props {
   schema: SchemaIndex | null;
   onChange: (obj: ProjectObject) => void;
   phases: Phase[];
+  codeLists: CodeList[];
+  onSaveEnumAsCodeList: (opts: { objectCode: string; propertyId: string; name: string; values: string[]; link: boolean }) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -82,8 +85,10 @@ const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "LENGTH", label: "Délka" },
 ];
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases }) => {
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, onSaveEnumAsCodeList }) => {
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
+  const [enumDraftByPropId, setEnumDraftByPropId] = useState<Record<string, string>>({});
+  const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[] }>(null);
 
   const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
   const selectedEntity = object.ifcEntity ? schema?.entities[object.ifcEntity] : undefined;
@@ -256,7 +261,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         id: makeId(),
         attribute: "Name",
         required: true,
-        constraint: "FILLED",
+        constraint: "EXISTS",
         value: "",
         extensions: {},
         phases: [],
@@ -491,7 +496,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     updateRequirements((reqs) => {
       // Vytvořit nové pole s filtrovanými vlastnostmi (smazat označené skupiny i jednotlivé vlastnosti)
       const filteredProperties = reqs.properties.filter(
-        (p) => !groupKeysToDelete.includes(groupKey(p.source, p.psetName)) && !propertyIdsToDelete.has(p.id)
+        (p) => !groupKeysToDelete.includes(groupKey(p.source, p.psetName)) && !propertyIdsToDelete.includes(p.id),
       );
       reqs.properties = filteredProperties;
     });
@@ -1197,8 +1202,190 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     {(() => {
                                       const isDisabled = prop.constraint === "FILLED" || prop.constraint === undefined;
                                       const isLength = prop.constraint === "LENGTH";
+                                      const isPattern = prop.constraint === "PATTERN";
+                                      const isEnum = prop.constraint === "ENUM";
                                       const enumValues = getEnumAllowedValues(prop);
+                                      const linkedCodeListId = (prop.extensions?.[ENUM_CODELIST_ID_KEY] as string | undefined) ?? undefined;
+                                      const linkedCodeList = linkedCodeListId ? codeLists.find((c) => c.id === linkedCodeListId) : undefined;
                                       
+                                      // Pro PATTERN zobrazit speciální UI + odkazy (IDS + tester)
+                                      if (isPattern && !isDisabled) {
+                                        return (
+                                          <div className="flex items-center gap-1">
+                                            <input
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                              value={prop.value ?? ""}
+                                              onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                              placeholder='Regex pattern (např. ^DT[0-9]{2}$)'
+                                            />
+                                            <a
+                                              href="https://regex101.com/"
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="flex items-center text-slate-500 hover:text-indigo-600"
+                                              title="Otevřít regex tester (regex101)"
+                                              onClick={(e) => e.stopPropagation()}
+                                            >
+                                              <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+                                                <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
+                                              </svg>
+                                            </a>
+                                          </div>
+                                        );
+                                      }
+
+                                      // Pro ENUM (výčet) – inline hodnoty nebo číselník + badges + nabídka uložení
+                                      if (isEnum && !isDisabled) {
+                                        const values = linkedCodeList ? (linkedCodeList.values ?? []) : parseEnumValues(prop.value ?? "");
+                                        const displayValues = values.slice(0, 24);
+                                        const remaining = values.length - displayValues.length;
+
+                                        const detachFromCodeList = () => {
+                                          const nextExtensions = { ...(prop.extensions ?? {}) } as Record<string, unknown>;
+                                          delete (nextExtensions as any)[ENUM_CODELIST_ID_KEY];
+                                          updatePropertyField(prop.id, { extensions: nextExtensions });
+                                        };
+
+                                        const linkToCodeList = (id: string) => {
+                                          const list = codeLists.find((c) => c.id === id);
+                                          if (!list) return;
+                                          const nextExtensions = { ...(prop.extensions ?? {}) } as Record<string, unknown>;
+                                          nextExtensions[ENUM_CODELIST_ID_KEY] = list.id;
+                                          updatePropertyField(prop.id, { extensions: nextExtensions, value: formatEnumValues(list.values ?? []) });
+                                        };
+
+                                        return (
+                                          <div className="flex flex-col gap-1">
+                                            <div className="flex items-center gap-1">
+                                              <select
+                                                className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                                value={linkedCodeListId ? `codelist:${linkedCodeListId}` : "inline"}
+                                                onChange={(e) => {
+                                                  const v = e.target.value;
+                                                  if (v === "inline") {
+                                                    detachFromCodeList();
+                                                    return;
+                                                  }
+                                                  if (v.startsWith("codelist:")) {
+                                                    linkToCodeList(v.replace("codelist:", ""));
+                                                  }
+                                                }}
+                                              >
+                                                <option value="inline">Vlastní</option>
+                                                {codeLists.length > 0 && <option disabled>— Číselníky —</option>}
+                                                {codeLists.map((cl) => (
+                                                  <option key={cl.id} value={`codelist:${cl.id}`}>
+                                                    {cl.name}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                              {linkedCodeListId && (
+                                                <button
+                                                  className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50"
+                                                  onClick={detachFromCodeList}
+                                                  title="Odpojit od číselníku (ponechat hodnoty jako inline)"
+                                                >
+                                                  Odpojit
+                                                </button>
+                                              )}
+                                              {enumValues && enumValues.length > 0 && !linkedCodeListId && (
+                                                <button
+                                                  className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50"
+                                                  onClick={() => updatePropertyField(prop.id, { value: formatEnumValues(enumValues) })}
+                                                  title="Zkopírovat IFC předdefinované hodnoty do výčtu"
+                                                >
+                                                  Použít IFC hodnoty
+                                                </button>
+                                              )}
+                                            </div>
+
+                                            {!linkedCodeListId ? (
+                                              <div className="flex items-center gap-1">
+                                                <input
+                                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                                  placeholder="Napiš hodnotu a stiskni Enter"
+                                                  value={enumDraftByPropId[prop.id] ?? ""}
+                                                  onChange={(e) =>
+                                                    setEnumDraftByPropId((prev) => ({ ...prev, [prop.id]: e.target.value }))
+                                                  }
+                                                  onKeyDown={(e) => {
+                                                    if (e.key !== "Enter") return;
+                                                    e.preventDefault();
+                                                    const raw = (enumDraftByPropId[prop.id] ?? "").trim();
+                                                    if (!raw) return;
+                                                    const nextValues = Array.from(new Set([...values, raw]));
+                                                    updatePropertyField(prop.id, { value: formatEnumValues(nextValues) });
+                                                    setEnumDraftByPropId((prev) => ({ ...prev, [prop.id]: "" }));
+                                                  }}
+                                                />
+                                                <button
+                                                  className={`flex items-center rounded border px-2 py-1 text-[11px] ${
+                                                    values.length === 0
+                                                      ? "border-slate-200 text-slate-400 cursor-not-allowed"
+                                                      : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400"
+                                                  }`}
+                                                  disabled={values.length === 0}
+                                                  title="Uložit jako číselník a přiřadit"
+                                                  onClick={() => {
+                                                    const suggestedName =
+                                                      (prop.propertyName || "").trim() ||
+                                                      (prop.psetName ? `${prop.psetName}` : "") ||
+                                                      "Výčet";
+                                                    setEnumSaveDialog({
+                                                      propertyId: prop.id,
+                                                      name: suggestedName,
+                                                      values,
+                                                    });
+                                                  }}
+                                                >
+                                                  <svg
+                                                    aria-hidden
+                                                    xmlns="http://www.w3.org/2000/svg"
+                                                    viewBox="0 0 24 24"
+                                                    fill="currentColor"
+                                                    className="h-4 w-4"
+                                                  >
+                                                    <path d="M6 2h11l3 3v17H4V4a2 2 0 0 1 2-2Zm12 8V6.5L16.5 5H6v5h12ZM6 20h12v-8H6v8Zm2-6h8v4H8v-4Z" />
+                                                  </svg>
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                                                Používá číselník: <span className="font-semibold text-slate-800">{linkedCodeList?.name ?? linkedCodeListId}</span>
+                                              </div>
+                                            )}
+
+                                            <div className="flex flex-wrap gap-1">
+                                              {displayValues.map((v) => (
+                                                <span key={v} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700" title={v}>
+                                                  <span>{v}</span>
+                                                  {!linkedCodeListId && (
+                                                    <button
+                                                      className="text-slate-400 hover:text-slate-700"
+                                                      title="Odebrat hodnotu"
+                                                      onClick={() => {
+                                                        const nextValues = values.filter((x) => x !== v);
+                                                        updatePropertyField(prop.id, { value: formatEnumValues(nextValues) });
+                                                      }}
+                                                    >
+                                                      ×
+                                                    </button>
+                                                  )}
+                                                </span>
+                                              ))}
+                                              {remaining > 0 && (
+                                                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">
+                                                  +{remaining}
+                                                </span>
+                                              )}
+                                              {values.length === 0 && (
+                                                <span className="text-[11px] text-slate-400">Žádné hodnoty výčtu.</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      }
+
                                       // Pro LENGTH zobrazit speciální UI pro zadávání délky
                                       if (isLength && !isDisabled) {
                                         // Parsování hodnoty délky
@@ -1440,6 +1627,66 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </div>
                 );
                 })}
+              </div>
+            </div>
+          )}
+
+          {enumSaveDialog && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
+                <div className="mb-2 text-lg font-semibold text-slate-800">Uložit výčet do číselníků?</div>
+                <div className="mb-3 text-sm text-slate-600">
+                  Zadejte název číselníku. Po uložení se číselník vytvoří a tato vlastnost se na něj automaticky naváže.
+                </div>
+                <div className="space-y-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-600">Název číselníku</label>
+                    <input
+                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                      value={enumSaveDialog.name}
+                      onChange={(e) => setEnumSaveDialog((p) => (p ? { ...p, name: e.target.value } : p))}
+                    />
+                  </div>
+                  <div className="rounded border border-slate-200 bg-slate-50 p-2">
+                    <div className="mb-1 text-[11px] font-semibold uppercase text-slate-500">Hodnoty</div>
+                    <div className="flex flex-wrap gap-1">
+                      {enumSaveDialog.values.slice(0, 40).map((v) => (
+                        <span key={v} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">
+                          {v}
+                        </span>
+                      ))}
+                      {enumSaveDialog.values.length > 40 && (
+                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">
+                          +{enumSaveDialog.values.length - 40}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50"
+                    onClick={() => setEnumSaveDialog(null)}
+                  >
+                    Neukládat
+                  </button>
+                  <button
+                    className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                    onClick={() => {
+                      onSaveEnumAsCodeList({
+                        objectCode: object.code,
+                        propertyId: enumSaveDialog.propertyId,
+                        name: enumSaveDialog.name,
+                        values: enumSaveDialog.values,
+                        link: true,
+                      });
+                      setEnumSaveDialog(null);
+                    }}
+                    disabled={enumSaveDialog.values.length === 0}
+                  >
+                    Vytvořit a přiřadit
+                  </button>
+                </div>
               </div>
             </div>
           )}
