@@ -68,15 +68,6 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
   "IFCRELFILLSELEMENT",
 ];
 
-// Mapování hodnot podmínky pro zobrazení
-const CONSTRAINT_LABELS: Record<string, string> = {
-  FILLED: "Žádné",
-  ENUM: "Výčet",
-  PATTERN: "Vzor",
-  RANGE: "Ohraničení",
-  LENGTH: "Délka",
-};
-
 const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "FILLED", label: "Žádné" },
   { value: "ENUM", label: "Výčet" },
@@ -278,19 +269,52 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     return { name: item.name as string, forPredefinedType: item.forPredefinedType as string | undefined };
   };
 
-  const allowedPsets = useMemo(() => {
+  const mergeAssignmentsByName = (items: Array<{ name: string; forPredefinedType?: string }>) => {
+    const map = new Map<string, { name: string; hasGeneric: boolean; predefinedTypes: Set<string> }>();
+    items.forEach((it) => {
+      const name = (it?.name ?? "").trim();
+      if (!name) return;
+      if (!map.has(name)) {
+        map.set(name, { name, hasGeneric: false, predefinedTypes: new Set<string>() });
+      }
+      const row = map.get(name)!;
+      if (!it.forPredefinedType) row.hasGeneric = true;
+      else row.predefinedTypes.add(it.forPredefinedType);
+    });
+    return Array.from(map.values())
+      .map((v) => ({
+        name: v.name,
+        hasGeneric: v.hasGeneric,
+        predefinedTypes: Array.from(v.predefinedTypes.values()).sort(),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const allPsets = useMemo(() => {
     if (!selectedEntity) return [];
-    return (selectedEntity.standardPsets || [])
-      .map((p) => normalizeAssignment(p))
-      .filter((p) => !p.forPredefinedType || (selectedPredefinedValue && p.forPredefinedType === selectedPredefinedValue));
-  }, [selectedEntity, selectedPredefinedValue]);
+    return (selectedEntity.standardPsets || []).map((p) => normalizeAssignment(p));
+  }, [selectedEntity]);
+
+  const allQtos = useMemo(() => {
+    if (!selectedEntity) return [];
+    return (selectedEntity.standardQtoSets || []).map((q) => normalizeAssignment(q));
+  }, [selectedEntity]);
+
+  const allowedPsets = useMemo(() => {
+    return allPsets.filter((p) => !p.forPredefinedType || (selectedPredefinedValue && p.forPredefinedType === selectedPredefinedValue));
+  }, [allPsets, selectedPredefinedValue]);
 
   const allowedQtos = useMemo(() => {
-    if (!selectedEntity) return [];
-    return (selectedEntity.standardQtoSets || [])
-      .map((q) => normalizeAssignment(q))
-      .filter((q) => !q.forPredefinedType || (selectedPredefinedValue && q.forPredefinedType === selectedPredefinedValue));
-  }, [selectedEntity, selectedPredefinedValue]);
+    return allQtos.filter((q) => !q.forPredefinedType || (selectedPredefinedValue && q.forPredefinedType === selectedPredefinedValue));
+  }, [allQtos, selectedPredefinedValue]);
+
+  const invalidSchemaGroups = useMemo(() => {
+    return propertyGroups
+      .filter((g) => g.source !== "CUSTOM")
+      .filter((g) => !!g.psetName && !g.psetName!.startsWith("_NEW_"))
+      .filter((g) => !isGroupAllowed(g.source, g.psetName))
+      .map((g) => ({ key: g.key, source: g.source, name: g.psetName as string }));
+  }, [propertyGroups, selectedEntity, selectedPredefinedValue, allowedPsets, allowedQtos]);
 
   const updateObject = (partial: Partial<ProjectObject>) => onChange({ ...object, ...partial });
 
@@ -451,21 +475,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           unit: def.unit ?? "",
           extensions: {},
           phases: [],
-        });
-      });
-    });
-  };
-
-  const copyGroup = (groupKeyValue: string) => {
-    const group = propertyGroups.find((g) => g.key === groupKeyValue);
-    if (!group) return;
-    const newName = `${group.psetName || "Custom"}_copy_${makeId().slice(0, 4)}`;
-    updateRequirements((reqs) => {
-      group.properties.forEach((p) => {
-        reqs.properties.push({
-          ...p,
-          id: makeId(),
-          psetName: newName,
         });
       });
     });
@@ -1064,6 +1073,22 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 )}
               </div>
 
+              {invalidSchemaGroups.length > 0 && (
+                <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+                  <div className="font-semibold">Některé skupiny neodpovídají zvolenému PredefinedType</div>
+                  <div className="mt-1 text-xs text-red-700">
+                    PredefinedType: <span className="font-semibold">{selectedPredefinedValue ?? "není vybrán"}</span>
+                  </div>
+                  <div className="mt-2 text-xs">
+                    {invalidSchemaGroups.map((g) => (
+                      <div key={g.key}>
+                        - {g.source}: <span className="font-semibold">{g.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {propertyGroups.length === 0 && (
                 <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
                   Žádné vlastnosti. Přidejte skupinu Pset/Qto nebo vlastní.
@@ -1074,7 +1099,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 {propertyGroups.map((group) => {
                 const expanded = expandedGroups[group.key] ?? true;
                 const isSchemaBound = group.source !== "CUSTOM";
-                const schemaOptions = group.source === "PSET" ? allowedPsets : allowedQtos;
+                const schemaOptionsRaw = group.source === "PSET" ? allPsets : allQtos;
+                const schemaOptions = mergeAssignmentsByName(schemaOptionsRaw);
                 const usedSchemaGroupNames = new Set(
                   propertyGroups
                     .filter(
@@ -1094,8 +1120,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   isSchemaBound ? propertyOptionsForGroup(group.source, group.psetName, currentId) : [];
                 const isTempGroup = group.psetName?.startsWith("_NEW_");
                 const displayPsetName = isTempGroup ? "" : (group.psetName ?? "");
-                const headerLabel =
-                  group.psetName && group.psetName.length && !isTempGroup ? group.psetName : group.source === "CUSTOM" ? "Vlastní skupina" : "Nová skupina";
+                const isInvalidGroup =
+                  isSchemaBound && !!group.psetName && !isTempGroup && !isGroupAllowed(group.source, group.psetName);
                   const docHref =
                     isSchemaBound && group.psetName && !isTempGroup
                       ? `https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical/${group.psetName}.htm`
@@ -1119,10 +1145,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   },
                 };
                 const colors = groupColors[group.source] || groupColors.CUSTOM;
+                const cardBorder = isInvalidGroup ? "border-red-400" : colors.border;
+                const badgeClass = isInvalidGroup ? "bg-red-100 text-red-800" : colors.badge;
 
                 return (
-                  <div key={group.key} className={`rounded border-2 ${colors.border} bg-white shadow-sm`}>
-                    <div className={`flex items-center justify-between border-b ${colors.border} px-3 py-2`}>
+                  <div key={group.key} className={`rounded border-2 ${cardBorder} bg-white shadow-sm`}>
+                    <div className={`flex items-center justify-between border-b ${cardBorder} px-3 py-2`}>
                       <div className="flex flex-wrap items-center gap-2">
                         <input
                           type="checkbox"
@@ -1149,9 +1177,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <path d="m6 9 6 6 6-6" />
                           </svg>
                         </button>
-                        <span className={`rounded px-2 py-1 text-[11px] font-semibold uppercase ${colors.badge}`}>
+                        <span className={`rounded px-2 py-1 text-[11px] font-semibold uppercase ${badgeClass}`}>
                           {group.source === "PSET" ? "Pset dle IFC" : group.source === "QTO" ? "Qto dle IFC" : "Vlastní"}
                         </span>
+                        {isInvalidGroup && (
+                          <span className="rounded bg-red-100 px-2 py-1 text-[11px] font-semibold uppercase text-red-800">
+                            Neplatné pro PredefinedType
+                          </span>
+                        )}
                         {group.source === "CUSTOM" ? (
                           <div className="flex items-center gap-2">
                             <input
@@ -1170,7 +1203,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         ) : (
                           <div className="flex items-center gap-2">
                             <select
-                              className="rounded border border-slate-300 px-2 py-1 text-sm"
+                              className={`rounded border px-2 py-1 text-sm ${
+                                isInvalidGroup ? "border-red-400 bg-red-50 text-red-900" : "border-slate-300"
+                              }`}
                               value={displayPsetName}
                               onChange={(e) => renameGroup(group.key, e.target.value)}
                             >
@@ -1179,12 +1214,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 <option value={group.psetName}>{group.psetName}</option>
                               )}
                               {schemaOptionsFiltered.map((item) => (
-                                <option key={item.name} value={item.name}>
+                                <option
+                                  key={`${item.name}`}
+                                  value={item.name}
+                                  disabled={
+                                    !item.hasGeneric &&
+                                    (!selectedPredefinedValue || !item.predefinedTypes.includes(selectedPredefinedValue))
+                                  }
+                                >
                                   {item.name}
                                 </option>
                               ))}
                             </select>
                             <DocLink href={docHref} label={group.psetName ?? ""} />
+                            {isInvalidGroup && (
+                              <div className="text-xs text-red-700">
+                                Skupina nepatří k aktuálnímu PredefinedType{" "}
+                                <span className="font-semibold">{selectedPredefinedValue ?? "(není vybrán)"}</span>. Vyberte jiný Pset/Qto nebo změňte PredefinedType.
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1192,7 +1240,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addPropertyToGroup(group.key)}>
                           Přidat vlastnost
                         </button>
-                        {isSchemaBound && displayPsetName && displayPsetName.length > 0 && (
+                        {isSchemaBound && displayPsetName && displayPsetName.length > 0 && isGroupAllowed(group.source, group.psetName) && (
                           <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addAllFromSchema(group.key)}>
                             Přidat všechny dle IFC
                           </button>

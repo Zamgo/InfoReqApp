@@ -19,10 +19,12 @@ type QuantitySetDefinition = {
   quantities: PropertyDefinition[];
 };
 
+type PsetAssignment = string | { name: string; forPredefinedType?: string };
+
 type SchemaEntity = {
   name: string;
-  standardPsets: string[];
-  standardQtoSets: string[];
+  standardPsets: PsetAssignment[];
+  standardQtoSets: PsetAssignment[];
   predefinedTypeValues: string[];
 };
 
@@ -84,6 +86,33 @@ const parser = new XMLParser({
   allowBooleanAttributes: true,
 });
 
+const normalizeToArray = <T>(value: T | T[] | undefined | null): T[] => {
+  if (value === undefined || value === null) return [];
+  return Array.isArray(value) ? value : [value];
+};
+
+const assignmentKey = (name: string, forPredefinedType?: string) =>
+  `${name}::${forPredefinedType ?? ""}`;
+
+const addAssignment = (
+  list: PsetAssignment[],
+  name: string,
+  forPredefinedType?: string,
+) => {
+  const key = assignmentKey(name, forPredefinedType);
+  for (const item of list) {
+    if (typeof item === "string") {
+      if (assignmentKey(item) === key) return;
+    } else if (item?.name) {
+      if (assignmentKey(item.name, item.forPredefinedType) === key) return;
+    }
+  }
+
+  // Keep backward compatibility: store plain string when no PredefinedType is needed.
+  if (!forPredefinedType) list.push(name);
+  else list.push({ name, forPredefinedType });
+};
+
 const loadPsetXml = (name: string): PropertyDefinition[] | null => {
   const file = path.join(PSET_QTO_DIR, `${name}.xml`);
   if (!fs.existsSync(file)) return null;
@@ -116,6 +145,21 @@ const loadPsetXml = (name: string): PropertyDefinition[] | null => {
   } catch (err) {
     console.warn(`⚠️ Nepodařilo se načíst ${file}:`, err);
     return null;
+  }
+};
+
+const loadApplicableClasses = (name: string): string[] => {
+  const file = path.join(PSET_QTO_DIR, `${name}.xml`);
+  if (!fs.existsSync(file)) return [];
+  try {
+    const xml = fs.readFileSync(file, "utf-8");
+    const parsed = parser.parse(xml);
+    const root = parsed?.PropertySetDef ?? parsed?.QtoSetDef;
+    const classNames = root?.ApplicableClasses?.ClassName;
+    return normalizeToArray(classNames).map(String).filter(Boolean);
+  } catch (err) {
+    console.warn(`⚠️ Nepodařilo se načíst Applicability z ${file}:`, err);
+    return [];
   }
 };
 
@@ -282,9 +326,51 @@ const buildIndex = (): SchemaIndex => {
     }
   }
 
+  // Add missing Pset/Qto definitions and entity assignments from XML files.
+  // This is required for type-driven override sets such as:
+  // - ApplicableClasses: IfcWasteTerminal/WASTETRAP -> Pset_WasteTerminalTypeWasteTrap
+  const xmlFiles = fs
+    .readdirSync(PSET_QTO_DIR)
+    .filter((f) => f.toLowerCase().endsWith(".xml"));
+
+  for (const file of xmlFiles) {
+    const setName = path.basename(file, ".xml");
+    const isPset = setName.startsWith("Pset_");
+    const isQto = setName.startsWith("Qto_");
+    if (!isPset && !isQto) continue;
+
+    if (isPset) {
+      if (!psets.has(setName)) {
+        const xmlProps = loadPsetXml(setName);
+        psets.set(setName, { name: setName, properties: xmlProps ?? [] });
+      }
+    } else if (isQto) {
+      if (!qtos.has(setName)) {
+        const xmlQtos = loadQtoXml(setName);
+        qtos.set(setName, { name: setName, quantities: xmlQtos ?? [] });
+      }
+    }
+
+    const applicable = loadApplicableClasses(setName);
+    if (!applicable.length) continue;
+
+    for (const entry of applicable) {
+      const [entityNameRaw, predefinedRaw] = entry.split("/");
+      const entityName = (entityNameRaw ?? "").trim();
+      const forPredefinedType = (predefinedRaw ?? "").trim() || undefined;
+      const entity = entities[entityName];
+      if (!entity) continue;
+
+      if (isPset) addAssignment(entity.standardPsets, setName, forPredefinedType);
+      if (isQto) addAssignment(entity.standardQtoSets, setName, forPredefinedType);
+    }
+  }
+
   // Filter out "Attributes" from standardPsets (it's not a real Pset)
   for (const entity of Object.values(entities)) {
-    entity.standardPsets = entity.standardPsets.filter((n) => n !== "Attributes");
+    entity.standardPsets = entity.standardPsets.filter((n) =>
+      typeof n === "string" ? n !== "Attributes" : n?.name !== "Attributes",
+    );
   }
   // Also remove "Attributes" from psets map entirely
   psets.delete("Attributes");
