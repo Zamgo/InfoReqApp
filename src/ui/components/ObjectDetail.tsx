@@ -76,6 +76,31 @@ const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "LENGTH", label: "Délka" },
 ];
 
+// Mapování IFC atributů na jejich datové typy
+const ATTRIBUTE_DATA_TYPES: Record<string, string> = {
+  Name: "IfcLabel",
+  Description: "IfcText",
+  Tag: "IfcIdentifier",
+  ObjectType: "IfcLabel",
+  GlobalId: "IfcGloballyUniqueId",
+  PredefinedType: "IfcLabel",
+};
+
+// Omezení pro atributy - stejné jako u vlastností
+const ATTRIBUTE_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "FILLED", label: "Žádné" },
+  { value: "ENUM", label: "Výčet" },
+  { value: "PATTERN", label: "Vzor" },
+  { value: "RANGE", label: "Ohraničení" },
+  { value: "LENGTH", label: "Délka" },
+];
+
+// Funkce pro zjištění, zda je omezení povoleno pro datový typ atributu
+const isAttributeConstraintAllowed = (attribute: string, constraint: string) => {
+  const dataType = ATTRIBUTE_DATA_TYPES[attribute] ?? "IfcLabel";
+  return isConstraintAllowedForDataType(dataType, constraint);
+};
+
 const isIfcBooleanType = (dataType?: string) => (dataType ?? "").trim().toLowerCase() === "ifcboolean";
 
 const isIfcTextLikeType = (dataType?: string) => {
@@ -144,8 +169,9 @@ const isPresetUnit = (unit?: string) => {
 export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, onSaveEnumAsCodeList }) => {
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [enumDraftByPropId, setEnumDraftByPropId] = useState<Record<string, string>>({});
-  const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[] }>(null);
+  const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[]; type?: "property" | "attribute" }>(null);
   const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
+  const [enumDraftByAttrId, setEnumDraftByAttrId] = useState<Record<string, string>>({});
 
   const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
   const selectedEntity = object.ifcEntity ? schema?.entities[object.ifcEntity] : undefined;
@@ -210,6 +236,55 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       onChangeRef.current({ ...object, requirements: next });
     }
   }, [object.requirements.properties, object]);
+
+  // Synchronizace PredefinedType mezi kartou IFC entity a atributy
+  useEffect(() => {
+    const predefinedTypeAttr = object.requirements.attributes.find((a) => a.attribute === "PredefinedType");
+    
+    // Pokud není nastavena IFC entity nebo je PredefinedType nastaven na NONE, odstraníme atribut
+    if (!object.ifcEntity || object.predefinedType.mode === "NONE") {
+      if (predefinedTypeAttr) {
+        updateRequirements((reqs) => {
+          reqs.attributes = reqs.attributes.filter((a) => a.id !== predefinedTypeAttr.id);
+        });
+      }
+      return;
+    }
+
+    // Pokud PredefinedType není NONE, musí existovat atribut
+    if (!predefinedTypeAttr) {
+      // Přidáme nový atribut PredefinedType
+      const newAttr: import("../../project/types").AttributeRequirement = {
+        id: makeId(),
+        attribute: "PredefinedType",
+        dataType: "IfcLabel",
+        required: true,
+        occurrence: "required",
+        constraint: "ENUM",
+        value: object.predefinedType.value ?? "",
+        unit: "",
+        note: "",
+        extensions: {},
+        phases: [],
+      };
+      updateRequirements((reqs) => {
+        reqs.attributes.push(newAttr);
+      });
+      return;
+    }
+
+    // Aktualizujeme existující atribut podle aktuálního stavu predefinedType
+    const currentValue = object.predefinedType.value ?? "";
+    if (predefinedTypeAttr.constraint !== "ENUM" || 
+        predefinedTypeAttr.occurrence !== "required" || 
+        predefinedTypeAttr.value !== currentValue) {
+      updateAttributeField(predefinedTypeAttr.id, {
+        constraint: "ENUM",
+        occurrence: "required",
+        value: currentValue,
+      });
+    }
+  }, [object.predefinedType, object.ifcEntity]);
 
   const groupKey = (source: PropertyRequirement["source"], psetName?: string) => `${source}:${psetName || "(custom)"}`;
 
@@ -345,14 +420,42 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     }
   };
 
+  const handleIfcEntityChange = (value: string) => {
+    // Při změně IFC entity resetujeme PredefinedType na NONE
+    updateObject({ 
+      ifcEntity: value,
+      predefinedType: { mode: "NONE" }
+    });
+  };
+
+  const getAvailableAttributes = (currentId?: string) => {
+    const allAttributes = ["Name", "Description", "Tag", "ObjectType", "GlobalId", "PredefinedType"];
+    const used = new Set(
+      object.requirements.attributes
+        .filter((a) => a.id !== currentId)
+        .map((a) => a.attribute),
+    );
+    
+    // PredefinedType je vždy v seznamu, ale může být zašedlý pokud je nastaven na kartě IFC entity
+    return allAttributes.filter((attr) => !used.has(attr));
+  };
+
   const addAttribute = () => {
+    const availableAttributes = getAvailableAttributes();
+    if (availableAttributes.length === 0) return; // Všechny atributy jsou již použité
+    
+    const firstUnused = availableAttributes[0];
     updateRequirements((reqs) => {
       reqs.attributes.push({
         id: makeId(),
-        attribute: "Name",
+        attribute: firstUnused,
+        dataType: ATTRIBUTE_DATA_TYPES[firstUnused] ?? "IfcLabel",
         required: true,
-        constraint: "EXISTS",
+        occurrence: "optional",
+        constraint: "FILLED",
         value: "",
+        unit: "",
+        note: "",
         extensions: {},
         phases: [],
       });
@@ -748,6 +851,81 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     });
   };
 
+  const updateAttributeField = (id: string, patch: Partial<import("../../project/types").AttributeRequirement>) => {
+    updateRequirements((reqs) => {
+      const idx = reqs.attributes.findIndex((a) => a.id === id);
+      if (idx >= 0) {
+        const prev = reqs.attributes[idx];
+        let next = { ...prev, ...patch };
+        
+        // Pokud se změní atribut, aktualizujeme datový typ
+        if (patch.attribute !== undefined) {
+          next.dataType = ATTRIBUTE_DATA_TYPES[patch.attribute] ?? "IfcLabel";
+          
+          // Pokud se mění atribut z PredefinedType na jiný, nastavíme predefinedType na NONE
+          if (prev.attribute === "PredefinedType" && patch.attribute !== "PredefinedType") {
+            updateObject({ predefinedType: { mode: "NONE" } });
+          }
+        }
+        
+        // Speciální logika pro PredefinedType - synchronizace s kartou IFC entity
+        if (next.attribute === "PredefinedType" || prev.attribute === "PredefinedType") {
+          if (next.attribute === "PredefinedType") {
+            // Pokud se mění hodnota nebo constraint
+            if (patch.value !== undefined || patch.constraint !== undefined) {
+              // Pokud je constraint ENUM a hodnota je z IFC seznamu, synchronizujeme s predefinedType
+              if (next.constraint === "ENUM") {
+                // Pro USERDEFINED mode - hodnota je jednoduchý string, ne výčet
+                if (object.predefinedType.mode === "USERDEFINED") {
+                  // Pokud se mění hodnota, aktualizujeme predefinedType.value
+                  if (patch.value !== undefined) {
+                    updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value ?? "" } });
+                  }
+                } else {
+                  // Pro ENUM mode - hodnota může být výčet nebo jednoduchá hodnota
+                  const enumValues = parseEnumValues(next.value ?? "");
+                  if (enumValues.length > 0) {
+                    // Pokud je hodnota v seznamu predefinedOptions, nastavíme ENUM mode
+                    const matchingValue = predefinedOptions.find((opt) => enumValues.includes(opt));
+                    if (matchingValue && matchingValue !== "USERDEFINED") {
+                      updateObject({ predefinedType: { mode: "ENUM", value: matchingValue } });
+                    } else if (enumValues.includes("USERDEFINED")) {
+                      // Pokud je USERDEFINED v hodnotách, nastavíme USERDEFINED mode
+                      const userDefinedValue = enumValues.find((v) => v !== "USERDEFINED") || "";
+                      updateObject({ predefinedType: { mode: "USERDEFINED", value: userDefinedValue } });
+                    } else if (enumValues.length === 1 && !predefinedOptions.includes(enumValues[0])) {
+                      // Pokud je to jedna hodnota, která není v predefinedOptions, je to USERDEFINED
+                      updateObject({ predefinedType: { mode: "USERDEFINED", value: enumValues[0] } });
+                    }
+                  } else if (next.value && !predefinedOptions.includes(next.value)) {
+                    // Pokud je hodnota jednoduchý string a není v predefinedOptions, je to USERDEFINED
+                    updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value } });
+                  }
+                }
+              } else if (next.constraint === "PATTERN" && next.value) {
+                // Pokud je PATTERN, použijeme hodnotu jako vlastní USERDEFINED
+                updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value } });
+              } else if (next.constraint === "FILLED" || !next.constraint) {
+                // Pokud je FILLED nebo není constraint, resetujeme na NONE
+                updateObject({ predefinedType: { mode: "NONE" } });
+              } else if ((next.constraint === "RANGE" || next.constraint === "LENGTH") && next.value) {
+                // Pro RANGE a LENGTH použijeme hodnotu jako USERDEFINED
+                updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value } });
+              }
+            }
+          }
+        }
+        
+        // Zajistíme, že omezení je platné pro daný atribut
+        if (next.constraint && !isAttributeConstraintAllowed(next.attribute, next.constraint)) {
+          next = { ...next, constraint: "FILLED", value: "" };
+        }
+        
+        reqs.attributes[idx] = next;
+      }
+    });
+  };
+
   const updateRelationField = (id: string, patch: Partial<RelationRequirement>) => {
     updateRequirements((reqs) => {
       const idx = reqs.relations.findIndex((p) => p.id === id);
@@ -757,6 +935,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const removeRequirement = (type: keyof ProjectObject["requirements"], id: string) => {
     updateRequirements((reqs) => {
+      const item = reqs[type].find((i) => i.id === id);
+      // Pokud odstraňujeme PredefinedType atribut, nastavíme predefinedType na NONE
+      if (type === "attributes" && item && "attribute" in item && item.attribute === "PredefinedType") {
+        updateObject({ predefinedType: { mode: "NONE" } });
+      }
       reqs[type] = reqs[type].filter((item) => item.id !== id) as any;
     });
   };
@@ -811,7 +994,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             <div className="flex flex-col gap-2">
               <div>
                 <label className="text-xs text-slate-600">IfcEntity</label>
-                <select className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm" value={object.ifcEntity} onChange={(e) => updateObject({ ifcEntity: e.target.value })}>
+                <select className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm" value={object.ifcEntity} onChange={(e) => handleIfcEntityChange(e.target.value)}>
                   <option value="">-- Vyberte entitu --</option>
                   {entities.map((ent) => (
                     <option key={ent} value={ent}>
@@ -822,7 +1005,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               </div>
               <div>
                 <label className="text-xs text-slate-600">PredefinedType</label>
-                <select className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "" : object.predefinedType.value ?? ""} onChange={(e) => handlePredefinedChange(e.target.value)}>
+                <select className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "" : (object.predefinedType.mode === "USERDEFINED" ? "USERDEFINED" : object.predefinedType.value ?? "")} onChange={(e) => handlePredefinedChange(e.target.value)}>
                   <option value="">-- Není definováno --</option>
                   {predefinedOptions.map((opt) => (
                     <option key={opt} value={opt}>
@@ -954,81 +1137,330 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
                       <th className="px-2 py-2">Atribut</th>
-                      <th className="px-2 py-2">Podmínka</th>
+                      <th className="px-2 py-2">Datový typ</th>
+                      <th className="px-2 py-2">Výskyt</th>
+                      <th className="px-2 py-2">
+                        <div className="flex items-center gap-1">
+                          <span>Omezení</span>
+                          <a 
+                            href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-slate-500 hover:text-indigo-600" 
+                            title="Otevřít dokumentaci k omezením"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3">
+                              <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
+                            </svg>
+                          </a>
+                        </div>
+                      </th>
                       <th className="px-2 py-2">Hodnota</th>
+                      <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {object.requirements.attributes.map((attr) => (
-                      <tr key={attr.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <select
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={attr.attribute}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.attributes = reqs.attributes.map((a) => (a.id === attr.id ? { ...a, attribute: e.target.value } : a));
-                              })
-                            }
-                          >
-                            {["Name", "Description", "Tag", "ObjectType", "GlobalId"].map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <select
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={attr.constraint}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.attributes = reqs.attributes.map((a) => (a.id === attr.id ? { ...a, constraint: e.target.value as any } : a));
-                              })
-                            }
-                          >
-                            {["EXISTS", "EQUALS", "PATTERN", "ENUM"].map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={attr.value ?? ""}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.attributes = reqs.attributes.map((a) => (a.id === attr.id ? { ...a, value: e.target.value } : a));
-                              })
-                            }
-                          />
-                        </td>
-                        <td className="px-2 py-2">
-                          <PhaseSelector
-                            phases={phases}
-                            value={attr.phases}
-                            onChange={(ids) =>
-                              updateRequirements((reqs) => {
-                                reqs.attributes = reqs.attributes.map((a) => (a.id === attr.id ? { ...a, phases: ids } : a));
-                              })
-                            }
-                          />
-                        </td>
-                        <td className="px-2 py-2 text-right">
-                          <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("attributes", attr.id)}>
-                            Odebrat
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {object.requirements.attributes.map((attr) => {
+                      const dataType = attr.dataType ?? ATTRIBUTE_DATA_TYPES[attr.attribute] ?? "IfcLabel";
+                      const isDisabled = attr.constraint === "FILLED" || attr.constraint === undefined;
+                      const isPattern = attr.constraint === "PATTERN";
+                      const isEnum = attr.constraint === "ENUM";
+                      const isPredefinedType = attr.attribute === "PredefinedType";
+                      const isPredefinedTypeFromIFC = isPredefinedType && object.predefinedType.mode !== "NONE";
+                      
+                      return (
+                        <tr key={attr.id} className="border-t border-slate-200">
+                          {/* ATRIBUT - Atribut dropdown */}
+                          <td className="px-2 py-2">
+                            <select
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={attr.attribute}
+                              onChange={(e) => updateAttributeField(attr.id, { attribute: e.target.value })}
+                              disabled={isPredefinedTypeFromIFC}
+                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
+                            >
+                              {getAvailableAttributes(attr.id).map((opt) => {
+                                const isPredefinedTypeOption = opt === "PredefinedType";
+                                const isPredefinedTypeSetOnIFCEntity = isPredefinedTypeOption && object.predefinedType.mode !== "NONE";
+                                return (
+                                  <option 
+                                    key={opt} 
+                                    value={opt}
+                                    disabled={isPredefinedTypeSetOnIFCEntity}
+                                  >
+                                    {opt}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </td>
+                          
+                          {/* DATOVÝ TYP - readonly, odvozeno z atributu */}
+                          <td className="px-2 py-2">
+                            <select
+                              className="w-full rounded border border-slate-300 bg-slate-50 px-2 py-1 text-sm text-slate-600"
+                              value={dataType}
+                              disabled
+                            >
+                              <option value={dataType}>{dataType}</option>
+                            </select>
+                          </td>
+                          
+                          {/* VÝSKYT */}
+                          <td className="px-2 py-2">
+                            <select 
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={isPredefinedTypeFromIFC ? "required" : (attr.occurrence ?? "optional")} 
+                              onChange={(e) => updateAttributeField(attr.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
+                              disabled={isPredefinedTypeFromIFC}
+                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
+                            >
+                              <option value="required">Požadováno (required)</option>
+                              <option value="prohibited">Zakázáno (prohibited)</option>
+                              <option value="optional">Možné (optional)</option>
+                            </select>
+                          </td>
+                          
+                          {/* OMEZENÍ */}
+                          <td className="px-2 py-2">
+                            <select 
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={attr.constraint ?? "FILLED"} 
+                              onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as any })}
+                              disabled={isPredefinedTypeFromIFC}
+                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
+                            >
+                              {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => {
+                                const allowed = isAttributeConstraintAllowed(attr.attribute, opt.value);
+                                return (
+                                  <option key={opt.value} value={opt.value} disabled={!allowed}>
+                                    {opt.label}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </td>
+                          
+                          {/* HODNOTA */}
+                          <td className="px-2 py-2">
+                            {(() => {
+                              // Pro PATTERN zobrazit speciální UI + odkazy
+                              if (isPattern && !isDisabled) {
+                                return (
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                      value={attr.value ?? ""}
+                                      onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })}
+                                      placeholder='Regex pattern (např. ^DT[0-9]{2}$)'
+                                    />
+                                    <a
+                                      href="https://regex101.com/"
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="flex items-center text-slate-500 hover:text-indigo-600"
+                                      title="Otevřít regex tester (regex101)"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+                                        <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
+                                      </svg>
+                                    </a>
+                                  </div>
+                                );
+                              }
+
+                              // Pro ENUM (výčet) – inline hodnoty nebo číselník + badges + nabídka uložení
+                              if (isEnum && !isDisabled) {
+                                const linkedCodeListId = (attr.extensions?.[ENUM_CODELIST_ID_KEY] as string | undefined) ?? undefined;
+                                const linkedCodeList = linkedCodeListId ? codeLists.find((c) => c.id === linkedCodeListId) : undefined;
+                                const values = linkedCodeList ? (linkedCodeList.values ?? []) : parseEnumValues(attr.value ?? "");
+                                const displayValues = values.slice(0, 24);
+                                const remaining = values.length - displayValues.length;
+
+                                const detachFromCodeList = () => {
+                                  const nextExtensions = { ...(attr.extensions ?? {}) } as Record<string, unknown>;
+                                  delete (nextExtensions as any)[ENUM_CODELIST_ID_KEY];
+                                  updateAttributeField(attr.id, { extensions: nextExtensions });
+                                };
+
+                                const linkToCodeList = (id: string) => {
+                                  const list = codeLists.find((c) => c.id === id);
+                                  if (!list) return;
+                                  const nextExtensions = { ...(attr.extensions ?? {}) } as Record<string, unknown>;
+                                  nextExtensions[ENUM_CODELIST_ID_KEY] = list.id;
+                                  updateAttributeField(attr.id, { extensions: nextExtensions, value: formatEnumValues(list.values ?? []) });
+                                };
+
+                                return (
+                                  <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-1">
+                                      <select
+                                        className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                        value={linkedCodeListId ? `codelist:${linkedCodeListId}` : "inline"}
+                                        onChange={(e) => {
+                                          const v = e.target.value;
+                                          if (v === "inline") {
+                                            detachFromCodeList();
+                                            return;
+                                          }
+                                          if (v.startsWith("codelist:")) {
+                                            linkToCodeList(v.replace("codelist:", ""));
+                                          }
+                                        }}
+                                      >
+                                        <option value="inline">Vlastní</option>
+                                        {codeLists.length > 0 && <option disabled>— Číselníky —</option>}
+                                        {codeLists.map((cl) => (
+                                          <option key={cl.id} value={`codelist:${cl.id}`}>
+                                            {cl.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {linkedCodeListId && (
+                                        <button
+                                          className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50"
+                                          onClick={detachFromCodeList}
+                                          title="Odpojit od číselníku (ponechat hodnoty jako inline)"
+                                        >
+                                          Odpojit
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {!linkedCodeListId ? (
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                          placeholder="Napiš hodnotu a stiskni Enter"
+                                          value={enumDraftByAttrId[attr.id] ?? ""}
+                                          onChange={(e) =>
+                                            setEnumDraftByAttrId((prev) => ({ ...prev, [attr.id]: e.target.value }))
+                                          }
+                                          onKeyDown={(e) => {
+                                            if (e.key !== "Enter") return;
+                                            e.preventDefault();
+                                            const raw = (enumDraftByAttrId[attr.id] ?? "").trim();
+                                            if (!raw) return;
+                                            const nextValues = Array.from(new Set([...values, raw]));
+                                            updateAttributeField(attr.id, { value: formatEnumValues(nextValues) });
+                                            setEnumDraftByAttrId((prev) => ({ ...prev, [attr.id]: "" }));
+                                          }}
+                                        />
+                                        <button
+                                          className={`flex items-center rounded border px-2 py-1 text-[11px] ${
+                                            values.length === 0
+                                              ? "border-slate-200 text-slate-400 cursor-not-allowed"
+                                              : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400"
+                                          }`}
+                                          disabled={values.length === 0}
+                                          title="Uložit jako číselník a přiřadit"
+                                          onClick={() => {
+                                            const suggestedName = (attr.attribute || "").trim() || "Výčet";
+                                            setEnumSaveDialog({
+                                              propertyId: attr.id,
+                                              name: suggestedName,
+                                              values,
+                                              type: "attribute",
+                                            });
+                                          }}
+                                        >
+                                          <svg
+                                            aria-hidden
+                                            xmlns="http://www.w3.org/2000/svg"
+                                            viewBox="0 0 24 24"
+                                            fill="currentColor"
+                                            className="h-4 w-4"
+                                          >
+                                            <path d="M6 2h11l3 3v17H4V4a2 2 0 0 1 2-2Zm12 8V6.5L16.5 5H6v5h12ZM6 20h12v-8H6v8Zm2-6h8v4H8v-4Z" />
+                                          </svg>
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                                        Používá číselník: <span className="font-semibold text-slate-800">{linkedCodeList?.name ?? linkedCodeListId}</span>
+                                      </div>
+                                    )}
+
+                                    <div className="flex flex-wrap gap-1">
+                                      {displayValues.map((v) => (
+                                        <span key={v} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700" title={v}>
+                                          <span>{v}</span>
+                                          {!linkedCodeListId && (
+                                            <button
+                                              className="text-slate-400 hover:text-slate-700"
+                                              title="Odebrat hodnotu"
+                                              onClick={() => {
+                                                const nextValues = values.filter((x) => x !== v);
+                                                updateAttributeField(attr.id, { value: formatEnumValues(nextValues) });
+                                              }}
+                                            >
+                                              ×
+                                            </button>
+                                          )}
+                                        </span>
+                                      ))}
+                                      {remaining > 0 && (
+                                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">
+                                          +{remaining}
+                                        </span>
+                                      )}
+                                      {values.length === 0 && (
+                                        <span className="text-[11px] text-slate-400">Žádné hodnoty výčtu.</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              
+                              // Standardní input pro EQUALS nebo disabled pro EXISTS
+                              return (
+                                <input
+                                  className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isDisabled || isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                                  value={attr.value ?? ""}
+                                  onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })}
+                                  disabled={isDisabled || isPredefinedTypeFromIFC}
+                                  placeholder={isDisabled || isPredefinedTypeFromIFC ? "" : "Hodnota"}
+                                  title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
+                                />
+                              );
+                            })()}
+                          </td>
+                          
+                          {/* POZNÁMKA */}
+                          <td className="px-2 py-2">
+                            <input 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                              value={attr.note ?? ""} 
+                              onChange={(e) => updateAttributeField(attr.id, { note: e.target.value })}
+                              placeholder="Všeobecný popis" 
+                            />
+                          </td>
+                          
+                          {/* FÁZE */}
+                          <td className="px-2 py-2">
+                            <PhaseSelector
+                              phases={phases}
+                              value={attr.phases}
+                              onChange={(ids) => updateAttributeField(attr.id, { phases: ids })}
+                            />
+                          </td>
+                          
+                          {/* AKCE */}
+                          <td className="px-2 py-2 text-right">
+                            <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("attributes", attr.id)}>
+                              Odebrat
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {!object.requirements.attributes.length && (
                       <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={5}>
+                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={8}>
                           Žádné atributy nejsou definovány.
                         </td>
                       </tr>
@@ -1534,6 +1966,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                                       propertyId: prop.id,
                                                       name: suggestedName,
                                                       values,
+                                                      type: "property",
                                                     });
                                                   }}
                                                 >
@@ -1881,7 +2314,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
                 <div className="mb-2 text-lg font-semibold text-slate-800">Uložit výčet do číselníků?</div>
                 <div className="mb-3 text-sm text-slate-600">
-                  Zadejte název číselníku. Po uložení se číselník vytvoří a tato vlastnost se na něj automaticky naváže.
+                  Zadejte název číselníku. Po uložení se číselník vytvoří a {enumSaveDialog.type === "attribute" ? "tento atribut" : "tato vlastnost"} se na něj automaticky naváže.
                 </div>
                 <div className="space-y-2">
                   <div>

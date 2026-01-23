@@ -23,9 +23,12 @@ export interface RequirementBase {
 export interface AttributeRequirement extends RequirementBase {
   attribute: string;
   required: boolean;
-  constraint: "EXISTS" | "EQUALS" | "PATTERN" | "ENUM";
+  dataType?: string;
+  occurrence?: "required" | "prohibited" | "optional";
+  constraint: "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH";
   value?: string;
   allowedValues?: string[];
+  unit?: string;
   note?: string;
 }
 
