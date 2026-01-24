@@ -82,6 +82,10 @@ export interface ClassificationRequirement extends RequirementBase {
   sort?: string;
   readOnly?: boolean;
   code?: string;
+  /** Constraint type for classification value */
+  constraint?: "FILLED" | "ENUM" | "PATTERN";
+  /** If true, this classification is used in applicability section (not requirements) */
+  isApplicability?: boolean;
 }
 
 export interface MaterialRequirement extends RequirementBase {

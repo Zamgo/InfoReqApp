@@ -61,8 +61,10 @@ export const ensureObject = (
             classificationId: project.primaryClassificationId,
             system: project.classifications.find((c) => c.id === project.primaryClassificationId)?.ifcClassification.Name ?? "Klasifikace",
             identification: code,
+            value: code, // Primary classification value should be the code
             name: description,
             readOnly: true,
+            isApplicability: true, // Primary classification is always in applicability
             extensions: {},
             phases: [],
           },

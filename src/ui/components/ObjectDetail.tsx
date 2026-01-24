@@ -612,7 +612,57 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   }
   
   xml += `
-        </ids:entity>
+        </ids:entity>`;
+  
+  // Add applicability classifications (isApplicability = true OR readOnly = true for primary classification)
+  const applicabilityClassifications = filteredObj.requirements.classifications.filter((cls) => cls.isApplicability || cls.readOnly);
+  applicabilityClassifications.forEach((cls) => {
+    const system = cls.system || cls.name;
+    if (!system) return;
+    
+    const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
+    
+    xml += `
+        <ids:classification${uriAttr}>`;
+    
+    // Value comes first in XSD sequence
+    if (cls.value) {
+      const constraint = cls.constraint ?? "FILLED";
+      if (constraint === "ENUM") {
+        const values = cls.value.split("|").map((v) => v.trim()).filter(Boolean);
+        xml += `
+          <ids:value>
+            <xs:restriction base="xs:string">`;
+        values.forEach((v) => {
+          xml += `
+              <xs:enumeration value="${escapeXml(v)}" />`;
+        });
+        xml += `
+            </xs:restriction>
+          </ids:value>`;
+      } else if (constraint === "PATTERN") {
+        xml += `
+          <ids:value>
+            <xs:restriction base="xs:string">
+              <xs:pattern value="${escapeXml(cls.value)}" />
+            </xs:restriction>
+          </ids:value>`;
+      } else {
+        xml += `
+          <ids:value>
+            <ids:simpleValue>${escapeXml(cls.value)}</ids:simpleValue>
+          </ids:value>`;
+      }
+    }
+    
+    xml += `
+          <ids:system>
+            <ids:simpleValue>${escapeXml(system)}</ids:simpleValue>
+          </ids:system>
+        </ids:classification>`;
+  });
+  
+  xml += `
       </ids:applicability>
       <ids:requirements>`;
   
@@ -683,7 +733,9 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   });
   
   // Classifications - system is required, value comes BEFORE system according to XSD sequence
-  filteredObj.requirements.classifications.forEach((cls) => {
+  // Only include non-applicability classifications in requirements (exclude readOnly primary classifications)
+  const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => !cls.isApplicability && !cls.readOnly);
+  requirementClassifications.forEach((cls) => {
     const system = cls.system || cls.name;
     // Skip classifications without system (required by XSD)
     if (!system) return;
@@ -696,10 +748,32 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
     
     // Value comes first in XSD sequence (minOccurs="0")
     if (cls.value) {
-      xml += `
+      const constraint = cls.constraint ?? "FILLED";
+      if (constraint === "ENUM") {
+        const values = cls.value.split("|").map((v) => v.trim()).filter(Boolean);
+        xml += `
+          <ids:value>
+            <xs:restriction base="xs:string">`;
+        values.forEach((v) => {
+          xml += `
+              <xs:enumeration value="${escapeXml(v)}" />`;
+        });
+        xml += `
+            </xs:restriction>
+          </ids:value>`;
+      } else if (constraint === "PATTERN") {
+        xml += `
+          <ids:value>
+            <xs:restriction base="xs:string">
+              <xs:pattern value="${escapeXml(cls.value)}" />
+            </xs:restriction>
+          </ids:value>`;
+      } else {
+        xml += `
           <ids:value>
             <ids:simpleValue>${escapeXml(cls.value)}</ids:simpleValue>
           </ids:value>`;
+      }
     }
     
     // System is required (minOccurs="1")
@@ -838,12 +912,26 @@ const generateHumanReadable = (
     requirements.push(`**${occurrence}** mít relaci **${rel.relationType}** s ${entityText}${predefinedText}`);
   });
   
-  // Classifications
+  // Classifications - split by applicability
   filteredObj.requirements.classifications.forEach((cls) => {
     if (!cls.system && !cls.value && !cls.name) return;
     const systemName = cls.system || cls.name;
-    const valueText = cls.value ? ` s hodnotou **${cls.value}**` : "";
-    requirements.push(`**MUSÍ** mít klasifikaci **${systemName}**${valueText}`);
+    
+    if (cls.isApplicability || cls.readOnly) {
+      // Add to applicability section (primary classifications are always applicability)
+      if (cls.value) {
+        applicability.push(`klasifikaci **${cls.value}** ze systému **${systemName}**`);
+      } else {
+        applicability.push(`klasifikaci ze systému **${systemName}**`);
+      }
+    } else {
+      // Add to requirements section
+      if (cls.value) {
+        requirements.push(`**MUSÍ** mít klasifikaci **${cls.value}** ze systému **${systemName}**`);
+      } else {
+        requirements.push(`**MUSÍ** mít klasifikaci ze systému **${systemName}**`);
+      }
+    }
   });
   
   // Materials
@@ -4258,10 +4346,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     <tr>
                       <th className="w-8 px-2 py-2"></th>
                       <th className="px-2 py-2">Klasifikační systém</th>
+                      <th className="px-2 py-2">Omezení</th>
                       <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">URI</th>
                       <th className="px-2 py-2">Popis</th>
                       <th className="px-2 py-2">Fáze</th>
+                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, klasifikace bude v části Použitelnost (applicability) místo Požadavky">Použitelnost</th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
@@ -4321,6 +4411,22 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           )}
                         </td>
                         <td className="px-2 py-2">
+                          <select
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.constraint ?? "FILLED"}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, constraint: e.target.value as "FILLED" | "ENUM" | "PATTERN" } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                          >
+                            <option value="FILLED">Žádné</option>
+                            <option value="ENUM">Výčet</option>
+                            <option value="PATTERN">Vzor (regex)</option>
+                          </select>
+                        </td>
+                        <td className="px-2 py-2">
                           <input
                             className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
                             value={cls.value ?? cls.identification ?? cls.code ?? ""}
@@ -4330,7 +4436,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               })
                             }
                             disabled={cls.readOnly}
-                            placeholder="Hodnota klasifikace"
+                            placeholder={cls.constraint === "ENUM" ? "Hodnoty oddělené |" : cls.constraint === "PATTERN" ? "Regex vzor" : "Hodnota klasifikace"}
                           />
                         </td>
                         <td className="px-2 py-2">
@@ -4370,6 +4476,20 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             }
                           />
                         </td>
+                        <td className="px-2 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            className={`h-4 w-4 rounded border-slate-300 text-green-600 focus:ring-green-500 ${cls.readOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
+                            checked={cls.readOnly ? true : (cls.isApplicability ?? false)}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, isApplicability: e.target.checked } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                            title={cls.readOnly ? "Primární klasifikace je vždy v části Použitelnost" : "Pokud je zaškrtnuto, klasifikace bude v části Použitelnost (applicability)"}
+                          />
+                        </td>
                         <td className="px-2 py-2 text-right">
                           {!cls.readOnly && (
                             <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("classifications", cls.id)}>
@@ -4386,7 +4506,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     ))}
                     {!object.requirements.classifications.length && (
                       <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={7}>
+                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={9}>
                           Žádné klasifikace nejsou definovány.
                         </td>
                       </tr>
