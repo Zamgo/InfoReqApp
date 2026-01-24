@@ -79,7 +79,21 @@ export interface ClassificationRequirement extends RequirementBase {
 }
 
 export interface MaterialRequirement extends RequirementBase {
+  /** Occurrence of the material requirement */
+  occurrence?: "required" | "prohibited" | "optional";
+  /** Category mode - how the category value is defined */
+  categoryMode?: "NONE" | "SIMPLE" | "ENUM";
+  /** Category - can be custom value or selected from codelist */
+  category?: string;
+  /** URI reference for the material */
+  uri?: string;
+  /** Constraint type for material value */
+  constraint?: "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH";
+  /** Value based on constraint type */
+  value?: string;
+  /** @deprecated Use occurrence instead */
   required: boolean;
+  /** @deprecated Use category instead */
   materialType?: "SINGLE" | "LAYER" | "PROFILE" | "CONSTITUENT";
   note?: string;
 }

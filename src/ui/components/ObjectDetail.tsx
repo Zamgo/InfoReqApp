@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
-import type { CodeList, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
+import type { CodeList, MaterialRequirement, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
@@ -109,6 +109,22 @@ const ATTRIBUTE_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "LENGTH", label: "Délka" },
 ];
 
+// Režimy pro sloupec Kategorie materiálu
+const MATERIAL_CATEGORY_MODE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "NONE", label: "Není definováno" },
+  { value: "SIMPLE", label: "Jednoduchá hodnota" },
+  { value: "ENUM", label: "Výčet" },
+];
+
+// Omezení pro materiály - stejná jako u ostatních karet
+const MATERIAL_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "FILLED", label: "Žádné" },
+  { value: "ENUM", label: "Výčet" },
+  { value: "PATTERN", label: "Vzor" },
+  { value: "RANGE", label: "Ohraničení" },
+  { value: "LENGTH", label: "Délka" },
+];
+
 // Funkce pro zjištění, zda je omezení povoleno pro datový typ atributu
 const isAttributeConstraintAllowed = (attribute: string, constraint: string) => {
   const dataType = ATTRIBUTE_DATA_TYPES[attribute] ?? "IfcLabel";
@@ -186,6 +202,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[]; type?: "property" | "attribute" }>(null);
   const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
   const [enumDraftByAttrId, setEnumDraftByAttrId] = useState<Record<string, string>>({});
+  const [enumDraftByMatId, setEnumDraftByMatId] = useState<Record<string, string>>({});
+  const [categoryDraftByMatId, setCategoryDraftByMatId] = useState<Record<string, string>>({});
   const [showRelationHelpModal, setShowRelationHelpModal] = useState(false);
 
   const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
@@ -205,6 +223,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [customGroupErrors, setCustomGroupErrors] = useState<Record<string, string>>({});
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [selectedProperties, setSelectedProperties] = useState<Set<string>>(new Set());
+  const [selectedAttributes, setSelectedAttributes] = useState<Set<string>>(new Set());
+  const [selectedRelations, setSelectedRelations] = useState<Set<string>>(new Set());
+  const [selectedMaterials, setSelectedMaterials] = useState<Set<string>>(new Set());
+  const [selectedClassifications, setSelectedClassifications] = useState<Set<string>>(new Set());
   // Ref pro uložení aktuálních hodnot selectedGroups a selectedProperties pro mazání
   const selectedGroupsRef = useRef<Set<string>>(new Set());
   const selectedPropertiesRef = useRef<Set<string>>(new Set());
@@ -738,6 +760,151 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     setSelectedProperties(new Set());
   };
 
+  // === ATRIBUTY - výběr a mazání ===
+  const isAttributeProtected = (attr: import("../../project/types").AttributeRequirement) => {
+    // PredefinedType je chráněn, pokud je řízen z karty IFC entity
+    return attr.attribute === "PredefinedType" && object.predefinedType.mode !== "NONE";
+  };
+
+  const toggleAttributeSelection = (attrId: string) => {
+    // Nenechat vybrat chráněné atributy
+    const attr = object.requirements.attributes.find((a) => a.id === attrId);
+    if (attr && isAttributeProtected(attr)) return;
+    
+    setSelectedAttributes((prev) => {
+      const next = new Set(prev);
+      if (next.has(attrId)) next.delete(attrId);
+      else next.add(attrId);
+      return next;
+    });
+  };
+
+
+  const selectAllAttributes = () => {
+    // Nevybírat chráněné atributy
+    const selectableIds = object.requirements.attributes
+      .filter((a) => !isAttributeProtected(a))
+      .map((a) => a.id);
+    setSelectedAttributes(new Set(selectableIds));
+  };
+
+  const deleteSelectedAttributes = () => {
+    const idsToDelete = Array.from(selectedAttributes);
+    updateRequirements((reqs) => {
+      // Nemazat chráněné atributy
+      reqs.attributes = reqs.attributes.filter((a) => 
+        !idsToDelete.includes(a.id) || isAttributeProtected(a)
+      );
+    });
+    setSelectedAttributes(new Set());
+  };
+
+  const updateSelectedAttributes = (patch: Partial<import("../../project/types").AttributeRequirement>) => {
+    if (selectedAttributes.size === 0) return;
+    updateRequirements((reqs) => {
+      reqs.attributes = reqs.attributes.map((a) =>
+        selectedAttributes.has(a.id) ? { ...a, ...patch } : a
+      );
+    });
+  };
+
+  // === RELACE (PartOf) - výběr a mazání ===
+  const toggleRelationSelection = (relId: string) => {
+    setSelectedRelations((prev) => {
+      const next = new Set(prev);
+      if (next.has(relId)) next.delete(relId);
+      else next.add(relId);
+      return next;
+    });
+  };
+
+  const selectAllRelations = () => {
+    const allIds = object.requirements.relations.map((r) => r.id);
+    setSelectedRelations(new Set(allIds));
+  };
+
+  const deleteSelectedRelations = () => {
+    const idsToDelete = Array.from(selectedRelations);
+    updateRequirements((reqs) => {
+      reqs.relations = reqs.relations.filter((r) => !idsToDelete.includes(r.id));
+    });
+    setSelectedRelations(new Set());
+  };
+
+  const updateSelectedRelations = (patch: Partial<RelationRequirement>) => {
+    if (selectedRelations.size === 0) return;
+    updateRequirements((reqs) => {
+      reqs.relations = reqs.relations.map((r) =>
+        selectedRelations.has(r.id) ? { ...r, ...patch } : r
+      );
+    });
+  };
+
+  // === MATERIÁLY - výběr a mazání ===
+  const toggleMaterialSelection = (matId: string) => {
+    setSelectedMaterials((prev) => {
+      const next = new Set(prev);
+      if (next.has(matId)) next.delete(matId);
+      else next.add(matId);
+      return next;
+    });
+  };
+
+  const selectAllMaterials = () => {
+    const allIds = object.requirements.materials.map((m) => m.id);
+    setSelectedMaterials(new Set(allIds));
+  };
+
+  const deleteSelectedMaterials = () => {
+    const idsToDelete = Array.from(selectedMaterials);
+    updateRequirements((reqs) => {
+      reqs.materials = reqs.materials.filter((m) => !idsToDelete.includes(m.id));
+    });
+    setSelectedMaterials(new Set());
+  };
+
+  const updateSelectedMaterials = (patch: Partial<MaterialRequirement>) => {
+    if (selectedMaterials.size === 0) return;
+    updateRequirements((reqs) => {
+      reqs.materials = reqs.materials.map((m) =>
+        selectedMaterials.has(m.id) ? { ...m, ...patch } : m
+      );
+    });
+  };
+
+  // === KLASIFIKACE - výběr a mazání ===
+  const toggleClassificationSelection = (clsId: string) => {
+    // Nenechat vybrat chráněné klasifikace (readOnly)
+    const cls = object.requirements.classifications.find((c) => c.id === clsId);
+    if (cls?.readOnly) return;
+    
+    setSelectedClassifications((prev) => {
+      const next = new Set(prev);
+      if (next.has(clsId)) next.delete(clsId);
+      else next.add(clsId);
+      return next;
+    });
+  };
+
+  const selectAllClassifications = () => {
+    // Nevybírat chráněné klasifikace (readOnly)
+    const selectableIds = object.requirements.classifications
+      .filter((c) => !c.readOnly)
+      .map((c) => c.id);
+    setSelectedClassifications(new Set(selectableIds));
+  };
+
+  const deleteSelectedClassifications = () => {
+    const idsToDelete = Array.from(selectedClassifications);
+    updateRequirements((reqs) => {
+      // Nemazat chráněné klasifikace (readOnly)
+      reqs.classifications = reqs.classifications.filter((c) => 
+        !idsToDelete.includes(c.id) || c.readOnly
+      );
+    });
+    setSelectedClassifications(new Set());
+  };
+
   const toggleGroup = (groupKeyValue: string) => {
     setExpandedGroups((prev) => ({ ...prev, [groupKeyValue]: !(prev[groupKeyValue] ?? true) }));
   };
@@ -780,12 +947,24 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     updateRequirements((reqs) => {
       reqs.materials.push({
         id: makeId(),
-        required: false,
-        materialType: undefined,
+        occurrence: "optional",
+        categoryMode: "NONE",
+        category: "",
+        uri: "",
+        constraint: "FILLED",
+        value: "",
+        required: false, // legacy field for backwards compatibility
+        materialType: undefined, // legacy field for backwards compatibility
         note: "",
         extensions: {},
         phases: [],
       });
+    });
+  };
+
+  const updateMaterialField = (id: string, patch: Partial<MaterialRequirement>) => {
+    updateRequirements((reqs) => {
+      reqs.materials = reqs.materials.map((m) => (m.id === id ? { ...m, ...patch } : m));
     });
   };
 
@@ -1076,22 +1255,40 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         <div className="flex-1 min-h-0 overflow-auto p-4">
           {activeTab === "attributes" && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-slate-800">Atributy</div>
-                  <div className="text-xs text-slate-500">Ifc attributes (Name, Description, Tag ...)</div>
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-slate-800">Atributy</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addAttribute}>
                   Přidat atribut
                 </button>
+                {object.requirements.attributes.length > 0 && (
+                  <>
+                    <div className="h-4 w-px bg-slate-300" />
+                    <button
+                      className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={selectAllAttributes}
+                    >
+                      Označit všechny
+                    </button>
+                    {selectedAttributes.size > 0 && (
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                        onClick={deleteSelectedAttributes}
+                      >
+                        Smazat označené ({selectedAttributes.size})
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
+              <div className="text-xs text-slate-500">Ifc attributes (Name, Description, Tag ...)</div>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
+                      <th className="w-8 px-2 py-2"></th>
+                      <th className="px-2 py-2">Výskyt</th>
                       <th className="px-2 py-2">Atribut</th>
                       <th className="px-2 py-2">Datový typ</th>
-                      <th className="px-2 py-2">Výskyt</th>
                       <th className="px-2 py-2">
                         <div className="flex items-center gap-1">
                           <span>Omezení</span>
@@ -1126,6 +1323,39 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       
                       return (
                         <tr key={attr.id} className="border-t border-slate-200">
+                          {/* CHECKBOX */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="checkbox"
+                              className={`h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isPredefinedTypeFromIFC ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                              checked={selectedAttributes.has(attr.id)}
+                              onChange={() => !isPredefinedTypeFromIFC && toggleAttributeSelection(attr.id)}
+                              disabled={isPredefinedTypeFromIFC}
+                              title={isPredefinedTypeFromIFC ? "Chráněný atribut - nelze vybrat" : ""}
+                            />
+                          </td>
+                          {/* VÝSKYT */}
+                          <td className="px-2 py-2">
+                            <select 
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={isPredefinedTypeFromIFC ? "required" : (attr.occurrence ?? "optional")} 
+                              onChange={(e) => {
+                                const newValue = e.target.value as "required" | "prohibited" | "optional";
+                                if (selectedAttributes.has(attr.id) && selectedAttributes.size > 0) {
+                                  updateSelectedAttributes({ occurrence: newValue });
+                                } else {
+                                  updateAttributeField(attr.id, { occurrence: newValue });
+                                }
+                              }}
+                              disabled={isPredefinedTypeFromIFC}
+                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
+                            >
+                              <option value="required">Požadováno (required)</option>
+                              <option value="prohibited">Zakázáno (prohibited)</option>
+                              <option value="optional">Možné (optional)</option>
+                            </select>
+                          </td>
+                          
                           {/* ATRIBUT - Atribut dropdown */}
                           <td className="px-2 py-2">
                             <select
@@ -1159,21 +1389,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               disabled
                             >
                               <option value={dataType}>{dataType}</option>
-                            </select>
-                          </td>
-                          
-                          {/* VÝSKYT */}
-                          <td className="px-2 py-2">
-                            <select 
-                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                              value={isPredefinedTypeFromIFC ? "required" : (attr.occurrence ?? "optional")} 
-                              onChange={(e) => updateAttributeField(attr.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
-                              disabled={isPredefinedTypeFromIFC}
-                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
-                            >
-                              <option value="required">Požadováno (required)</option>
-                              <option value="prohibited">Zakázáno (prohibited)</option>
-                              <option value="optional">Možné (optional)</option>
                             </select>
                           </td>
                           
@@ -1388,14 +1603,55 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 );
                               }
                               
-                              // Standardní input pro EQUALS nebo disabled pro EXISTS
+                              // Pro FILLED (Žádné) - editovatelné pole s respektováním datového typu
+                              if (isDisabled && !isPredefinedTypeFromIFC) {
+                                const isBool = isIfcBooleanType(dataType);
+                                const isNumeric = isIfcNumericLikeType(dataType);
+                                
+                                if (isBool) {
+                                  return (
+                                    <select
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                      value={attr.value ?? ""}
+                                      onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })}
+                                    >
+                                      <option value="">Bez požadavku</option>
+                                      <option value="TRUE">TRUE</option>
+                                      <option value="FALSE">FALSE</option>
+                                    </select>
+                                  );
+                                }
+                                
+                                if (isNumeric) {
+                                  return (
+                                    <input
+                                      type="number"
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                      value={attr.value ?? ""}
+                                      onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })}
+                                      placeholder="Bez požadavku"
+                                    />
+                                  );
+                                }
+                                
+                                return (
+                                  <input
+                                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                    value={attr.value ?? ""}
+                                    onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })}
+                                    placeholder="Bez požadavku"
+                                  />
+                                );
+                              }
+                              
+                              // Standardní input nebo disabled pro PredefinedType z IFC
                               return (
                                 <input
-                                  className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isDisabled || isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                                  className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
                                   value={attr.value ?? ""}
                                   onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })}
-                                  disabled={isDisabled || isPredefinedTypeFromIFC}
-                                  placeholder={isDisabled || isPredefinedTypeFromIFC ? "" : "Hodnota"}
+                                  disabled={isPredefinedTypeFromIFC}
+                                  placeholder={isPredefinedTypeFromIFC ? "" : "Hodnota"}
                                   title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
                                 />
                               );
@@ -1432,7 +1688,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     })}
                     {!object.requirements.attributes.length && (
                       <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={8}>
+                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={9}>
                           Žádné atributy nejsou definovány.
                         </td>
                       </tr>
@@ -1667,9 +1923,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                               <tr>
                                 <th className="w-8 px-2 py-2"></th>
+                                <th className="px-2 py-2">Výskyt</th>
                                 <th className="px-2 py-2">Vlastnost</th>
                                 <th className="px-2 py-2">Datový typ</th>
-                                <th className="px-2 py-2">Výskyt</th>
                                 <th className="px-2 py-2">
                                   <div className="flex items-center gap-1">
                                     <span>Omezení</span>
@@ -1704,6 +1960,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       checked={selectedProperties.has(prop.id)}
                                       onChange={() => togglePropertySelection(prop.id)}
                                     />
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <select 
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                                      value={prop.occurrence ?? "optional"} 
+                                      onChange={(e) => updatePropertyField(prop.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
+                                    >
+                                      <option value="required">Požadováno (required)</option>
+                                      <option value="prohibited">Zakázáno (prohibited)</option>
+                                      <option value="optional">Možné (optional)</option>
+                                    </select>
                                   </td>
                                   <td className="px-2 py-2">
                                     {group.source === "CUSTOM" || isTempGroup ? (
@@ -1758,17 +2025,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                           {dt}
                                         </option>
                                       ))}
-                                    </select>
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    <select 
-                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                                      value={prop.occurrence ?? "optional"} 
-                                      onChange={(e) => updatePropertyField(prop.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
-                                    >
-                                      <option value="required">Požadováno (required)</option>
-                                      <option value="prohibited">Zakázáno (prohibited)</option>
-                                      <option value="optional">Možné (optional)</option>
                                     </select>
                                   </td>
                                   <td className="px-2 py-2">
@@ -2175,13 +2431,71 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         );
                                       }
                                       
+                                      // Pro FILLED (Žádné) - editovatelné pole s respektováním datového typu
+                                      if (isDisabled) {
+                                        const isNumeric = isIfcNumericLikeType(prop.dataType);
+                                        
+                                        if (isBool) {
+                                          return (
+                                            <select
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                              value={prop.value ?? ""}
+                                              onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                            >
+                                              <option value="">Bez požadavku</option>
+                                              <option value="TRUE">TRUE</option>
+                                              <option value="FALSE">FALSE</option>
+                                            </select>
+                                          );
+                                        }
+                                        
+                                        if (isNumeric) {
+                                          return (
+                                            <input
+                                              type="number"
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                              value={prop.value ?? ""}
+                                              onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                              placeholder="Bez požadavku"
+                                            />
+                                          );
+                                        }
+                                        
+                                        // Pro enum hodnoty z IFC - zobrazit select
+                                        if (enumValues && enumValues.length > 0) {
+                                          return (
+                                            <select
+                                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                              value={prop.value ?? ""}
+                                              onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                            >
+                                              <option value="">Bez požadavku</option>
+                                              {enumValues.map((val) => (
+                                                <option key={val} value={val}>
+                                                  {val}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          );
+                                        }
+                                        
+                                        return (
+                                          <input
+                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                            value={prop.value ?? ""}
+                                            onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
+                                            placeholder="Bez požadavku"
+                                          />
+                                        );
+                                      }
+                                      
+                                      // Fallback - pokud máme předdefinované IFC hodnoty, použít select
                                       if (enumValues && enumValues.length > 0) {
                                         return (
                                           <select
-                                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isDisabled ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                                             value={prop.value ?? ""}
                                             onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
-                                            disabled={isDisabled}
                                           >
                                             <option value="">— vybrat hodnotu —</option>
                                             {enumValues.map((val) => (
@@ -2194,10 +2508,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       }
                                       return (
                                         <input
-                                          className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isDisabled ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                                          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                                           value={prop.value ?? ""}
                                           onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })}
-                                          disabled={isDisabled}
+                                          placeholder="Hodnota"
                                         />
                                       );
                                     })()}
@@ -2374,19 +2688,37 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           {activeTab === "partOf" && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-slate-800">Součástí (PartOf)</div>
-                  <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-slate-800">Součástí (PartOf)</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addRelation}>
                   Přidat vztah
                 </button>
+                {object.requirements.relations.length > 0 && (
+                  <>
+                    <div className="h-4 w-px bg-slate-300" />
+                    <button
+                      className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={selectAllRelations}
+                    >
+                      Označit všechny
+                    </button>
+                    {selectedRelations.size > 0 && (
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                        onClick={deleteSelectedRelations}
+                      >
+                        Smazat označené ({selectedRelations.size})
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
+              <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
+                      <th className="w-8 px-2 py-2"></th>
                       <th className="px-2 py-2">Výskyt</th>
                       <th className="px-2 py-2">Součást entity</th>
                       <th className="px-2 py-2">PredefinedType</th>
@@ -2420,12 +2752,28 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       
                       return (
                         <tr key={rel.id} className="border-t border-slate-200">
+                          {/* CHECKBOX */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              checked={selectedRelations.has(rel.id)}
+                              onChange={() => toggleRelationSelection(rel.id)}
+                            />
+                          </td>
                           {/* VÝSKYT */}
                           <td className="px-2 py-2">
                             <select 
                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                               value={rel.occurrence ?? "optional"} 
-                              onChange={(e) => updateRelationField(rel.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
+                              onChange={(e) => {
+                                const newValue = e.target.value as "required" | "prohibited" | "optional";
+                                if (selectedRelations.has(rel.id) && selectedRelations.size > 0) {
+                                  updateSelectedRelations({ occurrence: newValue });
+                                } else {
+                                  updateRelationField(rel.id, { occurrence: newValue });
+                                }
+                              }}
                             >
                               <option value="required">Požadováno (required)</option>
                               <option value="prohibited">Zakázáno (prohibited)</option>
@@ -2519,7 +2867,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     })}
                     {!object.requirements.relations.length && (
                       <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={7}>
+                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={8}>
                           Žádné vztahy.
                         </td>
                       </tr>
@@ -2532,22 +2880,42 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           {activeTab === "material" && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-slate-800">Materiál</div>
-                  <div className="text-xs text-slate-500">Materiálové požadavky (IfcMaterial, IfcMaterialLayerSet, ...)</div>
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-slate-800">Materiál</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addMaterial}>
                   Přidat materiál
                 </button>
+                {object.requirements.materials.length > 0 && (
+                  <>
+                    <div className="h-4 w-px bg-slate-300" />
+                    <button
+                      className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={selectAllMaterials}
+                    >
+                      Označit všechny
+                    </button>
+                    {selectedMaterials.size > 0 && (
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                        onClick={deleteSelectedMaterials}
+                      >
+                        Smazat označené ({selectedMaterials.size})
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
+              <div className="text-xs text-slate-500">Materiálové požadavky (IfcMaterial, IfcMaterialLayerSet, ...)</div>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      <th className="px-2 py-2">Požadováno</th>
-                      <th className="px-2 py-2">Typ</th>
-                      <th className="px-2 py-2">Poznámka</th>
+                      <th className="w-8 px-2 py-2"></th>
+                      <th className="px-2 py-2">Výskyt</th>
+                      <th className="px-2 py-2">Kategorie</th>
+                      <th className="px-2 py-2">URI</th>
+                      <th className="px-2 py-2">Omezení</th>
+                      <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
@@ -2555,58 +2923,620 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   <tbody>
                     {object.requirements.materials.map((mat) => (
                       <tr key={mat.id} className="border-t border-slate-200">
+                        {/* CHECKBOX */}
                         <td className="px-2 py-2">
                           <input
                             type="checkbox"
-                            checked={mat.required}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.materials = reqs.materials.map((m) => (m.id === mat.id ? { ...m, required: e.target.checked } : m));
-                              })
-                            }
+                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            checked={selectedMaterials.has(mat.id)}
+                            onChange={() => toggleMaterialSelection(mat.id)}
                           />
                         </td>
+                        {/* VÝSKYT */}
+                        <td className="px-2 py-2">
+                          <select 
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={mat.occurrence ?? "optional"} 
+                            onChange={(e) => {
+                              const newValue = e.target.value as "required" | "prohibited" | "optional";
+                              if (selectedMaterials.has(mat.id) && selectedMaterials.size > 0) {
+                                updateSelectedMaterials({ occurrence: newValue });
+                              } else {
+                                updateMaterialField(mat.id, { occurrence: newValue });
+                              }
+                            }}
+                          >
+                            <option value="required">Požadováno (required)</option>
+                            <option value="prohibited">Zakázáno (prohibited)</option>
+                            <option value="optional">Možné (optional)</option>
+                          </select>
+                        </td>
+                        {/* KATEGORIE - s režimem (Není definováno / Jednoduchá hodnota / Výčet) */}
+                        <td className="px-2 py-2">
+                          {(() => {
+                            const categoryMode = mat.categoryMode ?? "NONE";
+                            const linkedCategoryCodeListId = (mat.extensions?.["categoryCodeListId"] as string | undefined) ?? undefined;
+                            const linkedCategoryCodeList = linkedCategoryCodeListId ? codeLists.find((c) => c.id === linkedCategoryCodeListId) : undefined;
+
+                            return (
+                              <div className="flex flex-col gap-1">
+                                {/* Výběr režimu */}
+                                <select
+                                  className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                                  value={categoryMode}
+                                  onChange={(e) => updateMaterialField(mat.id, { categoryMode: e.target.value as any, category: "" })}
+                                >
+                                  {MATERIAL_CATEGORY_MODE_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </option>
+                                  ))}
+                                </select>
+
+                                {/* Obsah podle režimu */}
+                                {categoryMode === "NONE" && (
+                                  <span className="text-slate-400 text-xs">—</span>
+                                )}
+
+                                {categoryMode === "SIMPLE" && (
+                                  <input
+                                    type="text"
+                                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                    value={mat.category ?? ""}
+                                    onChange={(e) => updateMaterialField(mat.id, { category: e.target.value })}
+                                    placeholder="Zadejte hodnotu..."
+                                  />
+                                )}
+
+                                {categoryMode === "ENUM" && (() => {
+                                  const values = linkedCategoryCodeList ? (linkedCategoryCodeList.values ?? []) : parseEnumValues(mat.category ?? "");
+                                  const displayValues = values.slice(0, 12);
+                                  const remaining = values.length - displayValues.length;
+
+                                  const detachFromCodeList = () => {
+                                    const nextExtensions = { ...(mat.extensions ?? {}) } as Record<string, unknown>;
+                                    delete (nextExtensions as any)["categoryCodeListId"];
+                                    updateMaterialField(mat.id, { extensions: nextExtensions });
+                                  };
+
+                                  const linkToCodeList = (id: string) => {
+                                    const list = codeLists.find((c) => c.id === id);
+                                    if (!list) return;
+                                    const nextExtensions = { ...(mat.extensions ?? {}) } as Record<string, unknown>;
+                                    nextExtensions["categoryCodeListId"] = list.id;
+                                    updateMaterialField(mat.id, { extensions: nextExtensions, category: formatEnumValues(list.values ?? []) });
+                                  };
+
+                                  return (
+                                    <div className="flex flex-col gap-1">
+                                      <div className="flex items-center gap-1">
+                                        <select
+                                          className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                          value={linkedCategoryCodeListId ? `codelist:${linkedCategoryCodeListId}` : "inline"}
+                                          onChange={(e) => {
+                                            const v = e.target.value;
+                                            if (v === "inline") {
+                                              detachFromCodeList();
+                                              return;
+                                            }
+                                            if (v.startsWith("codelist:")) {
+                                              linkToCodeList(v.replace("codelist:", ""));
+                                            }
+                                          }}
+                                        >
+                                          <option value="inline">Vlastní</option>
+                                          {codeLists.length > 0 && <option disabled>— Číselníky —</option>}
+                                          {codeLists.map((cl) => (
+                                            <option key={cl.id} value={`codelist:${cl.id}`}>
+                                              {cl.name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        {linkedCategoryCodeListId && (
+                                          <button
+                                            className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50"
+                                            onClick={detachFromCodeList}
+                                            title="Odpojit od číselníku"
+                                          >
+                                            Odpojit
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      {!linkedCategoryCodeListId ? (
+                                        <div className="flex items-center gap-1">
+                                          <input
+                                            type="text"
+                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                            placeholder="Napiš hodnotu a stiskni Enter"
+                                            value={categoryDraftByMatId[mat.id] ?? ""}
+                                            onChange={(e) =>
+                                              setCategoryDraftByMatId((prev) => ({ ...prev, [mat.id]: e.target.value }))
+                                            }
+                                            onKeyDown={(e) => {
+                                              if (e.key !== "Enter") return;
+                                              e.preventDefault();
+                                              const raw = (categoryDraftByMatId[mat.id] ?? "").trim();
+                                              if (!raw) return;
+                                              const nextValues = Array.from(new Set([...values, raw]));
+                                              updateMaterialField(mat.id, { category: formatEnumValues(nextValues) });
+                                              setCategoryDraftByMatId((prev) => ({ ...prev, [mat.id]: "" }));
+                                            }}
+                                          />
+                                          <button
+                                            className={`flex items-center rounded border px-2 py-1 text-[11px] ${
+                                              values.length === 0
+                                                ? "border-slate-200 text-slate-400 cursor-not-allowed"
+                                                : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400"
+                                            }`}
+                                            disabled={values.length === 0}
+                                            title="Uložit jako číselník a přiřadit"
+                                            onClick={() => {
+                                              setEnumSaveDialog({
+                                                propertyId: `cat-${mat.id}`,
+                                                name: "Kategorie materiálu",
+                                                values,
+                                                type: "property",
+                                              });
+                                            }}
+                                          >
+                                            <svg
+                                              aria-hidden
+                                              xmlns="http://www.w3.org/2000/svg"
+                                              viewBox="0 0 24 24"
+                                              fill="currentColor"
+                                              className="h-4 w-4"
+                                            >
+                                              <path d="M6 2h11l3 3v17H4V4a2 2 0 0 1 2-2Zm12 8V6.5L16.5 5H6v5h12ZM6 20h12v-8H6v8Zm2-6h8v4H8v-4Z" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                                          Používá číselník: <span className="font-semibold text-slate-800">{linkedCategoryCodeList?.name ?? linkedCategoryCodeListId}</span>
+                                        </div>
+                                      )}
+
+                                      <div className="flex flex-wrap gap-1">
+                                        {displayValues.map((v) => (
+                                          <span key={v} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700" title={v}>
+                                            <span>{v}</span>
+                                            {!linkedCategoryCodeListId && (
+                                              <button
+                                                className="text-slate-400 hover:text-slate-700"
+                                                title="Odebrat hodnotu"
+                                                onClick={() => {
+                                                  const nextValues = values.filter((x) => x !== v);
+                                                  updateMaterialField(mat.id, { category: formatEnumValues(nextValues) });
+                                                }}
+                                              >
+                                                ×
+                                              </button>
+                                            )}
+                                          </span>
+                                        ))}
+                                        {remaining > 0 && (
+                                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">
+                                            +{remaining}
+                                          </span>
+                                        )}
+                                        {values.length === 0 && (
+                                          <span className="text-[11px] text-slate-400">Žádné hodnoty.</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        {/* URI */}
+                        <td className="px-2 py-2">
+                          <input
+                            type="text"
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={mat.uri ?? ""}
+                            onChange={(e) => updateMaterialField(mat.id, { uri: e.target.value })}
+                            placeholder="URI materiálu"
+                          />
+                        </td>
+                        {/* OMEZENÍ */}
                         <td className="px-2 py-2">
                           <select
                             className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.materialType ?? ""}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.materials = reqs.materials.map((m) => (m.id === mat.id ? { ...m, materialType: e.target.value as any } : m));
-                              })
-                            }
+                            value={mat.constraint ?? "FILLED"}
+                            onChange={(e) => updateMaterialField(mat.id, { constraint: e.target.value as any, value: "" })}
                           >
-                            <option value="">--</option>
-                            {["SINGLE", "LAYER", "PROFILE", "CONSTITUENT"].map((mt) => (
-                              <option key={mt} value={mt}>
-                                {mt}
+                            {MATERIAL_CONSTRAINT_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>
+                                {opt.label}
                               </option>
                             ))}
                           </select>
                         </td>
+                        {/* HODNOTA */}
                         <td className="px-2 py-2">
-                          <input
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.note ?? ""}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.materials = reqs.materials.map((m) => (m.id === mat.id ? { ...m, note: e.target.value } : m));
-                              })
+                          {(() => {
+                            const isDisabled = mat.constraint === "FILLED" || mat.constraint === undefined;
+                            const isLength = mat.constraint === "LENGTH";
+                            const isPattern = mat.constraint === "PATTERN";
+                            const isEnum = mat.constraint === "ENUM";
+                            const isRange = mat.constraint === "RANGE";
+                            const linkedCodeListId = (mat.extensions?.[ENUM_CODELIST_ID_KEY] as string | undefined) ?? undefined;
+                            const linkedCodeList = linkedCodeListId ? codeLists.find((c) => c.id === linkedCodeListId) : undefined;
+
+                            // Pro FILLED (Žádné) - editovatelné pole s placeholderem "Bez požadavku"
+                            if (isDisabled) {
+                              return (
+                                <input
+                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                  value={mat.value ?? ""}
+                                  onChange={(e) => updateMaterialField(mat.id, { value: e.target.value })}
+                                  placeholder="Bez požadavku"
+                                />
+                              );
                             }
-                            placeholder="Poznámka k materiálu"
-                          />
+
+                            // Pro PATTERN - input s odkazem na regex101
+                            if (isPattern) {
+                              return (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                    value={mat.value ?? ""}
+                                    onChange={(e) => updateMaterialField(mat.id, { value: e.target.value })}
+                                    placeholder='Regex pattern (např. ^DT[0-9]{2}$)'
+                                  />
+                                  <a
+                                    href="https://regex101.com/"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="flex items-center text-slate-500 hover:text-indigo-600"
+                                    title="Otevřít regex tester (regex101)"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+                                      <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
+                                    </svg>
+                                  </a>
+                                </div>
+                              );
+                            }
+
+                            // Pro ENUM (výčet) – inline hodnoty nebo číselník + badges + nabídka uložení
+                            if (isEnum) {
+                              const values = linkedCodeList ? (linkedCodeList.values ?? []) : parseEnumValues(mat.value ?? "");
+                              const displayValues = values.slice(0, 24);
+                              const remaining = values.length - displayValues.length;
+
+                              const detachFromCodeList = () => {
+                                const nextExtensions = { ...(mat.extensions ?? {}) } as Record<string, unknown>;
+                                delete (nextExtensions as any)[ENUM_CODELIST_ID_KEY];
+                                updateMaterialField(mat.id, { extensions: nextExtensions });
+                              };
+
+                              const linkToCodeList = (id: string) => {
+                                const list = codeLists.find((c) => c.id === id);
+                                if (!list) return;
+                                const nextExtensions = { ...(mat.extensions ?? {}) } as Record<string, unknown>;
+                                nextExtensions[ENUM_CODELIST_ID_KEY] = list.id;
+                                updateMaterialField(mat.id, { extensions: nextExtensions, value: formatEnumValues(list.values ?? []) });
+                              };
+
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-1">
+                                    <select
+                                      className="rounded border border-slate-300 px-2 py-1 text-xs"
+                                      value={linkedCodeListId ? `codelist:${linkedCodeListId}` : "inline"}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === "inline") {
+                                          detachFromCodeList();
+                                          return;
+                                        }
+                                        if (v.startsWith("codelist:")) {
+                                          linkToCodeList(v.replace("codelist:", ""));
+                                        }
+                                      }}
+                                    >
+                                      <option value="inline">Vlastní</option>
+                                      {codeLists.length > 0 && <option disabled>— Číselníky —</option>}
+                                      {codeLists.map((cl) => (
+                                        <option key={cl.id} value={`codelist:${cl.id}`}>
+                                          {cl.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    {linkedCodeListId && (
+                                      <button
+                                        className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50"
+                                        onClick={detachFromCodeList}
+                                        title="Odpojit od číselníku (ponechat hodnoty jako inline)"
+                                      >
+                                        Odpojit
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {!linkedCodeListId ? (
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                        placeholder="Napiš hodnotu a stiskni Enter"
+                                        value={enumDraftByMatId[mat.id] ?? ""}
+                                        onChange={(e) =>
+                                          setEnumDraftByMatId((prev) => ({ ...prev, [mat.id]: e.target.value }))
+                                        }
+                                        onKeyDown={(e) => {
+                                          if (e.key !== "Enter") return;
+                                          e.preventDefault();
+                                          const raw = (enumDraftByMatId[mat.id] ?? "").trim();
+                                          if (!raw) return;
+                                          const nextValues = Array.from(new Set([...values, raw]));
+                                          updateMaterialField(mat.id, { value: formatEnumValues(nextValues) });
+                                          setEnumDraftByMatId((prev) => ({ ...prev, [mat.id]: "" }));
+                                        }}
+                                      />
+                                      <button
+                                        className={`flex items-center rounded border px-2 py-1 text-[11px] ${
+                                          values.length === 0
+                                            ? "border-slate-200 text-slate-400 cursor-not-allowed"
+                                            : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400"
+                                        }`}
+                                        disabled={values.length === 0}
+                                        title="Uložit jako číselník a přiřadit"
+                                        onClick={() => {
+                                          const suggestedName = (mat.category || "").trim() || "Výčet materiálu";
+                                          setEnumSaveDialog({
+                                            propertyId: mat.id,
+                                            name: suggestedName,
+                                            values,
+                                            type: "property", // použijeme property type pro uložení
+                                          });
+                                        }}
+                                      >
+                                        <svg
+                                          aria-hidden
+                                          xmlns="http://www.w3.org/2000/svg"
+                                          viewBox="0 0 24 24"
+                                          fill="currentColor"
+                                          className="h-4 w-4"
+                                        >
+                                          <path d="M6 2h11l3 3v17H4V4a2 2 0 0 1 2-2Zm12 8V6.5L16.5 5H6v5h12ZM6 20h12v-8H6v8Zm2-6h8v4H8v-4Z" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
+                                      Používá číselník: <span className="font-semibold text-slate-800">{linkedCodeList?.name ?? linkedCodeListId}</span>
+                                    </div>
+                                  )}
+
+                                  <div className="flex flex-wrap gap-1">
+                                    {displayValues.map((v) => (
+                                      <span key={v} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700" title={v}>
+                                        <span>{v}</span>
+                                        {!linkedCodeListId && (
+                                          <button
+                                            className="text-slate-400 hover:text-slate-700"
+                                            title="Odebrat hodnotu"
+                                            onClick={() => {
+                                              const nextValues = values.filter((x) => x !== v);
+                                              updateMaterialField(mat.id, { value: formatEnumValues(nextValues) });
+                                            }}
+                                          >
+                                            ×
+                                          </button>
+                                        )}
+                                      </span>
+                                    ))}
+                                    {remaining > 0 && (
+                                      <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">
+                                        +{remaining}
+                                      </span>
+                                    )}
+                                    {values.length === 0 && (
+                                      <span className="text-[11px] text-slate-400">Žádné hodnoty výčtu.</span>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            // Pro LENGTH - speciální UI pro zadávání délky
+                            if (isLength) {
+                              const lengthValue = mat.value ?? "";
+                              const parseLengthValue = (val: string) => {
+                                if (!val) return { type: "exact", exact: "", min: "", max: "" };
+                                if (val.startsWith("min:")) {
+                                  return { type: "min", exact: "", min: val.replace("min:", ""), max: "" };
+                                }
+                                if (val.startsWith("max:")) {
+                                  return { type: "max", exact: "", min: "", max: val.replace("max:", "") };
+                                }
+                                if (/^\d+$/.test(val)) {
+                                  return { type: "exact", exact: val, min: "", max: "" };
+                                }
+                                return { type: "exact", exact: val, min: "", max: "" };
+                              };
+                              
+                              const parsed = parseLengthValue(lengthValue);
+                              const currentType = parsed.type;
+                              
+                              const getCurrentValue = () => {
+                                if (currentType === "exact") return parsed.exact;
+                                if (currentType === "min") return parsed.min;
+                                if (currentType === "max") return parsed.max;
+                                return "";
+                              };
+                              
+                              const handleTypeChange = (newType: string) => {
+                                const currentValue = getCurrentValue();
+                                const valueToUse = currentValue || "1";
+                                let newValue = "";
+                                if (newType === "exact") {
+                                  newValue = valueToUse;
+                                } else if (newType === "min") {
+                                  newValue = `min:${valueToUse}`;
+                                } else if (newType === "max") {
+                                  newValue = `max:${valueToUse}`;
+                                }
+                                updateMaterialField(mat.id, { value: newValue });
+                              };
+                              
+                              const handleValueChange = (newValue: string) => {
+                                const valueToUse = newValue || "1";
+                                let valueToSave = "";
+                                if (currentType === "exact") {
+                                  valueToSave = valueToUse;
+                                } else if (currentType === "min") {
+                                  valueToSave = `min:${valueToUse}`;
+                                } else if (currentType === "max") {
+                                  valueToSave = `max:${valueToUse}`;
+                                }
+                                updateMaterialField(mat.id, { value: valueToSave });
+                              };
+                              
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <select
+                                    className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                                    value={currentType}
+                                    onChange={(e) => handleTypeChange(e.target.value)}
+                                  >
+                                    <option value="exact">Přesná délka</option>
+                                    <option value="min">Minimální délka</option>
+                                    <option value="max">Maximální délka</option>
+                                  </select>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                    value={getCurrentValue() || "1"}
+                                    onChange={(e) => handleValueChange(e.target.value)}
+                                    placeholder="Počet znaků"
+                                  />
+                                </div>
+                              );
+                            }
+
+                            // Pro RANGE/Bounds - speciální UI pro zadávání ohraničení
+                            if (isRange) {
+                              const rangeValue = mat.value ?? "";
+                              const parseRangeValue = (val: string) => {
+                                if (!val) return { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
+                                
+                                const parts = val.split("|");
+                                let result = { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
+                                
+                                parts.forEach(part => {
+                                  if (part.startsWith("min:")) {
+                                    const minPart = part.replace("min:", "");
+                                    const [minVal, inclusive] = minPart.split(":");
+                                    result.hasMin = true;
+                                    result.min = minVal;
+                                    result.minInclusive = inclusive !== "exclusive";
+                                  } else if (part.startsWith("max:")) {
+                                    const maxPart = part.replace("max:", "");
+                                    const [maxVal, inclusive] = maxPart.split(":");
+                                    result.hasMax = true;
+                                    result.max = maxVal;
+                                    result.maxInclusive = inclusive !== "exclusive";
+                                  }
+                                });
+                                
+                                return result;
+                              };
+                              
+                              const parsed = parseRangeValue(rangeValue);
+                              const handleTypeChange = (newType: string) => {
+                                const v = (parsed as any).min || (parsed as any).max || "0";
+                                let newValue = "";
+                                if (newType === "min-inclusive") newValue = `min:${v}:inclusive`;
+                                else if (newType === "min-exclusive") newValue = `min:${v}:exclusive`;
+                                else if (newType === "max-inclusive") newValue = `max:${v}:inclusive`;
+                                else if (newType === "max-exclusive") newValue = `max:${v}:exclusive`;
+                                else if (newType === "range") newValue = `min:${v}:inclusive|max:${(parsed as any).max || "0"}:inclusive`;
+                                updateMaterialField(mat.id, { value: newValue });
+                              };
+
+                              const handleValueChange = (v1: string, v2?: string) => {
+                                const p = parsed as any;
+                                let newValue = "";
+                                const type = p.hasMin && p.hasMax ? "range" : p.hasMin ? (p.minInclusive ? "min-inclusive" : "min-exclusive") : (p.maxInclusive ? "max-inclusive" : "max-exclusive");
+                                
+                                if (type === "min-inclusive") newValue = `min:${v1}:inclusive`;
+                                else if (type === "min-exclusive") newValue = `min:${v1}:exclusive`;
+                                else if (type === "max-inclusive") newValue = `max:${v1}:inclusive`;
+                                else if (type === "max-exclusive") newValue = `max:${v1}:exclusive`;
+                                else if (type === "range") newValue = `min:${v1}:inclusive|max:${v2 ?? p.max}:inclusive`;
+                                updateMaterialField(mat.id, { value: newValue });
+                              };
+
+                              const p = parsed as any;
+                              const currentType = p.hasMin && p.hasMax ? "range" : p.hasMin ? (p.minInclusive ? "min-inclusive" : "min-exclusive") : (p.maxInclusive ? "max-inclusive" : "max-exclusive");
+
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <select
+                                    className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
+                                    value={currentType}
+                                    onChange={(e) => handleTypeChange(e.target.value)}
+                                  >
+                                    <option value="min-inclusive">≥ (větší nebo rovno)</option>
+                                    <option value="min-exclusive">&gt; (větší než)</option>
+                                    <option value="max-inclusive">≤ (menší nebo rovno)</option>
+                                    <option value="max-exclusive">&lt; (menší než)</option>
+                                    <option value="range">Rozmezí (od-do)</option>
+                                  </select>
+                                  {currentType === "range" ? (
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        type="number"
+                                        className="w-full rounded border border-slate-300 px-1 py-1 text-sm"
+                                        value={p.min}
+                                        onChange={(e) => handleValueChange(e.target.value, p.max)}
+                                        placeholder="Min"
+                                      />
+                                      <span className="text-xs text-slate-400">-</span>
+                                      <input
+                                        type="number"
+                                        className="w-full rounded border border-slate-300 px-1 py-1 text-sm"
+                                        value={p.max}
+                                        onChange={(e) => handleValueChange(p.min, e.target.value)}
+                                        placeholder="Max"
+                                      />
+                                    </div>
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                      value={p.hasMin ? p.min : p.max}
+                                      onChange={(e) => handleValueChange(e.target.value)}
+                                      placeholder="Hodnota"
+                                    />
+                                  )}
+                                </div>
+                              );
+                            }
+
+                            // Fallback - prostý input
+                            return (
+                              <input
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                value={mat.value ?? ""}
+                                onChange={(e) => updateMaterialField(mat.id, { value: e.target.value })}
+                              />
+                            );
+                          })()}
                         </td>
+                        {/* FÁZE */}
                         <td className="px-2 py-2">
-                          <PhaseSelector
-                            phases={phases}
-                            value={mat.phases}
-                            onChange={(ids) =>
-                              updateRequirements((reqs) => {
-                                reqs.materials = reqs.materials.map((m) => (m.id === mat.id ? { ...m, phases: ids } : m));
-                              })
-                            }
-                          />
+                          <PhaseSelector phases={phases} value={mat.phases} onChange={(ids) => updateMaterialField(mat.id, { phases: ids })} />
                         </td>
+                        {/* AKCE */}
                         <td className="px-2 py-2 text-right">
                           <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("materials", mat.id)}>
                             Odebrat
@@ -2616,7 +3546,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     ))}
                     {!object.requirements.materials.length && (
                       <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={5}>
+                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={8}>
                           Žádné materiálové požadavky.
                         </td>
                       </tr>
@@ -2629,19 +3559,37 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           {activeTab === "classification" && (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-semibold text-slate-800">Klasifikace</div>
-                  <div className="text-xs text-slate-500">Záznamy IfcClassificationReference</div>
-                </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-sm font-semibold text-slate-800">Klasifikace</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addClassification}>
                   Přidat klasifikaci
                 </button>
+                {object.requirements.classifications.length > 0 && (
+                  <>
+                    <div className="h-4 w-px bg-slate-300" />
+                    <button
+                      className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={selectAllClassifications}
+                    >
+                      Označit všechny
+                    </button>
+                    {selectedClassifications.size > 0 && (
+                      <button
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+                        onClick={deleteSelectedClassifications}
+                      >
+                        Smazat označené ({selectedClassifications.size})
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
+              <div className="text-xs text-slate-500">Záznamy IfcClassificationReference</div>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
+                      <th className="w-8 px-2 py-2"></th>
                       <th className="px-2 py-2">Systém</th>
                       <th className="px-2 py-2">Identifikace</th>
                       <th className="px-2 py-2">Název</th>
@@ -2653,6 +3601,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   <tbody>
                     {object.requirements.classifications.map((cls) => (
                       <tr key={cls.id} className="border-t border-slate-200">
+                        <td className="px-2 py-2">
+                          <input
+                            type="checkbox"
+                            className={`h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${cls.readOnly ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                            checked={selectedClassifications.has(cls.id)}
+                            onChange={() => !cls.readOnly && toggleClassificationSelection(cls.id)}
+                            disabled={cls.readOnly}
+                            title={cls.readOnly ? "Primární klasifikace - nelze vybrat" : ""}
+                          />
+                        </td>
                         <td className="px-2 py-2">
                           <input
                             className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
@@ -2732,7 +3690,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     ))}
                     {!object.requirements.classifications.length && (
                       <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={6}>
+                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={7}>
                           Žádné klasifikace nejsou definovány.
                         </td>
                       </tr>
