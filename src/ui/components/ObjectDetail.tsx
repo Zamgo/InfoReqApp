@@ -5,7 +5,7 @@ import { makeId } from "../../utils/id";
 import type { CodeList, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 
-type TabKey = "attributes" | "properties" | "partOf" | "material" | "ids";
+type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 
 const IFC_DOC_BASE = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical";
 const getIfcDocUrl = (identifier: string | undefined) => (identifier ? `${IFC_DOC_BASE}/${identifier}.htm` : undefined);
@@ -56,6 +56,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   properties: "Vlastnosti",
   partOf: "Součástí (PartOf)",
   material: "Materiál",
+  classification: "Klasifikace",
   ids: "IDS náhled",
 };
 
@@ -67,6 +68,19 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
   "IFCRELVOIDSELEMENT",
   "IFCRELFILLSELEMENT",
 ];
+
+// Czech help text for relation types (displayed in modal)
+const RELATION_TYPES_HELP_TEXT = `Vztah IFCRELAGGREGATES popisuje, jak lze více menších dílčích objektů agregovat do jednoho většího objektu. Například několik podlaží budovy tvoří jednu budovu. Jiným příkladem je deska, kterou tvoří nosníky, podlahové desky a spoje. Nebo sestava, kterou tvoří konzoly, sloupky (mullions) a ocelové plechy.
+
+Vztah IFCRELASSIGNSTOGROUP popisuje, jak lze více objektů seskupit do jedné kolekce objektů pro libovolný účel užití. Například potrubí, vzduchotechnické jednotky (AHU), ventilátory a žaluzie mohou být seskupeny do jednoho distribučního systému. Jiným příkladem je seskupení kabelů, rozvaděčů a zásuvek do jednoho elektrického okruhu. Případně mohou být prostory seskupeny do zón nebo udržovatelná aktiva seskupena do inventáře.
+
+Vztah IFCRELCONTAINEDINSPATIALSTRUCTURE popisuje, jak jsou jednotlivé objekty umístěny v určitém prostoru nebo lokalitě. Například čerpadlo může být umístěno v prostoru, sloup může být umístěn v podlaží budovy (např. 2. NP) nebo prvky městského mobiliáře mohou být umístěny na stavebním pozemku. Každý objekt musí mít v IFC právě jeden primární kontejner prostorové struktury, i když může být zároveň odkazován z více umístění (například sloup procházející více podlažími). Tento vztah se vždy vztahuje pouze k primárnímu umístění.
+
+Vztah IFCRELNESTS popisuje, jak může být fyzický objekt připojen k většímu „hostitelskému" objektu, typicky prostřednictvím fyzického spojení, jako je předvrtaný otvor nebo připojovací svorka. Při pohybu hostitelského objektu se s ním pohybují i všechny vnořené (připojené) objekty.
+
+Vztah IFCRELVOIDSELEMENT popisuje, že otvor (void) náleží určitému prvku.
+
+Vztah IFCRELFILLSELEMENT popisuje, jak prvek vyplňuje otvor a stává se jeho součástí.`;
 
 const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "FILLED", label: "Žádné" },
@@ -172,6 +186,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[]; type?: "property" | "attribute" }>(null);
   const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
   const [enumDraftByAttrId, setEnumDraftByAttrId] = useState<Record<string, string>>({});
+  const [showRelationHelpModal, setShowRelationHelpModal] = useState(false);
 
   const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
   const selectedEntity = object.ifcEntity ? schema?.entities[object.ifcEntity] : undefined;
@@ -732,7 +747,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       reqs.relations.push({
         id: makeId(),
         relationType: "IFCRELAGGREGATES",
-        targetType: "",
+        occurrence: "optional",
+        entityType: "",
+        entityPredefinedType: "",
+        targetType: "", // legacy field for backwards compatibility
         minCardinality: 0,
         maxCardinality: 1,
         note: "",
@@ -1029,80 +1047,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800">Klasifikace</div>
             </div>
-            <div className="flex items-center justify-between text-xs text-slate-500">
-              <span>Záznamy IfcClassificationReference</span>
-              <button className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-100" onClick={addClassification}>
-                Přidat klasifikaci
-              </button>
+            <div className="text-xs text-slate-500">
+              <span>Záznamy IfcClassificationReference: <span className="font-semibold text-slate-700">{object.requirements.classifications.length}</span></span>
             </div>
-            <div className="mt-2 max-h-40 overflow-auto rounded border border-slate-200 bg-white">
-              <table className="min-w-full text-xs">
-                <thead className="bg-slate-50 text-left text-[11px] uppercase text-slate-500">
-                  <tr>
-                    <th className="px-2 py-1">Systém</th>
-                    <th className="px-2 py-1">Identifikace</th>
-                    <th className="px-2 py-1">Název</th>
-                    <th className="px-2 py-1">Akce</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {object.requirements.classifications.map((cls) => (
-                    <tr key={cls.id} className="border-t border-slate-200">
-                      <td className="px-2 py-1">
-                        <input
-                          className="w-full rounded border border-slate-200 px-2 py-1"
-                          value={cls.system}
-                          onChange={(e) =>
-                            updateRequirements((reqs) => {
-                              reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, system: e.target.value } : c));
-                            })
-                          }
-                          disabled={cls.readOnly}
-                        />
-                      </td>
-                      <td className="px-2 py-1">
-                        <input
-                          className="w-full rounded border border-slate-200 px-2 py-1"
-                          value={cls.identification ?? cls.code ?? ""}
-                          onChange={(e) =>
-                            updateRequirements((reqs) => {
-                              reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, identification: e.target.value, code: e.target.value } : c));
-                            })
-                          }
-                          disabled={cls.readOnly}
-                        />
-                      </td>
-                      <td className="px-2 py-1">
-                        <input
-                          className="w-full rounded border border-slate-200 px-2 py-1"
-                          value={cls.name}
-                          onChange={(e) =>
-                            updateRequirements((reqs) => {
-                              reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, name: e.target.value } : c));
-                            })
-                          }
-                          disabled={cls.readOnly}
-                        />
-                      </td>
-                      <td className="px-2 py-1 text-right">
-                        {!cls.readOnly && (
-                          <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("classifications", cls.id)}>
-                            Odebrat
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {!object.requirements.classifications.length && (
-                    <tr>
-                      <td className="px-2 py-2 text-slate-500" colSpan={4}>
-                        Žádné klasifikace.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <button 
+              className="mt-2 text-xs text-indigo-600 hover:underline" 
+              onClick={() => setActiveTab("classification")}
+            >
+              Zobrazit a upravit na kartě Klasifikace
+            </button>
           </div>
         </div>
       </div>
@@ -1226,27 +1179,46 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           
                           {/* OMEZENÍ */}
                           <td className="px-2 py-2">
-                            <select 
-                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                              value={attr.constraint ?? "FILLED"} 
-                              onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as any })}
-                              disabled={isPredefinedTypeFromIFC}
-                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
-                            >
-                              {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => {
-                                const allowed = isAttributeConstraintAllowed(attr.attribute, opt.value);
-                                return (
-                                  <option key={opt.value} value={opt.value} disabled={!allowed}>
-                                    {opt.label}
-                                  </option>
-                                );
-                              })}
-                            </select>
+                            {isPredefinedTypeFromIFC ? (
+                              <span 
+                                className="block w-full rounded border border-slate-200 bg-slate-100 px-2 py-1 text-sm text-slate-400 cursor-not-allowed"
+                                title="PredefinedType je řízen z karty IFC entity"
+                              >
+                                Žádné
+                              </span>
+                            ) : (
+                              <select 
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                value={attr.constraint ?? "FILLED"} 
+                                onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as any })}
+                              >
+                                {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => {
+                                  const allowed = isAttributeConstraintAllowed(attr.attribute, opt.value);
+                                  return (
+                                    <option key={opt.value} value={opt.value} disabled={!allowed}>
+                                      {opt.label}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            )}
                           </td>
                           
                           {/* HODNOTA */}
                           <td className="px-2 py-2">
                             {(() => {
+                              // Pro PredefinedType z IFC entity - pouze zašedlá hodnota (ne výčet)
+                              if (isPredefinedTypeFromIFC) {
+                                return (
+                                  <span 
+                                    className="block w-full rounded border border-slate-200 bg-slate-100 px-2 py-1 text-sm text-slate-400 cursor-not-allowed"
+                                    title="PredefinedType je řízen z karty IFC entity"
+                                  >
+                                    {attr.value || "—"}
+                                  </span>
+                                );
+                              }
+                              
                               // Pro PATTERN zobrazit speciální UI + odkazy
                               if (isPattern && !isDisabled) {
                                 return (
@@ -2369,10 +2341,44 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             </div>
           )}
 
+          {/* Modal pro nápovědu k typům vztahů */}
+          {showRelationHelpModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowRelationHelpModal(false)}>
+              <div className="w-full max-w-2xl max-h-[80vh] overflow-auto rounded-lg bg-white p-5 shadow-xl m-4" onClick={(e) => e.stopPropagation()}>
+                <div className="mb-4 flex items-center justify-between">
+                  <div className="text-lg font-semibold text-slate-800">Nápověda k typům vztahů (PartOf)</div>
+                  <button
+                    className="rounded p-1 hover:bg-slate-100"
+                    onClick={() => setShowRelationHelpModal(false)}
+                    title="Zavřít"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 text-slate-500">
+                      <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                  {RELATION_TYPES_HELP_TEXT}
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                    onClick={() => setShowRelationHelpModal(false)}
+                  >
+                    Zavřít
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activeTab === "partOf" && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-slate-800">Součástí (PartOf)</div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">Součástí (PartOf)</div>
+                  <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
+                </div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addRelation}>
                   Přidat vztah
                 </button>
@@ -2381,53 +2387,136 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      <th className="px-2 py-2">Typ relace</th>
-                      <th className="px-2 py-2">Cílový typ</th>
-                      <th className="px-2 py-2">Min</th>
-                      <th className="px-2 py-2">Max</th>
+                      <th className="px-2 py-2">Výskyt</th>
+                      <th className="px-2 py-2">Součást entity</th>
+                      <th className="px-2 py-2">PredefinedType</th>
+                      <th className="px-2 py-2">
+                        <div className="flex items-center gap-1">
+                          <span>Vztah</span>
+                          <a 
+                            href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/partof-facet.md" 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-slate-500 hover:text-indigo-600" 
+                            title="Otevřít dokumentaci k PartOf facetu"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3">
+                              <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
+                            </svg>
+                          </a>
+                        </div>
+                      </th>
                       <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {object.requirements.relations.map((rel) => (
-                      <tr key={rel.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <select
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={rel.relationType}
-                            onChange={(e) => updateRelationField(rel.id, { relationType: e.target.value as any })}
-                          >
-                            {relationTypeOptions.map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.targetType ?? ""} onChange={(e) => updateRelationField(rel.id, { targetType: e.target.value })} />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input type="number" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.minCardinality ?? 0} onChange={(e) => updateRelationField(rel.id, { minCardinality: Number(e.target.value) })} />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input type="number" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.maxCardinality ?? 1} onChange={(e) => updateRelationField(rel.id, { maxCardinality: Number(e.target.value) })} />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.note ?? ""} onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} />
-                        </td>
-                        <td className="px-2 py-2">
-                          <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
-                        </td>
-                        <td className="px-2 py-2 text-right">
-                          <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>
-                            Odebrat
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {object.requirements.relations.map((rel) => {
+                      // Get predefined types for selected entity
+                      const relEntityDef = rel.entityType ? schema?.entities[rel.entityType] : undefined;
+                      const relPredefinedOptions = relEntityDef?.predefinedTypeValues ?? [];
+                      
+                      return (
+                        <tr key={rel.id} className="border-t border-slate-200">
+                          {/* VÝSKYT */}
+                          <td className="px-2 py-2">
+                            <select 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              value={rel.occurrence ?? "optional"} 
+                              onChange={(e) => updateRelationField(rel.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
+                            >
+                              <option value="required">Požadováno (required)</option>
+                              <option value="prohibited">Zakázáno (prohibited)</option>
+                              <option value="optional">Možné (optional)</option>
+                            </select>
+                          </td>
+                          {/* SOUČÁST ENTITY */}
+                          <td className="px-2 py-2">
+                            <select
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              value={rel.entityType ?? ""}
+                              onChange={(e) => {
+                                // When entity changes, reset predefinedType
+                                updateRelationField(rel.id, { 
+                                  entityType: e.target.value,
+                                  entityPredefinedType: "",
+                                  // Also update legacy targetType for backwards compatibility
+                                  targetType: e.target.value
+                                });
+                              }}
+                            >
+                              <option value="">-- Vyberte entitu --</option>
+                              {entities.map((ent) => (
+                                <option key={ent} value={ent}>
+                                  {ent}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          {/* PREDEFINED TYPE */}
+                          <td className="px-2 py-2">
+                            <select
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${!rel.entityType ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={rel.entityPredefinedType ?? ""}
+                              onChange={(e) => updateRelationField(rel.id, { entityPredefinedType: e.target.value })}
+                              disabled={!rel.entityType || relPredefinedOptions.length === 0}
+                            >
+                              <option value="">-- Není definováno --</option>
+                              {relPredefinedOptions.map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          {/* VZTAH (TYP RELACE) */}
+                          <td className="px-2 py-2">
+                            <div className="flex items-center gap-1">
+                              <select
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                value={rel.relationType}
+                                onChange={(e) => updateRelationField(rel.id, { relationType: e.target.value as any })}
+                              >
+                                {relationTypeOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
+                                onClick={() => setShowRelationHelpModal(true)}
+                                title="Zobrazit nápovědu k typům vztahů"
+                              >
+                                ?
+                              </button>
+                            </div>
+                          </td>
+                          {/* POZNÁMKA */}
+                          <td className="px-2 py-2">
+                            <input 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                              value={rel.note ?? ""} 
+                              onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} 
+                              placeholder="Poznámka k relaci" 
+                            />
+                          </td>
+                          {/* FÁZE */}
+                          <td className="px-2 py-2">
+                            <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
+                          </td>
+                          {/* AKCE */}
+                          <td className="px-2 py-2 text-right">
+                            <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>
+                              Odebrat
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {!object.requirements.relations.length && (
                       <tr>
                         <td className="px-2 py-3 text-sm text-slate-500" colSpan={7}>
@@ -2444,7 +2533,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           {activeTab === "material" && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-slate-800">Materiál</div>
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">Materiál</div>
+                  <div className="text-xs text-slate-500">Materiálové požadavky (IfcMaterial, IfcMaterialLayerSet, ...)</div>
+                </div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addMaterial}>
                   Přidat materiál
                 </button>
@@ -2501,6 +2593,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 reqs.materials = reqs.materials.map((m) => (m.id === mat.id ? { ...m, note: e.target.value } : m));
                               })
                             }
+                            placeholder="Poznámka k materiálu"
                           />
                         </td>
                         <td className="px-2 py-2">
@@ -2525,6 +2618,122 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <tr>
                         <td className="px-2 py-3 text-sm text-slate-500" colSpan={5}>
                           Žádné materiálové požadavky.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {activeTab === "classification" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">Klasifikace</div>
+                  <div className="text-xs text-slate-500">Záznamy IfcClassificationReference</div>
+                </div>
+                <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addClassification}>
+                  Přidat klasifikaci
+                </button>
+              </div>
+              <div className="overflow-auto rounded border border-slate-200">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                    <tr>
+                      <th className="px-2 py-2">Systém</th>
+                      <th className="px-2 py-2">Identifikace</th>
+                      <th className="px-2 py-2">Název</th>
+                      <th className="px-2 py-2">Popis</th>
+                      <th className="px-2 py-2">Fáze</th>
+                      <th className="px-2 py-2 text-right">Akce</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {object.requirements.classifications.map((cls) => (
+                      <tr key={cls.id} className="border-t border-slate-200">
+                        <td className="px-2 py-2">
+                          <input
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.system}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, system: e.target.value } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                            placeholder="Klasifikační systém"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.identification ?? cls.code ?? ""}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, identification: e.target.value, code: e.target.value } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                            placeholder="Kód klasifikace"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.name}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, name: e.target.value } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                            placeholder="Název položky"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.description ?? ""}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, description: e.target.value } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                            placeholder="Popis"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <PhaseSelector
+                            phases={phases}
+                            value={cls.phases}
+                            onChange={(ids) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, phases: ids } : c));
+                              })
+                            }
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          {!cls.readOnly && (
+                            <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("classifications", cls.id)}>
+                              Odebrat
+                            </button>
+                          )}
+                          {cls.readOnly && (
+                            <span className="text-xs text-slate-400" title="Tato klasifikace je z primárního systému a nelze ji odebrat">
+                              Primární
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                    {!object.requirements.classifications.length && (
+                      <tr>
+                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={6}>
+                          Žádné klasifikace nejsou definovány.
                         </td>
                       </tr>
                     )}

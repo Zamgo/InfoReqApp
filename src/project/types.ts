@@ -53,7 +53,14 @@ export interface RelationRequirement extends RequirementBase {
     | "IFCRELNESTS"
     | "IFCRELVOIDSELEMENT"
     | "IFCRELFILLSELEMENT";
+  /** @deprecated Use entityType instead */
   targetType?: string;
+  /** Occurrence of the relation requirement */
+  occurrence?: "required" | "prohibited" | "optional";
+  /** IFC entity type for the related element */
+  entityType?: string;
+  /** PredefinedType of the related entity */
+  entityPredefinedType?: string;
   minCardinality?: number;
   maxCardinality?: number;
   note?: string;
