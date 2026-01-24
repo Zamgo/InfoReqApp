@@ -68,9 +68,15 @@ export interface RelationRequirement extends RequirementBase {
 
 export interface ClassificationRequirement extends RequirementBase {
   classificationId: string;
+  /** ID of the selected classification system entry */
+  systemEntryId?: string;
   system: string;
   identification: string;
+  /** Value - the classification value/code */
+  value?: string;
   name: string;
+  /** URI reference for this classification item */
+  uri?: string;
   description?: string;
   location?: string;
   sort?: string;
@@ -125,6 +131,18 @@ export interface CodeList {
   note?: string;
 }
 
+/** Entry in the classification systems list (for dropdown selection in classification requirements) */
+export interface ClassificationSystemEntry {
+  /** Unique identifier */
+  id: string;
+  /** Name of the classification system (e.g., "CCI-CZ", "Uniclass 2015") */
+  name: string;
+  /** Optional URI/link to the classification system specification */
+  uri?: string;
+  /** Optional description */
+  description?: string;
+}
+
 export interface Project {
   projectId: string;
   name: string;
@@ -138,4 +156,6 @@ export interface Project {
   objects: Record<string, ProjectObject>;
   /** User-managed code lists for ENUM (výčet) restrictions */
   codeLists?: CodeList[];
+  /** User-managed list of classification systems for dropdown selection */
+  classificationSystemEntries?: ClassificationSystemEntry[];
 }

@@ -8,6 +8,13 @@ interface Props {
   onDeletePhase: (id: string) => void;
 }
 
+interface EditingPhase {
+  id: string;
+  code: string;
+  name: string;
+  description: string;
+}
+
 export const PhaseManager: React.FC<Props> = ({
   phases,
   onAddPhase,
@@ -17,6 +24,7 @@ export const PhaseManager: React.FC<Props> = ({
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [editingPhase, setEditingPhase] = useState<EditingPhase | null>(null);
 
   const sortedPhases = useMemo(() => [...phases].sort((a, b) => a.code.localeCompare(b.code)), [phases]);
 
@@ -26,6 +34,30 @@ export const PhaseManager: React.FC<Props> = ({
     setCode("");
     setName("");
     setDescription("");
+  };
+
+  const handleStartEdit = (phase: Phase) => {
+    setEditingPhase({
+      id: phase.id,
+      code: phase.code,
+      name: phase.name,
+      description: phase.description || "",
+    });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingPhase(null);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingPhase || !editingPhase.code.trim() || !editingPhase.name.trim()) return;
+    onUpdatePhase({
+      id: editingPhase.id,
+      code: editingPhase.code.trim(),
+      name: editingPhase.name.trim(),
+      description: editingPhase.description.trim() || undefined,
+    });
+    setEditingPhase(null);
   };
 
   return (
@@ -75,30 +107,74 @@ export const PhaseManager: React.FC<Props> = ({
           <tbody>
             {sortedPhases.map((phase) => (
               <tr key={phase.id} className="border-t border-slate-200">
-                <td className="px-3 py-2 font-semibold text-slate-800">{phase.code}</td>
-                <td className="px-3 py-2 text-slate-800">{phase.name}</td>
-                <td className="px-3 py-2 text-slate-600">{phase.description}</td>
-                <td className="px-3 py-2 text-right text-xs">
-                  <button
-                    className="mr-2 rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
-                    onClick={() =>
-                      onUpdatePhase({
-                        ...phase,
-                        code: phase.code,
-                        name: phase.name,
-                        description: phase.description,
-                      })
-                    }
-                  >
-                    Upravit
-                  </button>
-                  <button
-                    className="rounded border border-red-300 px-2 py-1 text-red-600 hover:bg-red-50"
-                    onClick={() => onDeletePhase(phase.id)}
-                  >
-                    Smazat
-                  </button>
-                </td>
+                {editingPhase?.id === phase.id ? (
+                  <>
+                    <td className="px-3 py-2">
+                      <input
+                        className="w-full rounded border border-indigo-300 px-2 py-1 text-sm font-semibold"
+                        value={editingPhase.code}
+                        onChange={(e) => setEditingPhase({ ...editingPhase, code: e.target.value })}
+                        placeholder="Kód"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        className="w-full rounded border border-indigo-300 px-2 py-1 text-sm"
+                        value={editingPhase.name}
+                        onChange={(e) => setEditingPhase({ ...editingPhase, name: e.target.value })}
+                        placeholder="Název"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        className="w-full rounded border border-indigo-300 px-2 py-1 text-sm"
+                        value={editingPhase.description}
+                        onChange={(e) => setEditingPhase({ ...editingPhase, description: e.target.value })}
+                        placeholder="Popis"
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right text-xs whitespace-nowrap">
+                      <button
+                        className="mr-2 rounded bg-indigo-600 px-2 py-1 text-white hover:bg-indigo-500"
+                        onClick={handleSaveEdit}
+                        title="Uložit změny"
+                      >
+                        Uložit
+                      </button>
+                      <button
+                        className="rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
+                        onClick={handleCancelEdit}
+                        title="Zrušit úpravy"
+                      >
+                        Zrušit
+                      </button>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-3 py-2 font-semibold text-slate-800">{phase.code}</td>
+                    <td className="px-3 py-2 text-slate-800">{phase.name}</td>
+                    <td className="px-3 py-2 text-slate-600">{phase.description}</td>
+                    <td className="px-3 py-2 text-right text-xs whitespace-nowrap">
+                      <button
+                        className="mr-2 rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
+                        onClick={() => handleStartEdit(phase)}
+                        disabled={editingPhase !== null}
+                        title="Upravit fázi"
+                      >
+                        Upravit
+                      </button>
+                      <button
+                        className="rounded border border-red-300 px-2 py-1 text-red-600 hover:bg-red-50"
+                        onClick={() => onDeletePhase(phase.id)}
+                        disabled={editingPhase !== null}
+                        title="Smazat fázi"
+                      >
+                        Smazat
+                      </button>
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
             {!sortedPhases.length && (

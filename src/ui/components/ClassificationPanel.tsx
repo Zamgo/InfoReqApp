@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
 import { filterTree } from "../../classification/parser";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
-import type { CodeList, Phase } from "../../project/types";
+import type { ClassificationSystemEntry, CodeList, Phase } from "../../project/types";
 import { PhaseManager } from "./PhaseManager";
 import { CodeListManager } from "./CodeListManager";
+import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
 
 interface Props {
   classification: ClassificationData | null;
@@ -25,6 +26,17 @@ interface Props {
       objectCode: string;
       objectDescription?: string;
       propertyLabel?: string;
+    }>
+  >;
+  classificationSystemEntries: ClassificationSystemEntry[];
+  onAddClassificationSystemEntry: (entry: ClassificationSystemEntry) => void;
+  onUpdateClassificationSystemEntry: (id: string, updates: Partial<ClassificationSystemEntry>) => void;
+  onDeleteClassificationSystemEntry: (id: string) => void;
+  classificationSystemUsage?: Record<
+    string,
+    Array<{
+      objectCode: string;
+      objectDescription?: string;
     }>
   >;
 }
@@ -100,9 +112,14 @@ export const ClassificationPanel: React.FC<Props> = ({
   onUpdateCodeList,
   onDeleteCodeList,
   codeListUsage,
+  classificationSystemEntries,
+  onAddClassificationSystemEntry,
+  onUpdateClassificationSystemEntry,
+  onDeleteClassificationSystemEntry,
+  classificationSystemUsage,
 }) => {
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists">("hierarchy");
+  const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists" | "classificationsystems">("hierarchy");
 
   const filteredNodes = useMemo(() => {
     if (!classification) return [];
@@ -125,6 +142,7 @@ export const ClassificationPanel: React.FC<Props> = ({
           { key: "hierarchy", label: "Hierarchie" },
           { key: "phases", label: "Fáze" },
           { key: "codelists", label: "Číselníky" },
+          { key: "classificationsystems", label: "Klasifikační systémy" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -213,6 +231,18 @@ export const ClassificationPanel: React.FC<Props> = ({
             onAdd={onAddCodeList}
             onUpdate={onUpdateCodeList}
             onDelete={onDeleteCodeList}
+          />
+        </div>
+      )}
+
+      {activeTab === "classificationsystems" && (
+        <div className="flex h-full flex-col p-3">
+          <ClassificationSystemsManager
+            systems={classificationSystemEntries}
+            usage={classificationSystemUsage}
+            onAdd={onAddClassificationSystemEntry}
+            onUpdate={onUpdateClassificationSystemEntry}
+            onDelete={onDeleteClassificationSystemEntry}
           />
         </div>
       )}

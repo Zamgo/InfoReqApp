@@ -35,6 +35,7 @@ export const createEmptyProject = (classification: ClassificationData): Project 
     phases: DEFAULT_PHASES,
     objects: {},
     codeLists: [],
+    classificationSystemEntries: [],
   };
 };
 

@@ -4,7 +4,7 @@ import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { parseClassificationTsv, collectLeaves, findNodeByCode } from "./classification/parser";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
-import type { CodeList, Phase, Project, ProjectObject } from "./project/types";
+import type { ClassificationSystemEntry, CodeList, Phase, Project, ProjectObject } from "./project/types";
 import {
   createEmptyProject,
   ensureObject,
@@ -322,6 +322,57 @@ const AppInner: React.FC = () => {
     return usage;
   }, [project]);
 
+  // Classification System Entries handlers
+  const onAddClassificationSystemEntry = (entry: ClassificationSystemEntry) => {
+    if (!project) return;
+    const next: Project = {
+      ...project,
+      classificationSystemEntries: [...(project.classificationSystemEntries ?? []), entry],
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
+  const onUpdateClassificationSystemEntry = (id: string, updates: Partial<ClassificationSystemEntry>) => {
+    if (!project) return;
+    const nextEntries = (project.classificationSystemEntries ?? []).map((e) =>
+      e.id === id ? { ...e, ...updates } : e
+    );
+    const next: Project = {
+      ...project,
+      classificationSystemEntries: nextEntries,
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
+  const onDeleteClassificationSystemEntry = (id: string) => {
+    if (!project) return;
+    const nextEntries = (project.classificationSystemEntries ?? []).filter((e) => e.id !== id);
+    const next: Project = {
+      ...project,
+      classificationSystemEntries: nextEntries,
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
+  const classificationSystemUsage = useMemo(() => {
+    const usage: Record<string, Array<{ objectCode: string; objectDescription?: string }>> = {};
+    if (!project) return usage;
+    Object.values(project.objects).forEach((obj) => {
+      obj.requirements.classifications.forEach((c) => {
+        const systemEntryId = c.systemEntryId;
+        if (!systemEntryId) return;
+        (usage[systemEntryId] ??= []).push({
+          objectCode: obj.code,
+          objectDescription: obj.description,
+        });
+      });
+    });
+    return usage;
+  }, [project]);
+
   // Undo/Redo functions
   const updateProjectWithHistory = (newProject: Project) => {
     if (isUndoRedoRef.current) {
@@ -478,6 +529,11 @@ const AppInner: React.FC = () => {
           onUpdateCodeList={onUpdateCodeList}
           onDeleteCodeList={onDeleteCodeList}
           codeListUsage={codeListUsage}
+          classificationSystemEntries={project?.classificationSystemEntries ?? []}
+          onAddClassificationSystemEntry={onAddClassificationSystemEntry}
+          onUpdateClassificationSystemEntry={onUpdateClassificationSystemEntry}
+          onDeleteClassificationSystemEntry={onDeleteClassificationSystemEntry}
+          classificationSystemUsage={classificationSystemUsage}
         />
 
         <div className="flex-1 overflow-hidden">
@@ -500,6 +556,7 @@ const AppInner: React.FC = () => {
               onChange={onUpdateObject}
               phases={project?.phases ?? []}
               codeLists={project?.codeLists ?? []}
+              classificationSystemEntries={project?.classificationSystemEntries ?? []}
               onSaveEnumAsCodeList={onSaveEnumAsCodeList}
             />
           )}

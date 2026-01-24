@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
-import type { CodeList, MaterialRequirement, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
+import type { ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
+type IdsSubTabKey = "schema" | "readable";
 
 const IFC_DOC_BASE = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical";
 const getIfcDocUrl = (identifier: string | undefined) => (identifier ? `${IFC_DOC_BASE}/${identifier}.htm` : undefined);
@@ -48,6 +49,7 @@ interface Props {
   onChange: (obj: ProjectObject) => void;
   phases: Phase[];
   codeLists: CodeList[];
+  classificationSystemEntries: ClassificationSystemEntry[];
   onSaveEnumAsCodeList: (opts: { objectCode: string; propertyId: string; name: string; values: string[]; link: boolean }) => void;
 }
 
@@ -196,8 +198,673 @@ const isPresetUnit = (unit?: string) => {
   return UNIT_PRESETS.some((p) => p.value === u);
 };
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, onSaveEnumAsCodeList }) => {
+// Escape special XML characters
+const escapeXml = (str: string): string => {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+};
+
+// Valid IFC versions according to IDS schema
+const VALID_IFC_VERSIONS = ["IFC2X3", "IFC4", "IFC4X3_ADD2"] as const;
+type IdsIfcVersion = typeof VALID_IFC_VERSIONS[number];
+
+// Valid cardinality values
+type ConditionalCardinality = "required" | "prohibited" | "optional";
+type SimpleCardinality = "required" | "prohibited";
+
+// Helper to normalize entity name to uppercase (IDS requires uppercase)
+const normalizeEntityName = (name: string): string => {
+  if (!name) return "IFCBUILDINGELEMENT";
+  // Convert IfcWall to IFCWALL
+  return name.toUpperCase();
+};
+
+// Valid IDS data types from DataTypes.md (IFC4X3)
+// These are the exact type names that can be used in the dataType attribute
+const VALID_IDS_DATA_TYPES = new Set([
+  // Common simple types
+  "IFCBOOLEAN", "IFCLOGICAL", "IFCINTEGER", "IFCREAL", "IFCTEXT", "IFCLABEL", "IFCIDENTIFIER",
+  // Measure types
+  "IFCLENGTHMEASURE", "IFCAREAMEASURE", "IFCVOLUMEMEASURE", "IFCMASSMEASURE", "IFCTIMEMEASURE",
+  "IFCTHERMODYNAMICTEMPERATUREMEASURE", "IFCELECTRICCURRENTMEASURE", "IFCLUMINOUSINTENSITYMEASURE",
+  "IFCAMOUNTOFSUBSTANCEMEASURE", "IFCPLANEANGLEMEASURE", "IFCSOLIDANGLEMEASURE", "IFCPRESSUREMEASURE",
+  "IFCFORCEMEASURE", "IFCENERGYMEASURE", "IFCPOWERMEASURE", "IFCFREQUENCYMEASURE", "IFCELECTRICVOLTAGEMEASURE",
+  "IFCELECTRICRESISTANCEMEASURE", "IFCELECTRICCONDUCTANCEMEASURE", "IFCELECTRICCAPACITANCEMEASURE",
+  "IFCMAGNETICFLUXMEASURE", "IFCMAGNETICFLUXDENSITYMEASURE", "IFCINDUCTANCEMEASURE", "IFCLUMINOUSFLUXMEASURE",
+  "IFCILLUMINANCEMEASURE", "IFCRADIOACTIVITYMEASURE", "IFCMONETARYMEASURE", "IFCCOUNTMEASURE",
+  "IFCPOSITIVELENGTHENTHMEASURE", "IFCNONNEGATIVELENGTHMEASURE", "IFCPOSITIVELENGTHMEASURE",
+  "IFCPOSITIVEPLANEANGLEMEASURE", "IFCRATIOMEASURE", "IFCNORMALISEDRATIOMEASURE", "IFCPOSITIVERATIOMEASURE",
+  "IFCCONTEXTDEPENDENTMEASURE", "IFCDESCRIPTIVEMEASURE", "IFCPARAMETERVALUE", "IFCNUMERICMEASURE",
+  "IFCTHERMALCONDUCTIVITYMEASURE", "IFCTHERMALTRANSMITTANCEMEASURE", "IFCTHERMALRESISTANCEMEASURE",
+  "IFCTHERMALADMITTANCEMEASURE", "IFCSPECIFICHEATCAPACITYMEASURE", "IFCHEATINGVALUEMEASURE",
+  "IFCHEATFLUXDENSITYMEASURE", "IFCISOTHERMALMOISTURECAPACITYMEASURE", "IFCVAPORPERMEABILITYMEASURE",
+  "IFCMOISTURECREDITRYMEASURE", "IFCDYNAMICVISCOSITYMEASURE", "IFCKINEMATICVISCOSITYMEASURE",
+  "IFCMODULUSOFELASTICITYMEASURE", "IFCMODULUSOFSUBGRADEREACTIONMEASURE", "IFCSHEARMODULUSMEASURE",
+  "IFCLINEARFORCEMEASURE", "IFCPLANARFORCEMEASURE", "IFCLINEARSTIFFNESSMEASURE", "IFCROTATIONALSTIFFNESSMEASURE",
+  "IFCMOMENTOFINERTIAMEASURE", "IFCSECTIONALAREAINTEGRALMEASURE", "IFCSECTIONMODULUSMEASURE",
+  "IFCWARPINGCONSTANTMEASURE", "IFCWARPINGMOMENTMEASURE", "IFCMASSDENSITYMEASURE", "IFCMASSFLOWRATEMEASURE",
+  "IFCMASSPERLENGTHMEASURE", "IFCVOLUMETRICFLOWRATEMEASURE", "IFCROTATIONALFREQUENCYMEASURE",
+  "IFCROTATIONALMASSMEASURE", "IFCSOUNDPOWERMEASURE", "IFCSOUNDPRESSUREMEASURE", "IFCSOUNDPOWERLEVELMEASURE",
+  "IFCSOUNDPRESSURELEVELMEASURE", "IFCACCELERATIONMEASURE", "IFCANGULARVELOCITYMEASURE", "IFCLINEARVELOCITYMEASURE",
+  "IFCCURVATUREMEASURE", "IFCTORQUEMEASURE", "IFCABSORBEDDOSEMEASURE", "IFCDOSEEQUIVALENTMEASURE",
+  "IFCIONCONCENTRATIONMEASURE", "IFCTEMPERATUREGRADIENTMEASURE", "IFCTEMPERATURERATEOFCHANGEMEASURE",
+  "IFCAREADENSITYMEASURE",
+  // Date/time types
+  "IFCDATE", "IFCDATETIME", "IFCTIME", "IFCDURATION", "IFCTIMESTAMP",
+  // Other types
+  "IFCGLOBALLYUNIQUEID", "IFCURIREFERENCE",
+  // Common ENUM types from DataTypes.md (for PEnum_ mapping)
+  "IFCASSEMBLYPLACEENUM", "IFCACTIONREQUESTTYPEENUM", "IFCACTIONSOURCETYPEENUM", "IFCACTIONTYPEENUM",
+  "IFCACTUATORTYPEENUM", "IFCADDRESSTYPEENUM", "IFCAIRTERMINALBOXTYPEENUM", "IFCAIRTERMINALTYPEENUM",
+  "IFCAIRTOAIRHEATRECOVERYTYPEENUM", "IFCALARMTYPEENUM", "IFCANALYSISMODELTYPEENUM", "IFCANALYSISTHEORYTYPEENUM",
+  "IFCBEAMTYPEENUM", "IFCBENCHMARKENUM", "IFCBOILERTYPEENUM", "IFCBUILDINGELEMENTPROXYTYPEENUM",
+  "IFCBUILDINGSYSTEMTYPEENUM", "IFCBURNERTYPEENUM", "IFCCABLECARRIERFITTINGTYPEENUM", "IFCCABLECARRIERSEGMENTTYPEENUM",
+  "IFCCABLEFITTINGTYPEENUM", "IFCCABLESEGMENTTYPEENUM", "IFCCHANGEACTIONENUM", "IFCCHILLERTYPEENUM",
+  "IFCCHIMNEYTYPEENUM", "IFCCOILTYPEENUM", "IFCCOLUMNTYPEENUM", "IFCCOMMUNICATIONSAPPLIANCETYPEENUM",
+  "IFCCOMPRESSORTYPEENUM", "IFCCONDENSERTYPEENUM", "IFCCONNECTIONTYPEENUM", "IFCCONSTRAINTENUM",
+  "IFCCONTROLLERTYPEENUM", "IFCCOOLEDBEAMTYPEENUM", "IFCCOOLINGTOWERTYPEENUM", "IFCCOSTSCHEDULETYPEENUM",
+  "IFCCOVERINGTYPEENUM", "IFCCURTAINWALLTYPEENUM", "IFCDAMPERTYPEENUM", "IFCDATAORIGINENUM",
+  "IFCDIRECTIONSENSEENUM", "IFCDISTRIBUTIONCHAMBERELEMENTTYPEENUM", "IFCDISTRIBUTIONPORTTYPEENUM",
+  "IFCDISTRIBUTIONSYSTEMENUM", "IFCDOCUMENTCONFIDENTIALITYENUM", "IFCDOCUMENTSTATUSENUM",
+  "IFCDOORPANELOPERATIONENUM", "IFCDOORPANELPOSITIONENUM", "IFCDOORTYPEENUM", "IFCDOORTYPEOPERATIONENUM",
+  "IFCDUCTFITTINGTYPEENUM", "IFCDUCTSEGMENTTYPEENUM", "IFCDUCTSILENCERTYPEENUM",
+  "IFCELECTRICAPPLIANCETYPEENUM", "IFCELECTRICDISTRIBUTIONBOARDTYPEENUM", "IFCELECTRICFLOWSTORAGEDEVICETYPEENUM",
+  "IFCELECTRICGENERATORTYPEENUM", "IFCELECTRICMOTORTYPEENUM", "IFCELECTRICTIMECONTROLTYPEENUM",
+  "IFCELEMENTASSEMBLYTYPEENUM", "IFCELEMENTCOMPOSITIONENUM", "IFCENGINETYPEENUM",
+  "IFCEVAPORATIVECOOLERTYPEENUM", "IFCEVAPORATORTYPEENUM", "IFCEVENTTRIGGERTYPEENUM", "IFCEVENTTYPEENUM",
+  "IFCEXTERNALSPATIALELEMENTTYPEENUM", "IFCFACILITYPARTCOMMONTYPEENUM", "IFCFACILITYUSAGEENUM",
+  "IFCFANTYPEENUM", "IFCFASTENERTYPEENUM", "IFCFILTERTYPEENUM", "IFCFIRESUPPRESSIONTERMINALTYPEENUM",
+  "IFCFLOWDIRECTIONENUM", "IFCFLOWINSTRUMENTTYPEENUM", "IFCFLOWMETERTYPEENUM",
+  "IFCFOOTINGTYPEENUM", "IFCFURNITURETYPEENUM", "IFCGEOGRAPHICELEMENTTYPEENUM", "IFCGEOMETRICPROJECTIONENUM",
+  "IFCGLOBALORLOCALENUM", "IFCGRIDTYPEENUM", "IFCHEATEXCHANGERTYPEENUM", "IFCHUMIDIFIERTYPEENUM",
+  "IFCINTERCEPTORTYPEENUM", "IFCINTERNALOREXTERNALENUM", "IFCINVENTORYTYPEENUM",
+  "IFCJUNCTIONBOXTYPEENUM", "IFCLAMPTYPEENUM", "IFCLAYERSETDIRECTIONENUM",
+  "IFCLIGHTDISTRIBUTIONCURVEENUM", "IFCLIGHTEMISSIONSOURCEENUM", "IFCLIGHTFIXTURETYPEENUM",
+  "IFCLOADGROUPTYPEENUM", "IFCLOGICALOPERATORENUM", "IFCMECHANICALFASTENERTYPEENUM", "IFCMEDICALDEVICETYPEENUM",
+  "IFCMEMBERTYPEENUM", "IFCMOTORCONNECTIONTYPEENUM", "IFCOBJECTIVEENUM", "IFCOCCUPANTTYPEENUM",
+  "IFCOPENINGELEMENTTYPEENUM", "IFCOUTLETTYPEENUM", "IFCPERFORMANCEHISTORYTYPEENUM",
+  "IFCPERMEABLECOVERINGOPERATIONENUM", "IFCPERMITTYPEENUM", "IFCPHYSICALORVIRTUALENUM",
+  "IFCPILECONSTRUCTIONENUM", "IFCPILETYPEENUM", "IFCPIPEFITTINGTYPEENUM", "IFCPIPESEGMENTTYPEENUM",
+  "IFCPLATETYPEENUM", "IFCPROCEDURETYPEENUM", "IFCPROFILETYPEENUM", "IFCPROJECTEDORTRUELENGTHENUM",
+  "IFCPROJECTIONELEMENTTYPEENUM", "IFCPROJECTORDERTYPEENUM", "IFCPROPERTYSETTEMPLATETYPEENUM",
+  "IFCPROTECTIVEDEVICETRIPPINGUNITTYPEENUM", "IFCPROTECTIVEDEVICETYPEENUM", "IFCPUMPTYPEENUM",
+  "IFCRAILINGTYPEENUM", "IFCRAMPFLIGHTTYPEENUM", "IFCRAMPTYPEENUM", "IFCRECURRENCETYPEENUM",
+  "IFCREFERENTTYPEENUM", "IFCREFLECTANCEMETHODENUM", "IFCREINFORCINGBARROLEENUM", "IFCREINFORCINGBARSURFACEENUM",
+  "IFCREINFORCINGBARTYPEENUM", "IFCREINFORCINGMESHTYPEENUM", "IFCROLEENUM", "IFCROOFTYPEENUM",
+  "IFCSANITARYTERMINALTYPEENUM", "IFCSECTIONTYPEENUM", "IFCSENSORTYPEENUM", "IFCSEQUENCEENUM",
+  "IFCSHADINGDEVICETYPEENUM", "IFCSIMPLEPROPERTYTEMPLATETYPEENUM", "IFCSLABTYPEENUM", "IFCSOLARDEVICETYPEENUM",
+  "IFCSPACEHEATERTYPEENUM", "IFCSPACETYPEENUM", "IFCSPATIALZONETYPEENUM", "IFCSTACKTERMINALTYPEENUM",
+  "IFCSTAIRFLIGHTTYPEENUM", "IFCSTAIRTYPEENUM", "IFCSTATEENUM", "IFCSTRUCTURALCURVEACTIVITYTYPEENUM",
+  "IFCSTRUCTURALCURVEMEMBERTYPEENUM", "IFCSTRUCTURALSURFACEACTIVITYTYPEENUM", "IFCSTRUCTURALSURFACEMEMBERTYPEENUM",
+  "IFCSUBCONTRACTRESOURCETYPEENUM", "IFCSURFACEFEATURETYPEENUM", "IFCSWITCHINGDEVICETYPEENUM",
+  "IFCSYSTEMFURNITUREELEMENTTYPEENUM", "IFCTANKTYPEENUM", "IFCTASKDURATIONENUM", "IFCTASKTYPEENUM",
+  "IFCTENDONANCHORTYPEENUM", "IFCTENDONTYPEENUM", "IFCTIMESERIESDATATYPEENUM", "IFCTRANSFORMERTYPEENUM",
+  "IFCTRANSPORTELEMENTTYPEENUM", "IFCTUBEBUNDLETYPEENUM", "IFCUNITARYCONTROLELEMENTTYPEENUM",
+  "IFCUNITARYEQUIPMENTTYPEENUM", "IFCUNITENUM", "IFCVALVETYPEENUM", "IFCVIBRATIONISOLATORTYPEENUM",
+  "IFCVOIDINGFEATURETYPEENUM", "IFCWALLTYPEENUM", "IFCWASTETERMINALTYPEENUM",
+  "IFCWINDOWPANELOPERATIONENUM", "IFCWINDOWPANELPOSITIONENUM", "IFCWINDOWTYPEENUM", "IFCWINDOWTYPEPARTITIONINGENUM",
+  "IFCWORKCALENDARTYPEENUM", "IFCWORKPLANTYPEENUM", "IFCWORKSCHEDULETYPEENUM",
+]);
+
+// Mapping from common schema data types to valid IDS data types
+const DATA_TYPE_MAPPING: Record<string, string> = {
+  // Direct IFC types (case-insensitive)
+  "ifcboolean": "IFCBOOLEAN",
+  "ifclogical": "IFCLOGICAL",
+  "ifcinteger": "IFCINTEGER",
+  "ifcreal": "IFCREAL",
+  "ifctext": "IFCTEXT",
+  "ifclabel": "IFCLABEL",
+  "ifcidentifier": "IFCIDENTIFIER",
+  "ifclengthmeasure": "IFCLENGTHMEASURE",
+  "ifcareameasure": "IFCAREAMEASURE",
+  "ifcvolumemeasure": "IFCVOLUMEMEASURE",
+  "ifcmassmeasure": "IFCMASSMEASURE",
+  "ifctimemeasure": "IFCTIMEMEASURE",
+  "ifccountmeasure": "IFCCOUNTMEASURE",
+  "ifcthermodynamictemperaturemeasure": "IFCTHERMODYNAMICTEMPERATUREMEASURE",
+  "ifcpressuremeasure": "IFCPRESSUREMEASURE",
+  "ifcpowermeasure": "IFCPOWERMEASURE",
+  "ifcenergymeasure": "IFCENERGYMEASURE",
+  "ifcelectricvoltagemeasure": "IFCELECTRICVOLTAGEMEASURE",
+  "ifcelectriccurrentmeasure": "IFCELECTRICCURRENTMEASURE",
+  "ifcpositivelengthenthmeasure": "IFCPOSITIVELENGTHMEASURE",
+  "ifcnonnegativelengthmeasure": "IFCNONNEGATIVELENGTHMEASURE",
+  "ifcplaneanglemeasure": "IFCPLANEANGLEMEASURE",
+  "ifcratiomeasure": "IFCRATIOMEASURE",
+  "ifcnormalisedratiomeasure": "IFCNORMALISEDRATIOMEASURE",
+  "ifcmonetarymeasure": "IFCMONETARYMEASURE",
+  "ifcthermalconductivitymeasure": "IFCTHERMALCONDUCTIVITYMEASURE",
+  "ifcthermaltransmittancemeasure": "IFCTHERMALTRANSMITTANCEMEASURE",
+  "ifcmassdensitymeasure": "IFCMASSDENSITYMEASURE",
+  "ifcdate": "IFCDATE",
+  "ifcdatetime": "IFCDATETIME",
+  "ifctime": "IFCTIME",
+  "ifcduration": "IFCDURATION",
+  "ifcgloballyuniqueid": "IFCGLOBALLYUNIQUEID",
+  "ifcurireference": "IFCURIREFERENCE",
+};
+
+// Helper to map IFC data types to valid IDS data types
+const mapDataTypeToIds = (dataType?: string): string | undefined => {
+  if (!dataType) return undefined;
+  
+  const dt = dataType.trim();
+  const dtLower = dt.toLowerCase();
+  
+  // Check direct mapping first
+  if (DATA_TYPE_MAPPING[dtLower]) {
+    return DATA_TYPE_MAPPING[dtLower];
+  }
+  
+  // Handle PEnum_ types - these are Property Enumerations stored as IfcLabel in IFC
+  // PEnum_AssemblyPlace → IFCLABEL (not IFCASSEMBLYPLACEENUM!)
+  // The enum type (like IFCASSEMBLYPLACEENUM) is for entity attributes, not properties
+  if (dtLower.startsWith("penum_") || dtLower.startsWith("penum")) {
+    return "IFCLABEL";
+  }
+  
+  // Try to find in valid types (case-insensitive)
+  const dtUpper = dt.toUpperCase();
+  if (VALID_IDS_DATA_TYPES.has(dtUpper)) {
+    return dtUpper;
+  }
+  
+  // Handle Ifc prefix - normalize to uppercase and check
+  if (dtLower.startsWith("ifc")) {
+    const normalized = dtUpper;
+    if (VALID_IDS_DATA_TYPES.has(normalized)) {
+      return normalized;
+    }
+    // If ends with MEASURE, assume it's a valid measure type
+    if (normalized.endsWith("MEASURE")) {
+      return normalized;
+    }
+    // If ends with ENUM, it might be valid
+    if (normalized.endsWith("ENUM")) {
+      return normalized;
+    }
+  }
+  
+  // Default fallback for unknown types
+  // If it looks like an enum type, use IFCLABEL
+  if (dtLower.includes("enum") || dtLower.includes("type")) {
+    return "IFCLABEL";
+  }
+  
+  // For other unknown types, return IFCLABEL as safe default for strings
+  return "IFCLABEL";
+};
+
+// Generate constraint XML for IDS
+const generateConstraintXml = (
+  constraint?: string,
+  value?: string,
+  indent: string = "          "
+): string => {
+  const c = (constraint ?? "FILLED").toUpperCase();
+  const val = value ?? "";
+  
+  // If no value specified, no restriction
+  if (!val) {
+    return "";
+  }
+  
+  // FILLED constraint with value = simple value requirement
+  if (c === "FILLED") {
+    return `${indent}<ids:value>\n${indent}  <ids:simpleValue>${escapeXml(val)}</ids:simpleValue>\n${indent}</ids:value>`;
+  }
+  
+  if (c === "ENUM") {
+    const values = val.split("|").map((v) => v.trim()).filter(Boolean);
+    if (values.length === 0) return "";
+    if (values.length === 1) {
+      return `${indent}<ids:value>\n${indent}  <ids:simpleValue>${escapeXml(values[0])}</ids:simpleValue>\n${indent}</ids:value>`;
+    }
+    // Multiple values - use xs:restriction with enumeration
+    let xml = `${indent}<ids:value>\n${indent}  <xs:restriction base="xs:string">`;
+    values.forEach((v) => {
+      xml += `\n${indent}    <xs:enumeration value="${escapeXml(v)}" />`;
+    });
+    xml += `\n${indent}  </xs:restriction>\n${indent}</ids:value>`;
+    return xml;
+  }
+  
+  if (c === "PATTERN") {
+    return `${indent}<ids:value>\n${indent}  <xs:restriction base="xs:string">\n${indent}    <xs:pattern value="${escapeXml(val)}" />\n${indent}  </xs:restriction>\n${indent}</ids:value>`;
+  }
+  
+  if (c === "RANGE") {
+    // Parse range value like ">=10 AND <=100" or "10-100"
+    const parts = val.split(/\s*(?:AND|,|;)\s*/i);
+    let xml = `${indent}<ids:value>\n${indent}  <xs:restriction base="xs:double">`;
+    parts.forEach((part) => {
+      const trimmed = part.trim();
+      if (trimmed.startsWith(">=")) {
+        xml += `\n${indent}    <xs:minInclusive value="${escapeXml(trimmed.slice(2).trim())}" />`;
+      } else if (trimmed.startsWith(">")) {
+        xml += `\n${indent}    <xs:minExclusive value="${escapeXml(trimmed.slice(1).trim())}" />`;
+      } else if (trimmed.startsWith("<=")) {
+        xml += `\n${indent}    <xs:maxInclusive value="${escapeXml(trimmed.slice(2).trim())}" />`;
+      } else if (trimmed.startsWith("<")) {
+        xml += `\n${indent}    <xs:maxExclusive value="${escapeXml(trimmed.slice(1).trim())}" />`;
+      }
+    });
+    xml += `\n${indent}  </xs:restriction>\n${indent}</ids:value>`;
+    return xml;
+  }
+  
+  if (c === "LENGTH") {
+    // Parse length constraints like "min:5" or "max:100" or "5-100"
+    const parts = val.split(/\s*(?:AND|,|;|-)\s*/i);
+    let xml = `${indent}<ids:value>\n${indent}  <xs:restriction base="xs:string">`;
+    parts.forEach((part, idx) => {
+      const trimmed = part.trim();
+      if (trimmed.startsWith("min:")) {
+        xml += `\n${indent}    <xs:minLength value="${escapeXml(trimmed.slice(4).trim())}" />`;
+      } else if (trimmed.startsWith("max:")) {
+        xml += `\n${indent}    <xs:maxLength value="${escapeXml(trimmed.slice(4).trim())}" />`;
+      } else if (!isNaN(Number(trimmed))) {
+        // Simple number - if first, treat as min, if second, treat as max
+        if (idx === 0) {
+          xml += `\n${indent}    <xs:minLength value="${escapeXml(trimmed)}" />`;
+        } else {
+          xml += `\n${indent}    <xs:maxLength value="${escapeXml(trimmed)}" />`;
+        }
+      }
+    });
+    xml += `\n${indent}  </xs:restriction>\n${indent}</ids:value>`;
+    return xml;
+  }
+  
+  // Default: simple value
+  return `${indent}<ids:value>\n${indent}  <ids:simpleValue>${escapeXml(val)}</ids:simpleValue>\n${indent}</ids:value>`;
+};
+
+// IDS Validation errors interface
+interface IdsValidationError {
+  type: "error" | "warning";
+  message: string;
+  field?: string;
+}
+
+// Validate IDS compliance
+const validateIdsCompliance = (obj: import("../../project/types").ProjectObject): IdsValidationError[] => {
+  const errors: IdsValidationError[] = [];
+  
+  // Check entity
+  if (!obj.ifcEntity) {
+    errors.push({ type: "error", message: "IFC entita není vybrána", field: "entity" });
+  } else {
+    const normalized = normalizeEntityName(obj.ifcEntity);
+    if (!/^IFC[A-Z]+$/.test(normalized)) {
+      errors.push({ type: "warning", message: `Název entity "${obj.ifcEntity}" bude převeden na "${normalized}"`, field: "entity" });
+    }
+  }
+  
+  // Check classifications - system is required
+  obj.requirements.classifications.forEach((cls, idx) => {
+    const system = cls.system || cls.name;
+    if (!system) {
+      errors.push({ type: "error", message: `Klasifikace #${idx + 1}: Systém je povinný`, field: `classification.${idx}` });
+    }
+  });
+  
+  // Check properties - dataType mapping and validation
+  obj.requirements.properties.forEach((prop, idx) => {
+    if (prop.dataType) {
+      const mapped = mapDataTypeToIds(prop.dataType);
+      const dtLower = prop.dataType.toLowerCase();
+      const dtUpper = prop.dataType.toUpperCase().replace(/[^A-Z]/g, "");
+      // Info about type mapping - only show for non-trivial mappings
+      if (mapped && mapped !== dtUpper && !dtLower.startsWith("penum")) {
+        // Show info only for non-PEnum types that get remapped
+        errors.push({ 
+          type: "warning", 
+          message: `Vlastnost "${prop.propertyName}": "${prop.dataType}" → ${mapped}`, 
+          field: `property.${idx}` 
+        });
+      }
+      // PEnum types don't need warning - IFCLABEL is the correct type
+    }
+    if (!prop.psetName) {
+      errors.push({ type: "error", message: `Vlastnost #${idx + 1}: PropertySet je povinný`, field: `property.${idx}` });
+    }
+    if (!prop.propertyName) {
+      errors.push({ type: "error", message: `Vlastnost #${idx + 1}: Název vlastnosti je povinný`, field: `property.${idx}` });
+    }
+  });
+  
+  // Check relations - entityType must be uppercase
+  obj.requirements.relations.forEach((rel, idx) => {
+    if (rel.entityType) {
+      const normalized = normalizeEntityName(rel.entityType);
+      if (!/^IFC[A-Z]+$/.test(normalized)) {
+        errors.push({ type: "warning", message: `Relace #${idx + 1}: Entita "${rel.entityType}" bude převedena na "${normalized}"`, field: `relation.${idx}` });
+      }
+    }
+  });
+  
+  return errors;
+};
+
+// Helper to check if a requirement matches a phase filter
+const requirementMatchesPhase = (phases: string[] | undefined, phaseId: string | null): boolean => {
+  // null phaseId means "all" - show everything
+  if (phaseId === null) return true;
+  // If requirement has no phases, show in all phase tabs
+  if (!phases || phases.length === 0) return true;
+  // Check if the phase is in the requirement's phases
+  return phases.includes(phaseId);
+};
+
+// Filter a ProjectObject's requirements by phase
+const filterObjectByPhase = (
+  obj: import("../../project/types").ProjectObject,
+  phaseId: string | null
+): import("../../project/types").ProjectObject => {
+  if (phaseId === null) return obj; // Return full object for "all"
+  
+  return {
+    ...obj,
+    requirements: {
+      attributes: obj.requirements.attributes.filter((a) => requirementMatchesPhase(a.phases, phaseId)),
+      properties: obj.requirements.properties.filter((p) => requirementMatchesPhase(p.phases, phaseId)),
+      relations: obj.requirements.relations.filter((r) => requirementMatchesPhase(r.phases, phaseId)),
+      classifications: obj.requirements.classifications.filter((c) => requirementMatchesPhase(c.phases, phaseId)),
+      materials: obj.requirements.materials.filter((m) => requirementMatchesPhase(m.phases, phaseId)),
+    },
+  };
+};
+
+// Generate IDS XML from ProjectObject - compliant with IDS 1.0 XSD schema
+const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVersion: IdsIfcVersion = "IFC4X3_ADD2", phaseId: string | null = null, phaseName?: string): string => {
+  // Filter object by phase
+  const filteredObj = filterObjectByPhase(obj, phaseId);
+  // Normalize entity name to uppercase
+  const entityName = normalizeEntityName(filteredObj.ifcEntity);
+  const specName = phaseName ? `${filteredObj.description || filteredObj.code} - ${phaseName}` : (filteredObj.description || filteredObj.code);
+  
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
+<ids:ids xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://standards.buildingsmart.org/IDS http://standards.buildingsmart.org/IDS/1.0/ids.xsd" xmlns:ids="http://standards.buildingsmart.org/IDS">
+  <ids:info>
+    <ids:title>${escapeXml(specName)}</ids:title>
+    <ids:version>1.0</ids:version>
+  </ids:info>
+  <ids:specifications>
+    <ids:specification ifcVersion="${ifcVersion}" name="${escapeXml(specName)}">
+      <ids:applicability minOccurs="1" maxOccurs="unbounded">
+        <ids:entity>
+          <ids:name>
+            <ids:simpleValue>${escapeXml(entityName)}</ids:simpleValue>
+          </ids:name>`;
+  
+  // Add PredefinedType if set
+  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value) {
+    xml += `
+          <ids:predefinedType>
+            <ids:simpleValue>${escapeXml(filteredObj.predefinedType.value.toUpperCase())}</ids:simpleValue>
+          </ids:predefinedType>`;
+  }
+  
+  xml += `
+        </ids:entity>
+      </ids:applicability>
+      <ids:requirements>`;
+  
+  // Attributes
+  filteredObj.requirements.attributes.forEach((attr) => {
+    if (attr.attribute === "PredefinedType") return; // Skip, already handled in entity
+    const cardinality: ConditionalCardinality = attr.occurrence === "prohibited" ? "prohibited" : attr.occurrence === "optional" ? "optional" : "required";
+    xml += `
+        <ids:attribute cardinality="${cardinality}">
+          <ids:name>
+            <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>
+          </ids:name>`;
+    const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ");
+    if (constraintXml) {
+      xml += `\n${constraintXml}`;
+    }
+    xml += `
+        </ids:attribute>`;
+  });
+  
+  // Properties
+  filteredObj.requirements.properties.forEach((prop) => {
+    // Skip properties without required fields
+    if (!prop.psetName || !prop.propertyName) return;
+    
+    const cardinality: ConditionalCardinality = prop.occurrence === "prohibited" ? "prohibited" : prop.occurrence === "optional" ? "optional" : "required";
+    const dataType = mapDataTypeToIds(prop.dataType);
+    const dataTypeAttr = dataType ? ` dataType="${escapeXml(dataType)}"` : "";
+    
+    xml += `
+        <ids:property cardinality="${cardinality}"${dataTypeAttr}>
+          <ids:propertySet>
+            <ids:simpleValue>${escapeXml(prop.psetName)}</ids:simpleValue>
+          </ids:propertySet>
+          <ids:baseName>
+            <ids:simpleValue>${escapeXml(prop.propertyName)}</ids:simpleValue>
+          </ids:baseName>`;
+    const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ");
+    if (constraintXml) {
+      xml += `\n${constraintXml}`;
+    }
+    xml += `
+        </ids:property>`;
+  });
+  
+  // Relations (PartOf) - note: cardinality for partOf is simpleCardinality (only required/prohibited)
+  filteredObj.requirements.relations.forEach((rel) => {
+    // For partOf, cardinality can only be "required" or "prohibited" (simpleCardinality)
+    const cardinality: SimpleCardinality = rel.occurrence === "prohibited" ? "prohibited" : "required";
+    const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
+    const relatedEntityName = normalizeEntityName(rel.entityType || "IFCBUILDINGELEMENT");
+    
+    xml += `
+        <ids:partOf${relationAttr} cardinality="${cardinality}">
+          <ids:entity>
+            <ids:name>
+              <ids:simpleValue>${escapeXml(relatedEntityName)}</ids:simpleValue>
+            </ids:name>`;
+    if (rel.entityPredefinedType) {
+      xml += `
+            <ids:predefinedType>
+              <ids:simpleValue>${escapeXml(rel.entityPredefinedType.toUpperCase())}</ids:simpleValue>
+            </ids:predefinedType>`;
+    }
+    xml += `
+          </ids:entity>
+        </ids:partOf>`;
+  });
+  
+  // Classifications - system is required, value comes BEFORE system according to XSD sequence
+  filteredObj.requirements.classifications.forEach((cls) => {
+    const system = cls.system || cls.name;
+    // Skip classifications without system (required by XSD)
+    if (!system) return;
+    
+    const cardinality: ConditionalCardinality = "required"; // Classifications are typically required
+    const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
+    
+    xml += `
+        <ids:classification cardinality="${cardinality}"${uriAttr}>`;
+    
+    // Value comes first in XSD sequence (minOccurs="0")
+    if (cls.value) {
+      xml += `
+          <ids:value>
+            <ids:simpleValue>${escapeXml(cls.value)}</ids:simpleValue>
+          </ids:value>`;
+    }
+    
+    // System is required (minOccurs="1")
+    xml += `
+          <ids:system>
+            <ids:simpleValue>${escapeXml(system)}</ids:simpleValue>
+          </ids:system>
+        </ids:classification>`;
+  });
+  
+  // Materials
+  filteredObj.requirements.materials.forEach((mat) => {
+    const cardinality: ConditionalCardinality = mat.occurrence === "prohibited" ? "prohibited" : mat.occurrence === "optional" ? "optional" : "required";
+    const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
+    
+    xml += `
+        <ids:material cardinality="${cardinality}"${uriAttr}>`;
+    if (mat.category && mat.categoryMode !== "NONE") {
+      const constraintXml = generateConstraintXml(mat.categoryMode === "ENUM" ? "ENUM" : undefined, mat.category, "          ");
+      if (constraintXml) {
+        xml += `\n${constraintXml}`;
+      }
+    }
+    xml += `
+        </ids:material>`;
+  });
+  
+  xml += `
+      </ids:requirements>
+    </ids:specification>
+  </ids:specifications>
+</ids:ids>`;
+  
+  return xml;
+};
+
+// Translate constraint to human-readable Czech
+const translateConstraint = (constraint?: string, value?: string, _dataType?: string): string => {
+  const c = (constraint ?? "FILLED").toUpperCase();
+  const val = value ?? "";
+  
+  // No value specified = any value allowed
+  if (!val) {
+    return "s libovolnou hodnotou";
+  }
+  
+  // FILLED with value = exact value required
+  if (c === "FILLED") {
+    return `s hodnotou **${val}**`;
+  }
+  
+  if (c === "ENUM") {
+    const values = val.split("|").map((v) => v.trim()).filter(Boolean);
+    if (values.length === 1) {
+      return `s hodnotou "${values[0]}"`;
+    }
+    return `s hodnotou jednou z: ${values.join(", ")}`;
+  }
+  
+  if (c === "PATTERN") {
+    return `s hodnotou odpovídající vzoru ${val}`;
+  }
+  
+  if (c === "RANGE") {
+    const parts = val.split(/\s*(?:AND|,|;)\s*/i);
+    const conditions: string[] = [];
+    parts.forEach((part) => {
+      const trimmed = part.trim();
+      if (trimmed.startsWith(">=")) {
+        conditions.push(`větší nebo rovno ${trimmed.slice(2).trim()}`);
+      } else if (trimmed.startsWith(">")) {
+        conditions.push(`větší než ${trimmed.slice(1).trim()}`);
+      } else if (trimmed.startsWith("<=")) {
+        conditions.push(`menší nebo rovno ${trimmed.slice(2).trim()}`);
+      } else if (trimmed.startsWith("<")) {
+        conditions.push(`menší než ${trimmed.slice(1).trim()}`);
+      }
+    });
+    if (conditions.length > 0) {
+      return `s hodnotou [${conditions.join(" a ")}]`;
+    }
+    return `s hodnotou v rozmezí ${val}`;
+  }
+  
+  if (c === "LENGTH") {
+    return `s délkou ${val}`;
+  }
+  
+  return `s hodnotou "${val}"`;
+};
+
+// Generate human-readable text from ProjectObject
+const generateHumanReadable = (
+  obj: import("../../project/types").ProjectObject,
+  _phases: import("../../project/types").Phase[],
+  _classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[],
+  phaseId: string | null = null
+): { applicability: string[]; requirements: string[] } => {
+  // Filter object by phase
+  const filteredObj = filterObjectByPhase(obj, phaseId);
+  
+  const applicability: string[] = [];
+  const requirements: string[] = [];
+  
+  // Entity applicability
+  if (filteredObj.ifcEntity) {
+    applicability.push(`IFC třídu **${filteredObj.ifcEntity}**`);
+  }
+  
+  // PredefinedType applicability
+  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value) {
+    applicability.push(`s předdefinovaným typem **${filteredObj.predefinedType.value}**`);
+  }
+  
+  // Attributes - some can be in applicability, some in requirements
+  filteredObj.requirements.attributes.forEach((attr) => {
+    if (attr.attribute === "PredefinedType") return; // Already handled
+    const occurrence = attr.occurrence === "prohibited" ? "NESMÍ" : attr.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
+    const constraintText = translateConstraint(attr.constraint, attr.value, attr.dataType);
+    requirements.push(`**${occurrence}** mít atribut **${attr.attribute}** ${constraintText}${attr.dataType ? ` *(${attr.dataType})*` : ""}`);
+  });
+  
+  // Properties
+  filteredObj.requirements.properties.forEach((prop) => {
+    const occurrence = prop.occurrence === "prohibited" ? "NESMÍ" : prop.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
+    const constraintText = translateConstraint(prop.constraint, prop.value, prop.dataType);
+    const psetType = prop.source === "PSET" ? "property setu" : prop.source === "QTO" ? "quantity setu" : "vlastní sady";
+    requirements.push(`**${occurrence}** mít vlastnost **${prop.propertyName}** ${psetType} **${prop.psetName}** ${constraintText}${prop.dataType ? ` *(${prop.dataType})*` : ""}`);
+  });
+  
+  // Relations
+  filteredObj.requirements.relations.forEach((rel) => {
+    const occurrence = rel.occurrence === "prohibited" ? "NESMÍ" : rel.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
+    const entityText = rel.entityType ? `IFC třídou **${rel.entityType}**` : "prvkem";
+    const predefinedText = rel.entityPredefinedType ? ` s typem **${rel.entityPredefinedType}**` : "";
+    requirements.push(`**${occurrence}** mít relaci **${rel.relationType}** s ${entityText}${predefinedText}`);
+  });
+  
+  // Classifications
+  filteredObj.requirements.classifications.forEach((cls) => {
+    if (!cls.system && !cls.value && !cls.name) return;
+    const systemName = cls.system || cls.name;
+    const valueText = cls.value ? ` s hodnotou **${cls.value}**` : "";
+    requirements.push(`**MUSÍ** mít klasifikaci **${systemName}**${valueText}`);
+  });
+  
+  // Materials
+  filteredObj.requirements.materials.forEach((mat) => {
+    const occurrence = mat.occurrence === "prohibited" ? "NESMÍ" : mat.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
+    let categoryText = "";
+    if (mat.category && mat.categoryMode !== "NONE") {
+      categoryText = ` s kategorií **${mat.category}**`;
+    }
+    requirements.push(`**${occurrence}** mít materiál${categoryText}`);
+  });
+  
+  return { applicability, requirements };
+};
+
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, onSaveEnumAsCodeList }) => {
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
+  const [idsSubTab, setIdsSubTab] = useState<IdsSubTabKey>("readable");
+  const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null); // null = "Vše"
+  // Fixed IFC version for IDS export
+  const selectedIfcVersion: IdsIfcVersion = "IFC4X3_ADD2";
   const [enumDraftByPropId, setEnumDraftByPropId] = useState<Record<string, string>>({});
   const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[]; type?: "property" | "attribute" }>(null);
   const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
@@ -3590,9 +4257,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
                       <th className="w-8 px-2 py-2"></th>
-                      <th className="px-2 py-2">Systém</th>
-                      <th className="px-2 py-2">Identifikace</th>
-                      <th className="px-2 py-2">Název</th>
+                      <th className="px-2 py-2">Klasifikační systém</th>
+                      <th className="px-2 py-2">Hodnota</th>
+                      <th className="px-2 py-2">URI</th>
                       <th className="px-2 py-2">Popis</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-right">Akce</th>
@@ -3612,42 +4279,71 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           />
                         </td>
                         <td className="px-2 py-2">
+                          <select
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.systemEntryId ?? ""}
+                            onChange={(e) => {
+                              const selectedEntryId = e.target.value;
+                              const selectedEntry = classificationSystemEntries.find((s) => s.id === selectedEntryId);
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) =>
+                                  c.id === cls.id
+                                    ? {
+                                        ...c,
+                                        systemEntryId: selectedEntryId || undefined,
+                                        system: selectedEntry?.name ?? c.system,
+                                      }
+                                    : c
+                                );
+                              });
+                            }}
+                            disabled={cls.readOnly}
+                          >
+                            <option value="">— Vyberte systém —</option>
+                            {classificationSystemEntries.map((entry) => (
+                              <option key={entry.id} value={entry.id}>
+                                {entry.name}
+                              </option>
+                            ))}
+                          </select>
+                          {!cls.systemEntryId && cls.system && (
+                            <input
+                              className={`mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.system}
+                              onChange={(e) =>
+                                updateRequirements((reqs) => {
+                                  reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, system: e.target.value } : c));
+                                })
+                              }
+                              disabled={cls.readOnly}
+                              placeholder="Nebo zadejte název systému ručně"
+                            />
+                          )}
+                        </td>
+                        <td className="px-2 py-2">
                           <input
                             className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.system}
+                            value={cls.value ?? cls.identification ?? cls.code ?? ""}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
-                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, system: e.target.value } : c));
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, value: e.target.value, identification: e.target.value, code: e.target.value } : c));
                               })
                             }
                             disabled={cls.readOnly}
-                            placeholder="Klasifikační systém"
+                            placeholder="Hodnota klasifikace"
                           />
                         </td>
                         <td className="px-2 py-2">
                           <input
                             className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.identification ?? cls.code ?? ""}
+                            value={cls.uri ?? ""}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
-                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, identification: e.target.value, code: e.target.value } : c));
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, uri: e.target.value || undefined } : c));
                               })
                             }
                             disabled={cls.readOnly}
-                            placeholder="Kód klasifikace"
-                          />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.name}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, name: e.target.value } : c));
-                              })
-                            }
-                            disabled={cls.readOnly}
-                            placeholder="Název položky"
+                            placeholder="URI odkaz"
                           />
                         </td>
                         <td className="px-2 py-2">
@@ -3701,26 +4397,290 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             </div>
           )}
 
-          {activeTab === "ids" && (
+          {activeTab === "ids" && (() => {
+            const validationErrors = validateIdsCompliance(object);
+            const hasErrors = validationErrors.some((e) => e.type === "error");
+            const hasWarnings = validationErrors.some((e) => e.type === "warning");
+            
+            return (
             <div className="space-y-3">
-              <div className="text-sm font-semibold text-slate-800">IDS náhled</div>
-              <div className="rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                <div className="font-semibold">Shrnutí facet</div>
-                <ul className="list-disc pl-5">
-                  <li>Entity: {object.ifcEntity || "není vybrána"}</li>
-                  <li>PredefinedType: {object.predefinedType.value ?? "není vybrán"}</li>
-                  <li>Atributy: {object.requirements.attributes.length}</li>
-                  <li>Vlastnosti: {object.requirements.properties.length}</li>
-                  <li>Součástí (PartOf): {object.requirements.relations.length}</li>
-                  <li>Materiál: {object.requirements.materials.length}</li>
-                  <li>Klasifikace: {object.requirements.classifications.length}</li>
-                </ul>
-                <div className="mt-3 text-xs text-slate-500">
-                  Základní validace: Vyberte IfcEntity pro plnou kompatibilitu s IDS. Typy relací jsou omezeny dle IDS schématu.
+              <div className="flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  <div className="text-sm font-semibold text-slate-800">IDS náhled</div>
+                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">IFC4X3_ADD2</span>
+                  {hasErrors && (
+                    <span className="text-xs text-red-600 flex items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                      </svg>
+                      {validationErrors.filter((e) => e.type === "error").length} chyb
+                    </span>
+                  )}
+                  {!hasErrors && hasWarnings && (
+                    <span className="text-xs text-amber-600 flex items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                        <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                      </svg>
+                      {validationErrors.filter((e) => e.type === "warning").length} varování
+                    </span>
+                  )}
+                  {!hasErrors && !hasWarnings && (
+                    <span className="text-xs text-green-600 flex items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                      </svg>
+                      Validní
+                    </span>
+                  )}
                 </div>
+                <button
+                  className={`text-sm text-white px-3 py-1.5 rounded flex items-center gap-1.5 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
+                  onClick={() => {
+                    if (hasErrors) return;
+                    const currentPhase = phases.find((p) => p.id === selectedPhaseId);
+                    const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
+                    const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName);
+                    const blob = new Blob([xml], { type: "application/xml" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    const baseFileName = (object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_");
+                    const fileName = currentPhase ? `${baseFileName}_${currentPhase.code}` : baseFileName;
+                    a.download = `${fileName}.ids`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                  }}
+                  disabled={hasErrors}
+                  title={hasErrors ? "Opravte chyby před exportem" : "Stáhnout jako .ids soubor"}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                    <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
+                    <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+                  </svg>
+                  Export IDS
+                </button>
               </div>
+              
+              {/* Validation errors */}
+              {validationErrors.length > 0 && (
+                <div className="rounded border border-slate-200 bg-white p-3">
+                  <div className="text-sm font-semibold text-slate-800 mb-2">Validace IDS</div>
+                  <ul className="space-y-1">
+                    {validationErrors.map((err, idx) => (
+                      <li key={idx} className={`text-xs flex items-start gap-2 ${err.type === "error" ? "text-red-600" : "text-amber-600"}`}>
+                        {err.type === "error" ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 flex-shrink-0 mt-0.5">
+                            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 flex-shrink-0 mt-0.5">
+                            <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                          </svg>
+                        )}
+                        <span>{err.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              
+              {/* Phase tabs */}
+              {phases.length > 0 && (
+                <div className="flex flex-wrap gap-1 border-b border-slate-200 pb-1">
+                  <button
+                    className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+                      selectedPhaseId === null
+                        ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                    onClick={() => setSelectedPhaseId(null)}
+                  >
+                    Vše
+                  </button>
+                  {phases.map((phase) => (
+                    <button
+                      key={phase.id}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+                        selectedPhaseId === phase.id
+                          ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
+                          : "text-slate-600 hover:bg-slate-100"
+                      }`}
+                      onClick={() => setSelectedPhaseId(phase.id)}
+                      title={phase.name}
+                    >
+                      {phase.code}
+                    </button>
+                  ))}
+                </div>
+              )}
+              
+              {/* Content view mode tabs */}
+              <div className="flex gap-2 border-b border-slate-200">
+                <button
+                  className={`px-4 py-2 text-sm font-medium transition-colors ${
+                    idsSubTab === "readable"
+                      ? "border-b-2 border-indigo-500 text-indigo-600"
+                      : "text-slate-600 hover:text-slate-800"
+                  }`}
+                  onClick={() => setIdsSubTab("readable")}
+                >
+                  Lidská řeč
+                </button>
+                <button
+                  className={`px-4 py-2 text-sm font-medium transition-colors ${
+                    idsSubTab === "schema"
+                      ? "border-b-2 border-indigo-500 text-indigo-600"
+                      : "text-slate-600 hover:text-slate-800"
+                  }`}
+                  onClick={() => setIdsSubTab("schema")}
+                >
+                  Schéma IDS
+                </button>
+              </div>
+              
+              {/* Human-readable view */}
+              {idsSubTab === "readable" && (() => {
+                const currentPhase = phases.find((p) => p.id === selectedPhaseId);
+                const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, selectedPhaseId);
+                const hasContent = applicability.length > 0 || requirements.length > 0;
+                
+                return (
+                  <div className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                    {currentPhase && (
+                      <div className="text-xs text-indigo-600 font-semibold mb-3">
+                        Fáze: {currentPhase.code} - {currentPhase.name}
+                      </div>
+                    )}
+                    {!hasContent ? (
+                      <div className="text-slate-500 italic">
+                        {selectedPhaseId 
+                          ? `Žádné požadavky pro fázi ${currentPhase?.code || ""}.`
+                          : "Nejsou definovány žádné požadavky. Přidejte entity, vlastnosti, relace nebo další požadavky v ostatních kartách."
+                        }
+                      </div>
+                    ) : (
+                      <>
+                        {/* Applicability section */}
+                        {applicability.length > 0 && (
+                          <div className="mb-4">
+                            <div className="font-semibold text-slate-800 mb-2">
+                              Model <span className="text-indigo-600">MUSÍ</span> obsahovat entity, které mají:
+                            </div>
+                            <ul className="list-disc pl-5 space-y-1">
+                              {applicability.map((item, idx) => (
+                                <li key={idx} dangerouslySetInnerHTML={{ __html: item.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-slate-900">$1</strong>') }} />
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        
+                        {/* Requirements section */}
+                        {requirements.length > 0 && (
+                          <div>
+                            <div className="font-semibold text-slate-800 mb-2">
+                              A splňovat následující požadavky:
+                            </div>
+                            <ul className="list-disc pl-5 space-y-1">
+                              {requirements.map((item, idx) => (
+                                <li 
+                                  key={idx} 
+                                  dangerouslySetInnerHTML={{ 
+                                    __html: item
+                                      .replace(/\*\*MUSÍ\*\*/g, '<strong class="text-indigo-600">MUSÍ</strong>')
+                                      .replace(/\*\*NESMÍ\*\*/g, '<strong class="text-red-600">NESMÍ</strong>')
+                                      .replace(/\*\*MŮŽE\*\*/g, '<strong class="text-amber-600">MŮŽE</strong>')
+                                      .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-slate-900">$1</strong>')
+                                      .replace(/\*([^*]+)\*/g, '<em class="text-slate-500">$1</em>')
+                                  }} 
+                                />
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        
+                        {/* IFC version badge */}
+                        <div className="mt-4 text-right text-xs text-slate-400">
+                          #{selectedIfcVersion}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+              
+              {/* XML Schema view */}
+              {idsSubTab === "schema" && (() => {
+                const currentPhase = phases.find((p) => p.id === selectedPhaseId);
+                const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
+                const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName);
+                const fileName = currentPhase 
+                  ? `${(object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_")}_${currentPhase.code}`
+                  : (object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_");
+                
+                return (
+                <div className="space-y-2">
+                  {currentPhase && (
+                    <div className="text-xs text-indigo-600 font-semibold">
+                      Fáze: {currentPhase.code} - {currentPhase.name}
+                    </div>
+                  )}
+                  <div className="flex justify-between items-center">
+                    <div className="text-xs text-slate-500">
+                      IDS XML schéma dle buildingSMART IDS 1.0
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                        onClick={() => {
+                          navigator.clipboard.writeText(xml).then(() => {
+                            // Could add a toast notification here
+                          });
+                        }}
+                        title="Kopírovat do schránky"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                          <path d="M7 3.5A1.5 1.5 0 018.5 2h3.879a1.5 1.5 0 011.06.44l3.122 3.12a1.5 1.5 0 01.439 1.061V11.5a1.5 1.5 0 01-1.5 1.5H8.5A1.5 1.5 0 017 11.5V3.5z" />
+                          <path d="M4.5 6A1.5 1.5 0 003 7.5v9A1.5 1.5 0 004.5 18h7a1.5 1.5 0 001.5-1.5v-1h-5A2.5 2.5 0 015.5 13V6h-1z" />
+                        </svg>
+                        Kopírovat
+                      </button>
+                      <button
+                        className={`text-xs text-white px-2 py-1 rounded flex items-center gap-1 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
+                        onClick={() => {
+                          if (hasErrors) return;
+                          const blob = new Blob([xml], { type: "application/xml" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `${fileName}.ids`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                        }}
+                        disabled={hasErrors}
+                        title={hasErrors ? "Opravte chyby před exportem" : "Stáhnout jako .ids soubor"}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                          <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
+                          <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+                        </svg>
+                        Export .ids
+                      </button>
+                    </div>
+                  </div>
+                  <pre className="rounded border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 overflow-auto max-h-[500px] font-mono whitespace-pre">
+                    {xml}
+                  </pre>
+                </div>
+                );
+              })()}
+              
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </div>
