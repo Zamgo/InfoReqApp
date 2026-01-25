@@ -7,6 +7,7 @@ import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../p
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable";
+type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
 
 const IFC_DOC_BASE = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical";
 const getIfcDocUrl = (identifier: string | undefined) => (identifier ? `${IFC_DOC_BASE}/${identifier}.htm` : undefined);
@@ -26,18 +27,37 @@ const PhaseSelector: React.FC<{ phases: Phase[]; value?: string[]; onChange: (id
   const selected = new Set(value ?? []);
   const toggle = (id: string) => {
     const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    if (next.has(id)) {
+      // Prevent unchecking the last phase - must have at least one
+      if (next.size <= 1) return;
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
     onChange(Array.from(next));
   };
   return (
     <div className="flex flex-wrap gap-2">
-      {phases.map((phase) => (
-        <label key={phase.id} className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs">
-          <input type="checkbox" className="h-4 w-4" checked={selected.has(phase.id)} onChange={() => toggle(phase.id)} />
-          <span className="font-semibold">{phase.code}</span>
-        </label>
-      ))}
+      {phases.map((phase) => {
+        const isChecked = selected.has(phase.id);
+        const isLastChecked = isChecked && selected.size === 1;
+        return (
+          <label 
+            key={phase.id} 
+            className={`inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-1 text-xs ${isLastChecked ? "opacity-70 cursor-not-allowed" : ""}`}
+            title={isLastChecked ? "Musí být alespoň jedna fáze zaškrtnutá" : ""}
+          >
+            <input 
+              type="checkbox" 
+              className={`h-4 w-4 ${isLastChecked ? "cursor-not-allowed" : ""}`} 
+              checked={isChecked} 
+              onChange={() => toggle(phase.id)} 
+              disabled={isLastChecked}
+            />
+            <span className="font-semibold">{phase.code}</span>
+          </label>
+        );
+      })}
     </div>
   );
 };
@@ -556,8 +576,8 @@ const validateIdsCompliance = (obj: import("../../project/types").ProjectObject)
 const requirementMatchesPhase = (phases: string[] | undefined, phaseId: string | null): boolean => {
   // null phaseId means "all" - show everything
   if (phaseId === null) return true;
-  // If requirement has no phases, show in all phase tabs
-  if (!phases || phases.length === 0) return true;
+  // If requirement has no phases checked, don't show in any specific phase view
+  if (!phases || phases.length === 0) return false;
   // Check if the phase is in the requirement's phases
   return phases.includes(phaseId);
 };
@@ -582,7 +602,14 @@ const filterObjectByPhase = (
 };
 
 // Generate IDS XML from ProjectObject - compliant with IDS 1.0 XSD schema
-const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVersion: IdsIfcVersion = "IFC4X3_ADD2", phaseId: string | null = null, phaseName?: string, classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[] = []): string => {
+const generateIdsXml = (
+  obj: import("../../project/types").ProjectObject, 
+  ifcVersion: IdsIfcVersion = "IFC4X3_ADD2", 
+  phaseId: string | null = null, 
+  phaseName?: string, 
+  classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[] = [],
+  occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all"
+): string => {
   // Filter object by phase
   const filteredObj = filterObjectByPhase(obj, phaseId);
   // Normalize entity name to uppercase
@@ -671,6 +698,8 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   // Attributes
   filteredObj.requirements.attributes.forEach((attr) => {
     if (attr.attribute === "PredefinedType") return; // Skip, already handled in entity
+    // Apply occurrence filter
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = attr.occurrence === "prohibited" ? "prohibited" : attr.occurrence === "optional" ? "optional" : "required";
     xml += `
         <ids:attribute cardinality="${cardinality}">
@@ -687,8 +716,10 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   
   // Properties
   filteredObj.requirements.properties.forEach((prop) => {
-    // Skip properties without required fields
-    if (!prop.psetName || !prop.propertyName) return;
+    // Skip properties without required fields or with temporary pset names
+    if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
+    // Apply occurrence filter
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     
     const cardinality: ConditionalCardinality = prop.occurrence === "prohibited" ? "prohibited" : prop.occurrence === "optional" ? "optional" : "required";
     const dataType = mapDataTypeToIds(prop.dataType);
@@ -712,6 +743,8 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   
   // Relations (PartOf) - note: cardinality for partOf is simpleCardinality (only required/prohibited)
   filteredObj.requirements.relations.forEach((rel) => {
+    // Apply occurrence filter (relations only have required/prohibited)
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
     // For partOf, cardinality can only be "required" or "prohibited" (simpleCardinality)
     const cardinality: SimpleCardinality = rel.occurrence === "prohibited" ? "prohibited" : "required";
     const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
@@ -736,6 +769,8 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   
   // Classifications - system is required, value comes BEFORE system according to XSD sequence
   // Only include non-applicability classifications in requirements (exclude readOnly primary classifications)
+  // Classifications are always "required" cardinality
+  if (occurrenceFilter === "all" || occurrenceFilter === "required") {
   const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => !cls.isApplicability && !cls.readOnly);
   requirementClassifications.forEach((cls) => {
     // Look up system name from entries first, fall back to stored value
@@ -787,9 +822,12 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
           </ids:system>
         </ids:classification>`;
   });
+  } // end of classifications occurrence filter
   
   // Materials
   filteredObj.requirements.materials.forEach((mat) => {
+    // Apply occurrence filter
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = mat.occurrence === "prohibited" ? "prohibited" : mat.occurrence === "optional" ? "optional" : "required";
     const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
     
@@ -869,12 +907,23 @@ const translateConstraint = (constraint?: string, value?: string, _dataType?: st
   return `s hodnotou "${val}"`;
 };
 
+// Helper to check if requirement matches occurrence filter
+const matchesOccurrenceFilter = (
+  occurrence: "required" | "prohibited" | "optional" | undefined,
+  filter: "all" | "required" | "prohibited" | "optional"
+): boolean => {
+  if (filter === "all") return true;
+  const actualOccurrence = occurrence || "required";
+  return actualOccurrence === filter;
+};
+
 // Generate human-readable text from ProjectObject
 const generateHumanReadable = (
   obj: import("../../project/types").ProjectObject,
   _phases: import("../../project/types").Phase[],
   classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[],
-  phaseId: string | null = null
+  phaseId: string | null = null,
+  occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all"
 ): { applicability: string[]; requirements: string[] } => {
   // Filter object by phase
   const filteredObj = filterObjectByPhase(obj, phaseId);
@@ -882,19 +931,20 @@ const generateHumanReadable = (
   const applicability: string[] = [];
   const requirements: string[] = [];
   
-  // Entity applicability
-  if (filteredObj.ifcEntity) {
+  // Entity applicability (always shown regardless of occurrence filter)
+  if (filteredObj.ifcEntity && occurrenceFilter === "all") {
     applicability.push(`IFC třídu **${filteredObj.ifcEntity}**`);
   }
   
-  // PredefinedType applicability
-  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value) {
+  // PredefinedType applicability (always shown regardless of occurrence filter)
+  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value && occurrenceFilter === "all") {
     applicability.push(`s předdefinovaným typem **${filteredObj.predefinedType.value}**`);
   }
   
   // Attributes - some can be in applicability, some in requirements
   filteredObj.requirements.attributes.forEach((attr) => {
     if (attr.attribute === "PredefinedType") return; // Already handled
+    if (!matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const occurrence = attr.occurrence === "prohibited" ? "NESMÍ" : attr.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
     const constraintText = translateConstraint(attr.constraint, attr.value, attr.dataType);
     requirements.push(`**${occurrence}** mít atribut **${attr.attribute}** ${constraintText}${attr.dataType ? ` *(${attr.dataType})*` : ""}`);
@@ -902,6 +952,9 @@ const generateHumanReadable = (
   
   // Properties
   filteredObj.requirements.properties.forEach((prop) => {
+    // Skip properties without required fields or with temporary pset names
+    if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
+    if (!matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     const occurrence = prop.occurrence === "prohibited" ? "NESMÍ" : prop.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
     const constraintText = translateConstraint(prop.constraint, prop.value, prop.dataType);
     const psetType = prop.source === "PSET" ? "property setu" : prop.source === "QTO" ? "quantity setu" : "vlastní sady";
@@ -910,6 +963,7 @@ const generateHumanReadable = (
   
   // Relations
   filteredObj.requirements.relations.forEach((rel) => {
+    if (!matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
     const occurrence = rel.occurrence === "prohibited" ? "NESMÍ" : rel.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
     const entityText = rel.entityType ? `IFC třídou **${rel.entityType}**` : "prvkem";
     const predefinedText = rel.entityPredefinedType ? ` s typem **${rel.entityPredefinedType}**` : "";
@@ -925,23 +979,29 @@ const generateHumanReadable = (
     
     if (cls.isApplicability || cls.readOnly) {
       // Add to applicability section (primary classifications are always applicability)
-      if (cls.value) {
-        applicability.push(`klasifikaci **${cls.value}** ze systému **${systemName}**`);
-      } else {
-        applicability.push(`klasifikaci ze systému **${systemName}**`);
+      // Only show in "all" filter mode
+      if (occurrenceFilter === "all") {
+        if (cls.value) {
+          applicability.push(`klasifikaci **${cls.value}** ze systému **${systemName}**`);
+        } else {
+          applicability.push(`klasifikaci ze systému **${systemName}**`);
+        }
       }
     } else {
-      // Add to requirements section
-      if (cls.value) {
-        requirements.push(`**MUSÍ** mít klasifikaci **${cls.value}** ze systému **${systemName}**`);
-      } else {
-        requirements.push(`**MUSÍ** mít klasifikaci ze systému **${systemName}**`);
+      // Add to requirements section - classifications are always "required"
+      if (occurrenceFilter === "all" || occurrenceFilter === "required") {
+        if (cls.value) {
+          requirements.push(`**MUSÍ** mít klasifikaci **${cls.value}** ze systému **${systemName}**`);
+        } else {
+          requirements.push(`**MUSÍ** mít klasifikaci ze systému **${systemName}**`);
+        }
       }
     }
   });
   
   // Materials
   filteredObj.requirements.materials.forEach((mat) => {
+    if (!matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const occurrence = mat.occurrence === "prohibited" ? "NESMÍ" : mat.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
     let categoryText = "";
     if (mat.category && mat.categoryMode !== "NONE") {
@@ -957,6 +1017,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [idsSubTab, setIdsSubTab] = useState<IdsSubTabKey>("readable");
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null); // null = "Vše"
+  const [occurrenceFilter, setOccurrenceFilter] = useState<OccurrenceFilter>("all");
   // Fixed IFC version for IDS export
   const selectedIfcVersion: IdsIfcVersion = "IFC4X3_ADD2";
   const [enumDraftByPropId, setEnumDraftByPropId] = useState<Record<string, string>>({});
@@ -1063,7 +1124,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         unit: "",
         note: "",
         extensions: {},
-        phases: [],
+        phases: phases.map((p) => p.id), // All phases by default
       };
       updateRequirements((reqs) => {
         reqs.attributes.push(newAttr);
@@ -1255,7 +1316,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         unit: "",
         note: "",
         extensions: {},
-        phases: [],
+        phases: phases.map((p) => p.id), // All phases by default
       });
     });
   };
@@ -1278,7 +1339,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         value: "",
         unit: "",
         extensions: {},
-        phases: [],
+        phases: phases.map((p) => p.id), // All phases by default
       });
     });
   };
@@ -1327,7 +1388,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         value: "",
         unit: group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.unit ?? "",
         extensions: {},
-        phases: [],
+        phases: phases.map((p) => p.id), // All phases by default
       });
     });
   };
@@ -1375,7 +1436,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           value: "",
           unit: def.unit ?? "",
           extensions: {},
-          phases: [],
+          phases: phases.map((p) => p.id), // All phases by default
         });
       });
     });
@@ -1683,7 +1744,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         maxCardinality: 1,
         note: "",
         extensions: {},
-        phases: [],
+        phases: phases.map((p) => p.id), // All phases by default
       });
     });
   };
@@ -1699,7 +1760,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         readOnly: false,
         description: "",
         extensions: {},
-        phases: [],
+        phases: phases.map((p) => p.id), // All phases by default
       });
     });
   };
@@ -1718,7 +1779,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         materialType: undefined, // legacy field for backwards compatibility
         note: "",
         extensions: {},
-        phases: [],
+        phases: phases.map((p) => p.id), // All phases by default
       });
     });
   };
@@ -4704,10 +4765,58 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </button>
               </div>
               
+              {/* Occurrence filter tabs */}
+              <div className="flex gap-1 flex-wrap items-center">
+                <span className="text-xs text-slate-500 mr-2">Výskyt:</span>
+                <button
+                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    occurrenceFilter === "all"
+                      ? "bg-slate-700 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                  onClick={() => setOccurrenceFilter("all")}
+                >
+                  Vše
+                </button>
+                <button
+                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    occurrenceFilter === "required"
+                      ? "bg-green-600 text-white"
+                      : "bg-green-100 text-green-700 hover:bg-green-200"
+                  }`}
+                  onClick={() => setOccurrenceFilter("required")}
+                >
+                  Požadované
+                </button>
+                <button
+                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    occurrenceFilter === "prohibited"
+                      ? "bg-red-600 text-white"
+                      : "bg-red-100 text-red-700 hover:bg-red-200"
+                  }`}
+                  onClick={() => setOccurrenceFilter("prohibited")}
+                >
+                  Zakázané
+                </button>
+                <button
+                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    occurrenceFilter === "optional"
+                      ? "bg-amber-600 text-white"
+                      : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                  }`}
+                  onClick={() => setOccurrenceFilter("optional")}
+                >
+                  Možné
+                </button>
+                {occurrenceFilter !== "all" && (
+                  <span className="text-[10px] text-slate-400 ml-2">(pouze náhled)</span>
+                )}
+              </div>
+              
               {/* Human-readable view */}
               {idsSubTab === "readable" && (() => {
                 const currentPhase = phases.find((p) => p.id === selectedPhaseId);
-                const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, selectedPhaseId);
+                const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, selectedPhaseId, occurrenceFilter);
                 const hasContent = applicability.length > 0 || requirements.length > 0;
                 
                 return (
@@ -4778,7 +4887,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               {idsSubTab === "schema" && (() => {
                 const currentPhase = phases.find((p) => p.id === selectedPhaseId);
                 const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
-                const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries);
+                // For preview, apply occurrence filter; for export, use "all"
+                const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries, occurrenceFilter);
+                const xmlForExport = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries, "all");
                 const fileName = currentPhase 
                   ? `${(object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_")}_${currentPhase.code}`
                   : (object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -4814,7 +4925,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         className={`text-xs text-white px-2 py-1 rounded flex items-center gap-1 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
                         onClick={() => {
                           if (hasErrors) return;
-                          const blob = new Blob([xml], { type: "application/xml" });
+                          // Export always uses full XML (no occurrence filter)
+                          const blob = new Blob([xmlForExport], { type: "application/xml" });
                           const url = URL.createObjectURL(blob);
                           const a = document.createElement("a");
                           a.href = url;
@@ -4825,7 +4937,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           URL.revokeObjectURL(url);
                         }}
                         disabled={hasErrors}
-                        title={hasErrors ? "Opravte chyby před exportem" : "Stáhnout jako .ids soubor"}
+                        title={hasErrors ? "Opravte chyby před exportem" : "Stáhnout jako .ids soubor (vždy export všech požadavků)"}
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
                           <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />

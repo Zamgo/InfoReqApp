@@ -166,18 +166,28 @@ const generateMaterial = (mat: MaterialRequirement, indent: string): string => {
  * Check if a requirement applies to a given phase
  */
 const requirementAppliesToPhase = (req: { phases?: string[] }, phaseId: string): boolean => {
-  // If no phases specified, requirement applies to all phases
-  if (!req.phases || req.phases.length === 0) return true;
+  // If no phases specified, requirement does NOT apply to any specific phase
+  if (!req.phases || req.phases.length === 0) return false;
   return req.phases.includes(phaseId);
+};
+
+/**
+ * Check if property is valid (has proper pset name and property name, not temporary)
+ */
+const isValidProperty = (prop: PropertyRequirement): boolean => {
+  // Filter out properties with temporary pset names or empty names
+  if (!prop.psetName || prop.psetName.startsWith("_NEW_")) return false;
+  if (!prop.propertyName || prop.propertyName.trim() === "") return false;
+  return true;
 };
 
 /**
  * Generate a specification element for a single object
  */
 const generateSpecification = (obj: ProjectObject, phaseId: string, phaseName: string): string | null => {
-  // Filter requirements for this phase
-  const attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId));
-  const properties = obj.requirements.properties.filter((r) => requirementAppliesToPhase(r, phaseId));
+  // Filter requirements for this phase, and filter out invalid/incomplete requirements
+  const attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute);
+  const properties = obj.requirements.properties.filter((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r));
   const classifications = obj.requirements.classifications.filter((r) => requirementAppliesToPhase(r, phaseId));
   const materials = obj.requirements.materials.filter((r) => requirementAppliesToPhase(r, phaseId));
   
@@ -204,8 +214,8 @@ const generateSpecification = (obj: ProjectObject, phaseId: string, phaseName: s
   const lines: string[] = [];
   lines.push(`    <ids:specification name="${escapeXml(specName)}" ifcVersion="IFC4X3_ADD2" description="${escapeXml(specDescription)}">`);
   
-  // Applicability section
-  lines.push(`      <ids:applicability>`);
+  // Applicability section - minOccurs="1" means at least one matching element must exist
+  lines.push(`      <ids:applicability minOccurs="1" maxOccurs="unbounded">`);
   
   // Entity (required) - must be UPPERCASE for IDS validity
   lines.push(`        <ids:entity>`);
@@ -359,8 +369,8 @@ export const getObjectsWithRequirementsForPhase = (
     if (!obj.ifcEntity) return false; // Skip objects without IFC entity
     const { requirements } = obj;
     const hasReqs = 
-      requirements.attributes.some((r) => requirementAppliesToPhase(r, phaseId)) ||
-      requirements.properties.some((r) => requirementAppliesToPhase(r, phaseId)) ||
+      requirements.attributes.some((r) => requirementAppliesToPhase(r, phaseId) && r.attribute) ||
+      requirements.properties.some((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r)) ||
       requirements.classifications.some((r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability && !r.readOnly) ||
       requirements.materials.some((r) => requirementAppliesToPhase(r, phaseId));
     return hasReqs;

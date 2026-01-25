@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { Project, Phase, ProjectObject } from "../../project/types";
+import type { Project, Phase, ProjectObject, PropertyRequirement, AttributeRequirement, ClassificationRequirement, MaterialRequirement } from "../../project/types";
 import type { ClassificationNode } from "../../classification/types";
 import { generateIDS, exportIDSFile, exportIDSZip, getObjectsWithRequirementsForPhase } from "../../export/ids";
 
@@ -11,11 +11,8 @@ interface Props {
 }
 
 type ExportMode = "by-phase" | "by-objects";
-
-interface ObjectPhaseSelection {
-  objectCode: string;
-  phases: string[];
-}
+type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
+type ViewMode = "human" | "ids";
 
 /**
  * Collect leaf nodes (objects) from classification tree
@@ -31,6 +28,291 @@ const collectLeaves = (nodes: ClassificationNode[]): ClassificationNode[] => {
   };
   nodes.forEach(traverse);
   return result;
+};
+
+/**
+ * Get occurrence label in Czech
+ */
+const getOccurrenceLabel = (occurrence?: "required" | "prohibited" | "optional"): string => {
+  switch (occurrence) {
+    case "prohibited":
+      return "Zakázané";
+    case "optional":
+      return "Možné";
+    default:
+      return "Požadované";
+  }
+};
+
+/**
+ * Get occurrence badge color
+ */
+const getOccurrenceBadgeClass = (occurrence?: "required" | "prohibited" | "optional"): string => {
+  switch (occurrence) {
+    case "prohibited":
+      return "bg-red-100 text-red-700";
+    case "optional":
+      return "bg-amber-100 text-amber-700";
+    default:
+      return "bg-green-100 text-green-700";
+  }
+};
+
+/**
+ * Format property requirement for human readable view
+ */
+const formatPropertyHuman = (prop: PropertyRequirement): string => {
+  let text = `${prop.psetName}.${prop.propertyName}`;
+  if (prop.dataType) {
+    text += ` (${prop.dataType})`;
+  }
+  if (prop.value) {
+    text += ` = "${prop.value}"`;
+  }
+  return text;
+};
+
+/**
+ * Format property requirement for IDS schema view
+ */
+const formatPropertyIDS = (prop: PropertyRequirement): string => {
+  const parts: string[] = [];
+  parts.push(`<ids:property cardinality="${prop.occurrence || "required"}"${prop.dataType ? ` dataType="${prop.dataType.toUpperCase()}"` : ""}>`);
+  parts.push(`  <ids:propertySet><ids:simpleValue>${prop.psetName}</ids:simpleValue></ids:propertySet>`);
+  parts.push(`  <ids:baseName><ids:simpleValue>${prop.propertyName}</ids:simpleValue></ids:baseName>`);
+  if (prop.value) {
+    parts.push(`  <ids:value><ids:simpleValue>${prop.value}</ids:simpleValue></ids:value>`);
+  }
+  parts.push(`</ids:property>`);
+  return parts.join("\n");
+};
+
+/**
+ * Format attribute requirement for human readable view
+ */
+const formatAttributeHuman = (attr: AttributeRequirement): string => {
+  let text = attr.attribute;
+  if (attr.value) {
+    text += ` = "${attr.value}"`;
+  }
+  return text;
+};
+
+/**
+ * Format attribute requirement for IDS schema view
+ */
+const formatAttributeIDS = (attr: AttributeRequirement): string => {
+  const parts: string[] = [];
+  parts.push(`<ids:attribute cardinality="${attr.occurrence || "required"}">`);
+  parts.push(`  <ids:name><ids:simpleValue>${attr.attribute}</ids:simpleValue></ids:name>`);
+  if (attr.value) {
+    parts.push(`  <ids:value><ids:simpleValue>${attr.value}</ids:simpleValue></ids:value>`);
+  }
+  parts.push(`</ids:attribute>`);
+  return parts.join("\n");
+};
+
+/**
+ * Format classification requirement for human readable view
+ */
+const formatClassificationHuman = (cls: ClassificationRequirement): string => {
+  let text = `${cls.system}: ${cls.value || cls.identification || cls.name}`;
+  return text;
+};
+
+/**
+ * Format classification requirement for IDS schema view
+ */
+const formatClassificationIDS = (cls: ClassificationRequirement): string => {
+  const parts: string[] = [];
+  parts.push(`<ids:classification cardinality="required">`);
+  if (cls.value || cls.identification) {
+    parts.push(`  <ids:value><ids:simpleValue>${cls.value || cls.identification}</ids:simpleValue></ids:value>`);
+  }
+  parts.push(`  <ids:system><ids:simpleValue>${cls.system}</ids:simpleValue></ids:system>`);
+  parts.push(`</ids:classification>`);
+  return parts.join("\n");
+};
+
+/**
+ * Format material requirement for human readable view
+ */
+const formatMaterialHuman = (mat: MaterialRequirement): string => {
+  let text = "Materiál";
+  if (mat.category) {
+    text += ` (${mat.category})`;
+  }
+  if (mat.value) {
+    text += ` = "${mat.value}"`;
+  }
+  return text;
+};
+
+/**
+ * Format material requirement for IDS schema view
+ */
+const formatMaterialIDS = (mat: MaterialRequirement): string => {
+  const parts: string[] = [];
+  parts.push(`<ids:material cardinality="${mat.occurrence || "required"}">`);
+  if (mat.value) {
+    parts.push(`  <ids:value><ids:simpleValue>${mat.value}</ids:simpleValue></ids:value>`);
+  }
+  parts.push(`</ids:material>`);
+  return parts.join("\n");
+};
+
+/**
+ * Check if requirement applies to phase
+ */
+const requirementAppliesToPhase = (req: { phases?: string[] }, phaseId: string): boolean => {
+  // If no phases specified, requirement does NOT apply to any specific phase
+  if (!req.phases || req.phases.length === 0) return false;
+  return req.phases.includes(phaseId);
+};
+
+/**
+ * Check if property is valid (has proper pset name and property name, not temporary)
+ */
+const isValidProperty = (prop: PropertyRequirement): boolean => {
+  // Filter out properties with temporary pset names or empty names
+  if (!prop.psetName || prop.psetName.startsWith("_NEW_")) return false;
+  if (!prop.propertyName || prop.propertyName.trim() === "") return false;
+  return true;
+};
+
+/**
+ * Filter requirements by occurrence
+ */
+const filterByOccurrence = <T extends { occurrence?: "required" | "prohibited" | "optional" }>(
+  items: T[],
+  filter: OccurrenceFilter
+): T[] => {
+  if (filter === "all") return items;
+  return items.filter((item) => {
+    const occurrence = item.occurrence || "required";
+    return occurrence === filter;
+  });
+};
+
+/**
+ * Preview component for requirements
+ */
+const RequirementsPreview: React.FC<{
+  object: ProjectObject;
+  phaseId: string;
+  occurrenceFilter: OccurrenceFilter;
+  viewMode: ViewMode;
+}> = ({ object, phaseId, occurrenceFilter, viewMode }) => {
+  // Filter requirements by phase and occurrence, and filter out invalid/incomplete requirements
+  const attributes = filterByOccurrence(
+    object.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute),
+    occurrenceFilter
+  );
+  const properties = filterByOccurrence(
+    object.requirements.properties.filter((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r)),
+    occurrenceFilter
+  );
+  const classifications = object.requirements.classifications.filter(
+    (r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability && !r.readOnly
+  );
+  const materials = filterByOccurrence(
+    object.requirements.materials.filter((r) => requirementAppliesToPhase(r, phaseId)),
+    occurrenceFilter
+  );
+
+  const hasAny = attributes.length > 0 || properties.length > 0 || classifications.length > 0 || materials.length > 0;
+
+  if (!hasAny) {
+    return (
+      <div className="text-xs text-slate-400 italic">
+        Žádné požadavky pro tento filtr
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {attributes.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-slate-600 mb-1">Atributy ({attributes.length})</div>
+          {attributes.map((attr) => (
+            <div key={attr.id} className="flex items-start gap-2 mb-1">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded ${getOccurrenceBadgeClass(attr.occurrence)}`}>
+                {getOccurrenceLabel(attr.occurrence)}
+              </span>
+              {viewMode === "human" ? (
+                <span className="text-xs text-slate-700">{formatAttributeHuman(attr)}</span>
+              ) : (
+                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto">
+                  {formatAttributeIDS(attr)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {properties.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-slate-600 mb-1">Vlastnosti ({properties.length})</div>
+          {properties.map((prop) => (
+            <div key={prop.id} className="flex items-start gap-2 mb-1">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${getOccurrenceBadgeClass(prop.occurrence)}`}>
+                {getOccurrenceLabel(prop.occurrence)}
+              </span>
+              {viewMode === "human" ? (
+                <span className="text-xs text-slate-700">{formatPropertyHuman(prop)}</span>
+              ) : (
+                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
+                  {formatPropertyIDS(prop)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {classifications.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-slate-600 mb-1">Klasifikace ({classifications.length})</div>
+          {classifications.map((cls) => (
+            <div key={cls.id} className="flex items-start gap-2 mb-1">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 bg-blue-100 text-blue-700`}>
+                Klasifikace
+              </span>
+              {viewMode === "human" ? (
+                <span className="text-xs text-slate-700">{formatClassificationHuman(cls)}</span>
+              ) : (
+                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
+                  {formatClassificationIDS(cls)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {materials.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-slate-600 mb-1">Materiály ({materials.length})</div>
+          {materials.map((mat) => (
+            <div key={mat.id} className="flex items-start gap-2 mb-1">
+              <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${getOccurrenceBadgeClass(mat.occurrence)}`}>
+                {getOccurrenceLabel(mat.occurrence)}
+              </span>
+              {viewMode === "human" ? (
+                <span className="text-xs text-slate-700">{formatMaterialHuman(mat)}</span>
+              ) : (
+                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
+                  {formatMaterialIDS(mat)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 };
 
 /**
@@ -142,11 +424,14 @@ export const IDSExportDialog: React.FC<Props> = ({
 }) => {
   const [mode, setMode] = useState<ExportMode>("by-phase");
   const [selectedPhaseId, setSelectedPhaseId] = useState<string>("");
+  const [occurrenceFilter, setOccurrenceFilter] = useState<OccurrenceFilter>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("human");
   const [selectedObjects, setSelectedObjects] = useState<Set<string>>(new Set());
   const [objectPhases, setObjectPhases] = useState<Map<string, Set<string>>>(new Map());
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string>("");
   const [search, setSearch] = useState("");
+  const [expandedObjects, setExpandedObjects] = useState<Set<string>>(new Set());
 
   // Initialize with first phase
   useEffect(() => {
@@ -250,6 +535,18 @@ export const IDSExportDialog: React.FC<Props> = ({
   const handleDeselectAll = () => {
     setSelectedObjects(new Set());
     setObjectPhases(new Map());
+  };
+
+  const toggleObjectExpand = (code: string) => {
+    setExpandedObjects((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) {
+        next.delete(code);
+      } else {
+        next.add(code);
+      }
+      return next;
+    });
   };
 
   const handleExportByPhase = async () => {
@@ -365,7 +662,7 @@ export const IDSExportDialog: React.FC<Props> = ({
       onClick={onClose}
     >
       <div
-        className="flex h-[80vh] w-full max-w-3xl flex-col rounded-lg bg-white shadow-xl"
+        className="flex h-[85vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -406,42 +703,119 @@ export const IDSExportDialog: React.FC<Props> = ({
         <div className="flex-1 overflow-hidden px-6 py-4">
           {mode === "by-phase" && (
             <div className="flex h-full flex-col gap-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Vyberte fázi
-                </label>
-                <select
-                  value={selectedPhaseId}
-                  onChange={(e) => setSelectedPhaseId(e.target.value)}
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                >
-                  {project.phases.map((phase) => (
-                    <option key={phase.id} value={phase.id}>
-                      {phase.code} - {phase.name}
-                    </option>
-                  ))}
-                </select>
+              {/* Phase selector and filters row */}
+              <div className="flex items-end gap-4 flex-wrap">
+                <div className="flex-1 min-w-[200px]">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Fáze
+                  </label>
+                  <select
+                    value={selectedPhaseId}
+                    onChange={(e) => setSelectedPhaseId(e.target.value)}
+                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    {project.phases.map((phase) => (
+                      <option key={phase.id} value={phase.id}>
+                        {phase.code} - {phase.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Výskyt
+                  </label>
+                  <select
+                    value={occurrenceFilter}
+                    onChange={(e) => setOccurrenceFilter(e.target.value as OccurrenceFilter)}
+                    className="rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="all">Vše</option>
+                    <option value="required">Požadované</option>
+                    <option value="prohibited">Zakázané</option>
+                    <option value="optional">Možné</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">
+                    Zobrazení
+                  </label>
+                  <div className="flex rounded border border-slate-300 overflow-hidden">
+                    <button
+                      className={`px-3 py-2 text-sm ${
+                        viewMode === "human"
+                          ? "bg-indigo-600 text-white"
+                          : "bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                      onClick={() => setViewMode("human")}
+                    >
+                      Lidská řeč
+                    </button>
+                    <button
+                      className={`px-3 py-2 text-sm border-l border-slate-300 ${
+                        viewMode === "ids"
+                          ? "bg-indigo-600 text-white"
+                          : "bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                      onClick={() => setViewMode("ids")}
+                    >
+                      IDS schéma
+                    </button>
+                  </div>
+                </div>
               </div>
 
+              <div className="text-xs text-slate-500 bg-slate-100 rounded px-3 py-2">
+                Filtry jsou pouze pro náhled. Export vždy obsahuje všechny požadavky ve formátu IDS schéma.
+              </div>
+
+              {/* Objects preview with requirements */}
               {selectedPhaseId && (
                 <div className="flex-1 overflow-hidden">
                   <div className="mb-2 text-sm font-medium text-slate-700">
-                    Objekty s požadavky pro tuto fázi ({objectsForPhase.length})
+                    Objekty s požadavky ({objectsForPhase.length})
                   </div>
-                  <div className="h-full overflow-auto rounded border border-slate-200 bg-slate-50 p-3">
+                  <div className="h-full overflow-auto rounded border border-slate-200 bg-slate-50">
                     {objectsForPhase.length === 0 ? (
-                      <div className="text-sm text-slate-500">
+                      <div className="p-3 text-sm text-slate-500">
                         Žádné objekty nemají požadavky pro tuto fázi
                       </div>
                     ) : (
-                      <ul className="space-y-1">
+                      <div className="divide-y divide-slate-200">
                         {objectsForPhase.map((obj) => (
-                          <li key={obj.code} className="text-sm text-slate-700">
-                            <span className="font-medium">{obj.code}</span>
-                            <span className="text-slate-500"> - {obj.description}</span>
-                          </li>
+                          <div key={obj.code} className="bg-white">
+                            <button
+                              className="w-full px-3 py-2 flex items-center justify-between hover:bg-slate-50 text-left"
+                              onClick={() => toggleObjectExpand(obj.code)}
+                            >
+                              <div>
+                                <span className="font-medium text-sm text-slate-800">{obj.code}</span>
+                                <span className="text-sm text-slate-500 ml-2">{obj.description}</span>
+                                {obj.ifcEntity && (
+                                  <span className="ml-2 text-[10px] uppercase bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
+                                    {obj.ifcEntity}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-slate-400 text-xs">
+                                {expandedObjects.has(obj.code) ? "▼" : "▶"}
+                              </span>
+                            </button>
+                            {expandedObjects.has(obj.code) && (
+                              <div className="px-4 py-3 bg-slate-50 border-t border-slate-100">
+                                <RequirementsPreview
+                                  object={obj}
+                                  phaseId={selectedPhaseId}
+                                  occurrenceFilter={occurrenceFilter}
+                                  viewMode={viewMode}
+                                />
+                              </div>
+                            )}
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     )}
                   </div>
                 </div>

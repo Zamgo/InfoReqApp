@@ -76,7 +76,7 @@ export const ensureObject = (
             readOnly: true,
             isApplicability: true, // Primary classification is always in applicability
             extensions: {},
-            phases: [],
+            phases: project.phases.map((p) => p.id), // All phases by default
           },
         ],
         materials: [],
