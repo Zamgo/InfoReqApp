@@ -61,12 +61,12 @@ export const PhaseManager: React.FC<Props> = ({
   };
 
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div>
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+      <div className="flex-shrink-0">
         <div className="text-sm font-semibold text-slate-800">Správa fází</div>
         <div className="text-xs text-slate-500">Přidejte nebo upravte fáze projektu</div>
       </div>
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+      <div className="flex-shrink-0 grid grid-cols-1 gap-2 md:grid-cols-3">
         <input
           className="rounded border border-slate-300 px-2 py-1 text-sm"
           placeholder="Kód (např. DPZ)"
@@ -86,7 +86,7 @@ export const PhaseManager: React.FC<Props> = ({
           onChange={(e) => setDescription(e.target.value)}
         />
       </div>
-      <div>
+      <div className="flex-shrink-0">
         <button
           className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500"
           onClick={handleAdd}
@@ -94,7 +94,7 @@ export const PhaseManager: React.FC<Props> = ({
           Přidat fázi
         </button>
       </div>
-      <div className="flex-1 overflow-auto rounded border border-slate-200">
+      <div className="min-h-0 flex-1 overflow-auto rounded border border-slate-200">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
             <tr>

@@ -508,8 +508,8 @@ const validateIdsCompliance = (obj: import("../../project/types").ProjectObject)
   
   // Check classifications - system is required
   obj.requirements.classifications.forEach((cls, idx) => {
-    const system = cls.system || cls.name;
-    if (!system) {
+    const hasSystem = cls.systemEntryId || cls.system || cls.name;
+    if (!hasSystem) {
       errors.push({ type: "error", message: `Klasifikace #${idx + 1}: Systém je povinný`, field: `classification.${idx}` });
     }
   });
@@ -582,7 +582,7 @@ const filterObjectByPhase = (
 };
 
 // Generate IDS XML from ProjectObject - compliant with IDS 1.0 XSD schema
-const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVersion: IdsIfcVersion = "IFC4X3_ADD2", phaseId: string | null = null, phaseName?: string): string => {
+const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVersion: IdsIfcVersion = "IFC4X3_ADD2", phaseId: string | null = null, phaseName?: string, classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[] = []): string => {
   // Filter object by phase
   const filteredObj = filterObjectByPhase(obj, phaseId);
   // Normalize entity name to uppercase
@@ -617,7 +617,9 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   // Add applicability classifications (isApplicability = true OR readOnly = true for primary classification)
   const applicabilityClassifications = filteredObj.requirements.classifications.filter((cls) => cls.isApplicability || cls.readOnly);
   applicabilityClassifications.forEach((cls) => {
-    const system = cls.system || cls.name;
+    // Look up system name from entries first, fall back to stored value
+    const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
+    const system = entryName || cls.system || cls.name;
     if (!system) return;
     
     const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
@@ -736,7 +738,9 @@ const generateIdsXml = (obj: import("../../project/types").ProjectObject, ifcVer
   // Only include non-applicability classifications in requirements (exclude readOnly primary classifications)
   const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => !cls.isApplicability && !cls.readOnly);
   requirementClassifications.forEach((cls) => {
-    const system = cls.system || cls.name;
+    // Look up system name from entries first, fall back to stored value
+    const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
+    const system = entryName || cls.system || cls.name;
     // Skip classifications without system (required by XSD)
     if (!system) return;
     
@@ -869,7 +873,7 @@ const translateConstraint = (constraint?: string, value?: string, _dataType?: st
 const generateHumanReadable = (
   obj: import("../../project/types").ProjectObject,
   _phases: import("../../project/types").Phase[],
-  _classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[],
+  classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[],
   phaseId: string | null = null
 ): { applicability: string[]; requirements: string[] } => {
   // Filter object by phase
@@ -914,8 +918,10 @@ const generateHumanReadable = (
   
   // Classifications - split by applicability
   filteredObj.requirements.classifications.forEach((cls) => {
-    if (!cls.system && !cls.value && !cls.name) return;
-    const systemName = cls.system || cls.name;
+    if (!cls.system && !cls.value && !cls.name && !cls.systemEntryId) return;
+    // Look up system name from entries first, fall back to stored value
+    const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
+    const systemName = entryName || cls.system || cls.name;
     
     if (cls.isApplicability || cls.readOnly) {
       // Add to applicability section (primary classifications are always applicability)
@@ -1994,18 +2000,23 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             </div>
             {object.requirements.classifications.length > 0 ? (
               <div className="space-y-2">
-                {object.requirements.classifications.map((cls, idx) => (
+                {object.requirements.classifications.map((cls, idx) => {
+                  // Look up system name from entries first, fall back to stored value
+                  const displaySystemName = cls.systemEntryId 
+                    ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name 
+                    : cls.system;
+                  return (
                   <div key={cls.id || idx} className={`rounded px-2 py-1.5 text-xs ${cls.readOnly ? "bg-indigo-100 border border-indigo-200" : "bg-white border border-slate-200"}`}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-semibold text-slate-800">{cls.value || cls.identification || cls.code || "—"}</span>
                       {cls.readOnly && <span className="rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-medium text-white">Primární</span>}
                     </div>
                     <div className="mt-0.5 text-slate-500">
-                      {cls.system && <span>{cls.system}</span>}
+                      {displaySystemName && <span>{displaySystemName}</span>}
                       {cls.name && cls.name !== cls.value && <span className="ml-1">• {cls.name}</span>}
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             ) : (
               <div className="text-xs text-slate-500 italic">Žádná klasifikace</div>
@@ -4592,7 +4603,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     if (hasErrors) return;
                     const currentPhase = phases.find((p) => p.id === selectedPhaseId);
                     const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
-                    const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName);
+                    const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries);
                     const blob = new Blob([xml], { type: "application/xml" });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
@@ -4767,7 +4778,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               {idsSubTab === "schema" && (() => {
                 const currentPhase = phases.find((p) => p.id === selectedPhaseId);
                 const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
-                const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName);
+                const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries);
                 const fileName = currentPhase 
                   ? `${(object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_")}_${currentPhase.code}`
                   : (object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_");

@@ -11,7 +11,7 @@ export const createClassificationSystem = (
 ): ClassificationSystem => ({
   id: makeId(),
   ifcClassification: {
-    Name: classification.sourceName || "Klasifikace",
+    Name: (classification.sourceName || "Klasifikace").replace(/\.txt$/i, ""),
   },
   nodes: classification.nodes,
   sourceName: classification.sourceName,
@@ -46,6 +46,12 @@ export const ensureObject = (
   defaultIfcEntity?: string,
 ): ProjectObject => {
   if (!project.objects[code]) {
+    // Find the primary classification system entry to link to
+    const primaryEntry = (project.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    const systemName = primaryEntry?.name ?? 
+      project.classifications.find((c) => c.id === project.primaryClassificationId)?.ifcClassification.Name?.replace(/\.txt$/i, "") ?? 
+      "Klasifikace";
+    
     project.objects[code] = {
       code,
       description,
@@ -59,7 +65,8 @@ export const ensureObject = (
           {
             id: makeId(),
             classificationId: project.primaryClassificationId,
-            system: project.classifications.find((c) => c.id === project.primaryClassificationId)?.ifcClassification.Name ?? "Klasifikace",
+            systemEntryId: primaryEntry?.id, // Link to classification system entry
+            system: systemName,
             identification: code,
             value: code, // Primary classification value should be the code
             name: description,
@@ -69,9 +76,7 @@ export const ensureObject = (
             phases: [],
           },
         ],
-        materials: [
-          { id: makeId(), required: false, materialType: undefined, note: "", extensions: {}, phases: [] },
-        ],
+        materials: [],
       },
     };
   }

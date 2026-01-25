@@ -69,11 +69,11 @@ const AppInner: React.FC = () => {
 
   const migrateProject = (input: Project): Project => {
     // ensure phases and structure
-    return ensureProjectPhases({
+    const migrated = ensureProjectPhases({
       ...input,
       codeLists: input.codeLists ?? [],
       phases: ensurePhaseList(input.phases),
-      classifications: input.classifications ?? [
+      classifications: (input.classifications ?? [
         {
           id: input.primaryClassificationId ?? input.classification?.hash ?? "primary",
           ifcClassification: { Name: input.classification?.sourceName ?? "Klasifikace" },
@@ -83,12 +83,45 @@ const AppInner: React.FC = () => {
           isPrimary: true,
           createdAt: input.createdAt ?? new Date().toISOString(),
         },
-      ],
+      ]).map((c) => ({
+        ...c,
+        ifcClassification: { ...c.ifcClassification, Name: (c.ifcClassification.Name || "").replace(/\.txt$/i, "") },
+      })),
       primaryClassificationId:
         input.primaryClassificationId ??
         (input.classifications && input.classifications[0]?.id) ??
         "primary",
     });
+    
+    // Migrate classification system entries - remove .txt from names
+    if (migrated.classificationSystemEntries) {
+      migrated.classificationSystemEntries = migrated.classificationSystemEntries.map((e) => ({
+        ...e,
+        name: (e.name || "").replace(/\.txt$/i, ""),
+      }));
+    }
+    
+    // Find primary classification system entry for linking
+    const primaryEntry = (migrated.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    
+    // Migrate objects - fix classification system names and link to entries
+    if (migrated.objects) {
+      Object.values(migrated.objects).forEach((obj) => {
+        obj.requirements.classifications = obj.requirements.classifications.map((cls) => {
+          // Remove .txt from system name
+          const cleanSystem = (cls.system || "").replace(/\.txt$/i, "");
+          
+          // If this is a primary/readOnly classification without systemEntryId, link it
+          if ((cls.readOnly || cls.isApplicability) && !cls.systemEntryId && primaryEntry) {
+            return { ...cls, system: cleanSystem || primaryEntry.name, systemEntryId: primaryEntry.id };
+          }
+          
+          return { ...cls, system: cleanSystem };
+        });
+      });
+    }
+    
+    return migrated;
   };
 
   const loadDefaultClassification = async () => {
@@ -172,29 +205,33 @@ const AppInner: React.FC = () => {
   };
 
   const onUploadClassification = async (file: File) => {
+    if (!project) return;
+    
     const text = await file.text();
     const parsed = parseClassificationTsv(text, file.name);
-    setClassification(parsed);
-    const newProject = createEmptyProject(parsed);
     
-    // Create a ClassificationSystemEntry for the uploaded classification
+    // Create a new ClassificationSystemEntry for the uploaded classification
     const uploadedEntry: ClassificationSystemEntry = {
       id: makeId(),
       name: file.name.replace(/\.txt$/i, ""),
       sourceName: file.name,
       nodes: parsed.nodes,
       hash: parsed.hash,
-      isPrimary: true,
+      isPrimary: false, // Don't set as primary automatically
     };
-    newProject.classificationSystemEntries = [uploadedEntry];
     
-    // Reset history for new project
-    historyRef.current = [JSON.parse(JSON.stringify(newProject))];
-    historyIndexRef.current = 0;
-    setProject(newProject);
-    const leaves = collectLeaves(parsed.nodes);
-    setSelectedCode(leaves[0]?.code);
-    saveProjectToStorage(newProject);
+    // Add to existing project
+    const next: Project = {
+      ...project,
+      classificationSystemEntries: [...(project.classificationSystemEntries ?? []), uploadedEntry],
+      updatedAt: new Date().toISOString(),
+    };
+    
+    updateProjectWithHistory(next);
+    setStatus(`Klasifikace "${uploadedEntry.name}" byla importována`);
+    
+    // Clear status after 3 seconds
+    setTimeout(() => setStatus(""), 3000);
   };
 
   const onUpdateObject = (obj: ProjectObject) => {
@@ -422,22 +459,6 @@ const AppInner: React.FC = () => {
     updateProjectWithHistory(next);
   };
 
-  const classificationSystemUsage = useMemo(() => {
-    const usage: Record<string, Array<{ objectCode: string; objectDescription?: string }>> = {};
-    if (!project) return usage;
-    Object.values(project.objects).forEach((obj) => {
-      obj.requirements.classifications.forEach((c) => {
-        const systemEntryId = c.systemEntryId;
-        if (!systemEntryId) return;
-        (usage[systemEntryId] ??= []).push({
-          objectCode: obj.code,
-          objectDescription: obj.description,
-        });
-      });
-    });
-    return usage;
-  }, [project]);
-
   // Undo/Redo functions
   const updateProjectWithHistory = (newProject: Project) => {
     if (isUndoRedoRef.current) {
@@ -641,7 +662,6 @@ const AppInner: React.FC = () => {
             onAddClassificationSystemEntry={onAddClassificationSystemEntry}
             onUpdateClassificationSystemEntry={onUpdateClassificationSystemEntry}
             onDeleteClassificationSystemEntry={onDeleteClassificationSystemEntry}
-            classificationSystemUsage={classificationSystemUsage}
           />
         </div>
         

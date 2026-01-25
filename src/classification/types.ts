@@ -4,6 +4,7 @@ export interface ClassificationNode {
   level: number;
   category?: string;
   ifcEntity?: string;
+  predefinedType?: string;
   children: ClassificationNode[];
 }
 

@@ -6,13 +6,6 @@ import { ClassificationEditor } from "./ClassificationEditor";
 
 interface Props {
   systems: ClassificationSystemEntry[];
-  usage?: Record<
-    string,
-    Array<{
-      objectCode: string;
-      objectDescription?: string;
-    }>
-  >;
   onAdd: (entry: ClassificationSystemEntry) => void;
   onUpdate: (id: string, updates: Partial<ClassificationSystemEntry>) => void;
   onDelete: (id: string) => void;
@@ -22,18 +15,15 @@ interface Props {
 
 export const ClassificationSystemsManager: React.FC<Props> = ({
   systems,
-  usage,
   onAdd,
   onUpdate,
   onDelete,
   onUploadFile,
   onResetDefault,
 }) => {
-  const [name, setName] = useState("");
-  const [uri, setUri] = useState("");
-  const [description, setDescription] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editingSystem, setEditingSystem] = useState<ClassificationSystemEntry | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
 
   const sorted = useMemo(
     () => [...systems].sort((a, b) => {
@@ -44,20 +34,6 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
     }),
     [systems],
   );
-
-  const handleAdd = () => {
-    const trimmedName = name.trim();
-    if (!trimmedName) return;
-    onAdd({
-      id: makeId(),
-      name: trimmedName,
-      uri: uri.trim() || undefined,
-      description: description.trim() || undefined,
-    });
-    setName("");
-    setUri("");
-    setDescription("");
-  };
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -78,6 +54,17 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
   };
 
   const handleSetPrimary = (id: string) => {
+    const targetSystem = systems.find((s) => s.id === id);
+    const currentPrimary = systems.find((s) => s.isPrimary);
+    
+    const message = currentPrimary
+      ? `Opravdu chcete nastavit "${targetSystem?.name || "tento systém"}" jako primární klasifikační systém?\n\nAktuálně primární systém "${currentPrimary.name}" bude nahrazen a hierarchie objektů bude založena na novém systému.`
+      : `Opravdu chcete nastavit "${targetSystem?.name || "tento systém"}" jako primární klasifikační systém?\n\nHierarchie objektů bude založena na tomto systému.`;
+    
+    if (!window.confirm(message)) {
+      return;
+    }
+    
     // Set the clicked one as primary, unset others
     systems.forEach((sys) => {
       if (sys.id === id && !sys.isPrimary) {
@@ -89,85 +76,71 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
   };
 
   const handleSaveEdit = (updatedSystem: ClassificationSystemEntry) => {
-    onUpdate(updatedSystem.id, {
-      nodes: updatedSystem.nodes,
-      name: updatedSystem.name,
-    });
+    if (isCreatingNew) {
+      // Creating a new system
+      onAdd(updatedSystem);
+      setIsCreatingNew(false);
+    } else {
+      // Updating existing system
+      onUpdate(updatedSystem.id, {
+        nodes: updatedSystem.nodes,
+        name: updatedSystem.name,
+      });
+    }
     setEditingSystem(null);
   };
 
+  const handleCreateNewWithEditor = () => {
+    const newSystem: ClassificationSystemEntry = {
+      id: makeId(),
+      name: "Nový klasifikační systém",
+      nodes: [],
+    };
+    setEditingSystem(newSystem);
+    setIsCreatingNew(true);
+  };
+
+  const handleCloseEditor = () => {
+    setEditingSystem(null);
+    setIsCreatingNew(false);
+  };
+
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div>
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+      <div className="flex-shrink-0">
         <div className="text-sm font-semibold text-slate-800">Klasifikační systémy</div>
         <div className="text-xs text-slate-500">
           Správa klasifikačních systémů a jejich mapování na IFC entity.
         </div>
       </div>
 
-      {/* Import section */}
-      <div className="rounded border border-slate-200 bg-slate-50 p-3">
-        <div className="mb-2 text-xs font-semibold uppercase text-slate-500">
-          Import klasifikace
-        </div>
-        <div className="flex items-center gap-2">
-          <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50">
-            <input
-              type="file"
-              accept=".txt"
-              onChange={handleFileChange}
-              className="hidden"
-            />
-            <span>Import TXT</span>
-          </label>
-          <button
-            className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
-            onClick={onResetDefault}
-          >
-            Načíst výchozí
-          </button>
-        </div>
-      </div>
-
-      {/* Manual add section */}
-      <div className="rounded border border-slate-200 bg-slate-50 p-3">
-        <div className="mb-2 text-xs font-semibold uppercase text-slate-500">
-          Nový klasifikační systém (ruční)
-        </div>
-        <div className="grid grid-cols-1 gap-2">
+      {/* Action buttons */}
+      <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+        <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50">
           <input
-            className="rounded border border-slate-300 px-2 py-1 text-sm"
-            placeholder="Název (např. CCI-CZ, Uniclass 2015)"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            type="file"
+            accept=".txt"
+            onChange={handleFileChange}
+            className="hidden"
           />
-          <input
-            className="rounded border border-slate-300 px-2 py-1 text-sm"
-            placeholder="URI (volitelné, např. https://example.com/classification)"
-            value={uri}
-            onChange={(e) => setUri(e.target.value)}
-          />
-          <textarea
-            className="rounded border border-slate-300 px-2 py-1 text-sm"
-            placeholder="Popis (volitelné)"
-            rows={2}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <div>
-            <button
-              className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-              onClick={handleAdd}
-              disabled={!name.trim()}
-            >
-              Přidat klasifikační systém
-            </button>
-          </div>
-        </div>
+          <span>Import TXT</span>
+        </label>
+        <button
+          className="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+          onClick={onResetDefault}
+        >
+          Načíst výchozí
+        </button>
+        <button
+          className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500"
+          onClick={handleCreateNewWithEditor}
+        >
+          + Nový systém
+        </button>
       </div>
 
       {/* Systems list */}
-      <div className="flex-1 overflow-auto rounded border border-slate-200 bg-white">
+      <div className="min-h-0 flex-1 overflow-auto rounded border border-slate-200 bg-white">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
             <tr>
@@ -179,7 +152,6 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
           <tbody>
             {sorted.map((sys) => {
               const isExpanded = expanded.has(sys.id);
-              const sysUsage = usage?.[sys.id] ?? [];
               const leafCount = sys.nodes ? collectLeaves(sys.nodes).length : 0;
               return (
                 <React.Fragment key={sys.id}>
@@ -215,31 +187,35 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                     </td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {sys.nodes && sys.nodes.length > 0 && (
-                          <button
-                            className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
-                            onClick={() => setEditingSystem(sys)}
-                            title="Upravit klasifikaci"
-                          >
-                            Upravit
-                          </button>
-                        )}
-                        {!sys.isPrimary && (
-                          <button
-                            className="rounded border border-indigo-300 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50"
-                            onClick={() => handleSetPrimary(sys.id)}
-                            title="Nastavit jako primární"
-                          >
-                            Primární
-                          </button>
-                        )}
                         <button
-                          className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-                          onClick={() => onDelete(sys.id)}
-                          title="Smazat"
+                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                          onClick={() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] })}
+                          title="Upravit klasifikaci"
                         >
-                          Smazat
+                          Upravit
                         </button>
+                        {sys.isPrimary ? (
+                          <span className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
+                            ✓ Nastaveno jako primární
+                          </span>
+                        ) : (
+                          <>
+                            <button
+                              className="rounded border border-indigo-300 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50"
+                              onClick={() => handleSetPrimary(sys.id)}
+                              title="Nastavit jako primární"
+                            >
+                              Nastavit primární
+                            </button>
+                            <button
+                              className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                              onClick={() => onDelete(sys.id)}
+                              title="Smazat"
+                            >
+                              Smazat
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -284,33 +260,6 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                               placeholder="Volitelný popis klasifikačního systému"
                             />
                           </div>
-                          <div className="rounded border border-slate-200 bg-white p-2">
-                            <div className="mb-1 text-[11px] font-semibold uppercase text-slate-500">
-                              Použití v projektu
-                            </div>
-                            {sysUsage.length === 0 ? (
-                              <div className="text-xs text-slate-500">
-                                Klasifikační systém není nikde přiřazen.
-                              </div>
-                            ) : (
-                              <div className="flex flex-wrap gap-1">
-                                {sysUsage.slice(0, 30).map((u, idx) => (
-                                  <span
-                                    key={`${u.objectCode}:${idx}`}
-                                    className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700"
-                                    title={u.objectDescription ?? u.objectCode}
-                                  >
-                                    {u.objectCode}
-                                  </span>
-                                ))}
-                                {sysUsage.length > 30 && (
-                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
-                                    +{sysUsage.length - 30} dalších
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
                         </div>
                       </td>
                     </tr>
@@ -334,7 +283,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
         <ClassificationEditor
           system={editingSystem}
           onSave={handleSaveEdit}
-          onClose={() => setEditingSystem(null)}
+          onClose={handleCloseEditor}
         />
       )}
     </div>

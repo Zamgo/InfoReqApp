@@ -118,13 +118,6 @@ interface Props {
   onAddClassificationSystemEntry: (entry: ClassificationSystemEntry) => void;
   onUpdateClassificationSystemEntry: (id: string, updates: Partial<ClassificationSystemEntry>) => void;
   onDeleteClassificationSystemEntry: (id: string) => void;
-  classificationSystemUsage?: Record<
-    string,
-    Array<{
-      objectCode: string;
-      objectDescription?: string;
-    }>
-  >;
 }
 
 const TreeItem: React.FC<{
@@ -214,7 +207,6 @@ export const ClassificationPanel: React.FC<Props> = ({
   onAddClassificationSystemEntry,
   onUpdateClassificationSystemEntry,
   onDeleteClassificationSystemEntry,
-  classificationSystemUsage,
 }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists" | "classificationsystems">("hierarchy");
@@ -413,7 +405,7 @@ export const ClassificationPanel: React.FC<Props> = ({
       )}
 
       {activeTab === "phases" && (
-        <div className="flex h-full flex-col p-3">
+        <div className="flex flex-1 flex-col overflow-hidden p-3">
           <PhaseManager
             phases={phases}
             onAddPhase={onAddPhase}
@@ -424,7 +416,7 @@ export const ClassificationPanel: React.FC<Props> = ({
       )}
 
       {activeTab === "codelists" && (
-        <div className="flex h-full flex-col p-3">
+        <div className="flex flex-1 flex-col overflow-hidden p-3">
           <CodeListManager
             codeLists={codeLists}
             usage={codeListUsage}
@@ -436,10 +428,9 @@ export const ClassificationPanel: React.FC<Props> = ({
       )}
 
       {activeTab === "classificationsystems" && (
-        <div className="flex h-full flex-col p-3">
+        <div className="flex flex-1 flex-col overflow-hidden p-3">
           <ClassificationSystemsManager
             systems={classificationSystemEntries}
-            usage={classificationSystemUsage}
             onAdd={onAddClassificationSystemEntry}
             onUpdate={onUpdateClassificationSystemEntry}
             onDelete={onDeleteClassificationSystemEntry}

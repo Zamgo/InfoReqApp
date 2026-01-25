@@ -22,6 +22,7 @@ export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onUp
   const [name, setName] = useState("");
   const [valuesText, setValuesText] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [usageExpanded, setUsageExpanded] = useState<Set<string>>(new Set());
 
   const sorted = useMemo(
     () => [...codeLists].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
@@ -46,16 +47,25 @@ export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onUp
     });
   };
 
+  const toggleUsageExpanded = (id: string) => {
+    setUsageExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
   return (
-    <div className="flex h-full flex-col gap-3">
-      <div>
+    <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
+      <div className="flex-shrink-0">
         <div className="text-sm font-semibold text-slate-800">Číselníky</div>
         <div className="text-xs text-slate-500">
           Správa předvolených výčtů (IDS: Enumeration). Změny se promítnou do vlastností navázaných na číselník.
         </div>
       </div>
 
-      <div className="rounded border border-slate-200 bg-slate-50 p-3">
+      <div className="flex-shrink-0 rounded border border-slate-200 bg-slate-50 p-3">
         <div className="mb-2 text-xs font-semibold uppercase text-slate-500">Nový číselník</div>
         <div className="grid grid-cols-1 gap-2">
           <input
@@ -83,7 +93,7 @@ export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onUp
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto rounded border border-slate-200 bg-white">
+      <div className="min-h-0 flex-1 overflow-auto rounded border border-slate-200 bg-white">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
             <tr>
@@ -135,27 +145,41 @@ export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onUp
                             value={formatEnumValues(cl.values ?? [])}
                             onChange={(e) => onUpdate(cl.id, { values: parseEnumValues(e.target.value) })}
                           />
-                          <div className="rounded border border-slate-200 bg-white p-2">
-                            <div className="mb-1 text-[11px] font-semibold uppercase text-slate-500">
-                              Použití v projektu
-                            </div>
-                            {clUsage.length === 0 ? (
-                              <div className="text-xs text-slate-500">Číselník není nikde přiřazen.</div>
-                            ) : (
-                              <div className="flex flex-wrap gap-1">
-                                {clUsage.slice(0, 30).map((u, idx) => (
-                                  <span
-                                    key={`${u.objectCode}:${u.propertyLabel ?? ""}:${idx}`}
-                                    className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700"
-                                    title={`${u.objectDescription ?? u.objectCode}${u.propertyLabel ? ` • ${u.propertyLabel}` : ""}`}
-                                  >
-                                    {u.objectCode}
-                                  </span>
-                                ))}
-                                {clUsage.length > 30 && (
-                                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
-                                    +{clUsage.length - 30} dalších
-                                  </span>
+                          <div className="rounded border border-slate-200 bg-white">
+                            <button
+                              className="flex w-full items-center justify-between px-2 py-1.5 text-left hover:bg-slate-50"
+                              onClick={() => toggleUsageExpanded(cl.id)}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-500">
+                                  {usageExpanded.has(cl.id) ? "▼" : "▶"}
+                                </span>
+                                <span className="text-[11px] font-semibold uppercase text-slate-500">
+                                  Použití v projektu
+                                </span>
+                              </div>
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
+                                {clUsage.length} {clUsage.length === 1 ? "vlastnost" : clUsage.length >= 2 && clUsage.length <= 4 ? "vlastnosti" : "vlastností"}
+                              </span>
+                            </button>
+                            {usageExpanded.has(cl.id) && (
+                              <div className="border-t border-slate-200 px-2 py-2">
+                                {clUsage.length === 0 ? (
+                                  <div className="text-xs text-slate-500">Číselník není nikde přiřazen.</div>
+                                ) : (
+                                  <div className="max-h-48 overflow-auto">
+                                    <div className="flex flex-wrap gap-1">
+                                      {clUsage.map((u, idx) => (
+                                        <span
+                                          key={`${u.objectCode}:${u.propertyLabel ?? ""}:${idx}`}
+                                          className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700"
+                                          title={`${u.objectDescription ?? u.objectCode}${u.propertyLabel ? ` • ${u.propertyLabel}` : ""}`}
+                                        >
+                                          {u.objectCode}{u.propertyLabel ? ` • ${u.propertyLabel}` : ""}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
                                 )}
                               </div>
                             )}
