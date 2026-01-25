@@ -1,4 +1,4 @@
-import type { ClassificationData, ClassificationSystem } from "../classification/types";
+import type { ClassificationData, ClassificationNode, ClassificationSystem } from "../classification/types";
 
 export type PredefinedMode = "NONE" | "ENUM" | "USERDEFINED";
 
@@ -145,6 +145,14 @@ export interface ClassificationSystemEntry {
   uri?: string;
   /** Optional description */
   description?: string;
+  /** Hierarchical structure of classification items */
+  nodes?: ClassificationNode[];
+  /** Original source file name */
+  sourceName?: string;
+  /** Hash for change detection */
+  hash?: string;
+  /** Whether this is the primary classification for object structure */
+  isPrimary?: boolean;
 }
 
 export interface Project {

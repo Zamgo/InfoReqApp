@@ -1,10 +1,45 @@
 import React, { useMemo, useState } from "react";
-import { filterTree } from "../../classification/parser";
+import { collectLeaves, filterTree } from "../../classification/parser";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
 import type { ClassificationSystemEntry, CodeList, Phase } from "../../project/types";
 import { PhaseManager } from "./PhaseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
+
+type ViewMode = "classification" | "ifc";
+
+/**
+ * Build a tree grouped by IFC entity types
+ */
+const buildIfcTree = (nodes: ClassificationNode[]): ClassificationNode[] => {
+  const leaves = collectLeaves(nodes);
+  const byEntity: Record<string, ClassificationNode[]> = {};
+  
+  leaves.forEach((leaf) => {
+    const entity = leaf.ifcEntity || "Bez IFC entity";
+    (byEntity[entity] ??= []).push(leaf);
+  });
+
+  // Sort entities alphabetically, but put "Bez IFC entity" last
+  const sortedEntities = Object.keys(byEntity).sort((a, b) => {
+    if (a === "Bez IFC entity") return 1;
+    if (b === "Bez IFC entity") return -1;
+    return a.localeCompare(b);
+  });
+
+  return sortedEntities.map((entity) => ({
+    code: entity,
+    description: entity,
+    level: 1,
+    children: byEntity[entity]
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map((item) => ({
+        ...item,
+        level: 2,
+        children: [],
+      })),
+  }));
+};
 
 interface Props {
   classification: ClassificationData | null;
@@ -120,20 +155,26 @@ export const ClassificationPanel: React.FC<Props> = ({
 }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists" | "classificationsystems">("hierarchy");
+  const [viewMode, setViewMode] = useState<ViewMode>("classification");
+
+  // Get the primary classification system if available
+  const primarySystem = useMemo(() => {
+    return classificationSystemEntries.find((s) => s.isPrimary);
+  }, [classificationSystemEntries]);
+
+  // Build the base nodes depending on view mode
+  const baseNodes = useMemo(() => {
+    if (!classification) return [];
+    if (viewMode === "ifc") {
+      return buildIfcTree(classification.nodes);
+    }
+    return classification.nodes;
+  }, [classification, viewMode]);
 
   const filteredNodes = useMemo(() => {
-    if (!classification) return [];
-    return filterTree(classification.nodes, search);
-  }, [classification, search]);
-
-  const onFileChange = async (
-    e: React.ChangeEvent<HTMLInputElement>,
-  ): Promise<void> => {
-    const file = e.target.files?.[0];
-    if (file) {
-      await onUploadFile(file);
-    }
-  };
+    if (!baseNodes.length) return [];
+    return filterTree(baseNodes, search);
+  }, [baseNodes, search]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden border-r border-slate-200 bg-white">
@@ -158,41 +199,40 @@ export const ClassificationPanel: React.FC<Props> = ({
 
       {activeTab === "hierarchy" && (
         <div className="flex h-full flex-col gap-3 overflow-hidden p-3">
+          {/* View mode selector and search */}
           <div className="flex items-center gap-2">
+            <select
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as ViewMode)}
+              className="rounded border border-slate-300 px-2 py-1 text-sm"
+            >
+              <option value="classification">
+                {primarySystem?.name || "Klasifikace"}
+              </option>
+              <option value="ifc">IFC Entity</option>
+            </select>
             <input
               type="text"
               placeholder="Hledat kód nebo popis"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+              className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
             />
           </div>
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-300 px-2 py-1 hover:bg-slate-50">
-              <input
-                type="file"
-                accept=".txt"
-                onChange={onFileChange}
-                className="hidden"
-              />
-              <span>Import TXT</span>
-            </label>
-            <button
-              className="rounded border border-slate-300 px-2 py-1 hover:bg-slate-50"
-              onClick={onResetDefault}
-            >
-              Načíst výchozí
-            </button>
-            {classification && (
-              <span className="ml-auto text-[11px] text-slate-500">
+          {classification && (
+            <div className="flex items-center gap-2 text-xs text-slate-600">
+              <span className="text-[11px] text-slate-500">
                 Zdroj: {classification.sourceName}
               </span>
-            )}
-          </div>
+              <span className="ml-auto text-[11px] text-slate-400">
+                {viewMode === "classification" ? "Pohled: Klasifikace" : "Pohled: IFC Entity"}
+              </span>
+            </div>
+          )}
           <div className="flex-1 overflow-auto rounded border border-slate-200 bg-slate-50 p-2">
             {!classification && (
               <div className="text-sm text-slate-500">
-                Není načtena klasifikace. Nahrajte TXT soubor.
+                Není načtena klasifikace. Přejděte do záložky "Klasifikační systémy".
               </div>
             )}
             {classification &&
@@ -243,6 +283,8 @@ export const ClassificationPanel: React.FC<Props> = ({
             onAdd={onAddClassificationSystemEntry}
             onUpdate={onUpdateClassificationSystemEntry}
             onDelete={onDeleteClassificationSystemEntry}
+            onUploadFile={onUploadFile}
+            onResetDefault={onResetDefault}
           />
         </div>
       )}

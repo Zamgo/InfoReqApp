@@ -92,6 +92,18 @@ const AppInner: React.FC = () => {
       const parsed = parseClassificationTsv(text, "Klasifikace_IfcEntity.txt");
       setClassification(parsed);
       const newProject = createEmptyProject(parsed);
+      
+      // Create a ClassificationSystemEntry for the default classification
+      const defaultEntry: ClassificationSystemEntry = {
+        id: makeId(),
+        name: "Klasifikace_IfcEntity",
+        sourceName: "Klasifikace_IfcEntity.txt",
+        nodes: parsed.nodes,
+        hash: parsed.hash,
+        isPrimary: true,
+      };
+      newProject.classificationSystemEntries = [defaultEntry];
+      
       // Reset history for new project
       historyRef.current = [JSON.parse(JSON.stringify(newProject))];
       historyIndexRef.current = 0;
@@ -156,6 +168,18 @@ const AppInner: React.FC = () => {
     const parsed = parseClassificationTsv(text, file.name);
     setClassification(parsed);
     const newProject = createEmptyProject(parsed);
+    
+    // Create a ClassificationSystemEntry for the uploaded classification
+    const uploadedEntry: ClassificationSystemEntry = {
+      id: makeId(),
+      name: file.name.replace(/\.txt$/i, ""),
+      sourceName: file.name,
+      nodes: parsed.nodes,
+      hash: parsed.hash,
+      isPrimary: true,
+    };
+    newProject.classificationSystemEntries = [uploadedEntry];
+    
     // Reset history for new project
     historyRef.current = [JSON.parse(JSON.stringify(newProject))];
     historyIndexRef.current = 0;
@@ -335,11 +359,44 @@ const AppInner: React.FC = () => {
 
   const onUpdateClassificationSystemEntry = (id: string, updates: Partial<ClassificationSystemEntry>) => {
     if (!project) return;
-    const nextEntries = (project.classificationSystemEntries ?? []).map((e) =>
+    
+    // If setting this entry as primary, unset all others
+    let nextEntries = (project.classificationSystemEntries ?? []).map((e) =>
       e.id === id ? { ...e, ...updates } : e
     );
+    
+    if (updates.isPrimary === true) {
+      nextEntries = nextEntries.map((e) =>
+        e.id !== id ? { ...e, isPrimary: false } : e
+      );
+    }
+    
+    const updatedEntry = nextEntries.find((e) => e.id === id);
+    
+    // Update the main classification if the primary entry's nodes changed
+    let nextClassification = project.classification;
+    if (updatedEntry?.isPrimary && updatedEntry.nodes) {
+      nextClassification = {
+        nodes: updatedEntry.nodes,
+        sourceName: updatedEntry.sourceName || updatedEntry.name,
+        hash: updatedEntry.hash,
+      };
+      setClassification(nextClassification);
+    }
+    
+    // If isPrimary was just set, also update the main classification
+    if (updates.isPrimary === true && updatedEntry?.nodes) {
+      nextClassification = {
+        nodes: updatedEntry.nodes,
+        sourceName: updatedEntry.sourceName || updatedEntry.name,
+        hash: updatedEntry.hash,
+      };
+      setClassification(nextClassification);
+    }
+    
     const next: Project = {
       ...project,
+      classification: nextClassification,
       classificationSystemEntries: nextEntries,
       updatedAt: new Date().toISOString(),
     };
