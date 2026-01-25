@@ -26,9 +26,12 @@ export const createEmptyProject = (classification: ClassificationData): Project 
   return {
     projectId: makeId(),
     name: "Nový projekt",
+    author: "",
+    description: "",
     createdAt: now,
     updatedAt: now,
     ifcSchemaVersion: "IFC4X3",
+    ifcSchemaVersionDisplay: "IFC 4.3 ADD2 TC1",
     classification,
     classifications: [primary],
     primaryClassificationId: primary.id,
@@ -99,14 +102,18 @@ export const saveProjectToStorage = (project: Project) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
 };
 
-export const exportProjectFile = (project: Project) => {
+export const exportProjectFile = (project: Project, filename?: string) => {
   const blob = new Blob([JSON.stringify(project, null, 2)], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "project.json";
+  // Use project name for filename, sanitize it for filesystem
+  const safeName = (filename || project.name || "project")
+    .replace(/[<>:"/\\|?*]/g, "_")
+    .replace(/\s+/g, "_");
+  link.download = `${safeName}.json`;
   link.click();
   URL.revokeObjectURL(url);
 };

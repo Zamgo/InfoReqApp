@@ -158,9 +158,15 @@ export interface ClassificationSystemEntry {
 export interface Project {
   projectId: string;
   name: string;
+  /** Author of the project */
+  author?: string;
+  /** Project description */
+  description?: string;
   createdAt: string;
   updatedAt: string;
   ifcSchemaVersion: "IFC4X3";
+  /** Display version of IFC schema (e.g., "IFC 4.3 ADD2 TC1") */
+  ifcSchemaVersionDisplay?: string;
   classification: ClassificationData;
   classifications: ClassificationSystem[];
   primaryClassificationId: string;

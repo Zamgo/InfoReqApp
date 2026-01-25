@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
 import { ClassificationPanel } from "./ui/components/ClassificationPanel";
 import { ObjectDetail } from "./ui/components/ObjectDetail";
+import { ProjectDetailsDialog } from "./ui/components/ProjectDetailsDialog";
+import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { parseClassificationTsv, collectLeaves, findNodeByCode } from "./classification/parser";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
@@ -53,6 +55,10 @@ const AppInner: React.FC = () => {
   const [selectedCode, setSelectedCode] = useState<string>();
   const [selectedObject, setSelectedObject] = useState<ProjectObject | null>(null);
   const [status, setStatus] = useState<string>("");
+  const [isProjectDetailsOpen, setIsProjectDetailsOpen] = useState<boolean>(false);
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
+  const [isIDSExportOpen, setIsIDSExportOpen] = useState<boolean>(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   
   // Resizable panel state
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -269,7 +275,20 @@ const AppInner: React.FC = () => {
   const onExportProject = () => {
     if (project) {
       exportProjectFile(project);
+      setIsExportMenuOpen(false);
     }
+  };
+
+  const onExportIDS = () => {
+    setIsExportMenuOpen(false);
+    setIsIDSExportOpen(true);
+  };
+
+  const onExportExcel = () => {
+    // TODO: Implement Excel export
+    setStatus("Export do Excel bude brzy dostupný");
+    setIsExportMenuOpen(false);
+    setTimeout(() => setStatus(""), 3000);
   };
 
   const onAddPhase = (phase: Phase) => {
@@ -459,6 +478,16 @@ const AppInner: React.FC = () => {
     updateProjectWithHistory(next);
   };
 
+  const onUpdateProjectDetails = (updates: Partial<Project>) => {
+    if (!project) return;
+    const next: Project = {
+      ...project,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
   // Undo/Redo functions
   const updateProjectWithHistory = (newProject: Project) => {
     if (isUndoRedoRef.current) {
@@ -541,6 +570,17 @@ const AppInner: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleUndo, handleRedo]);
 
+  // Close export menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: globalThis.MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
+        setIsExportMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   // Panel resize handlers
   const handleResizeStart = useCallback((e: ReactMouseEvent) => {
     e.preventDefault();
@@ -585,9 +625,22 @@ const AppInner: React.FC = () => {
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
         <div>
           <div className="text-xs uppercase text-slate-500">InfoReqApp</div>
-          <div className="text-lg font-semibold">
-            Požadavky na IFC 4x3 {project ? `• ${project.name}` : ""}
-          </div>
+          <button
+            className="text-lg font-semibold text-slate-800 hover:text-indigo-600 flex items-center gap-2 group"
+            onClick={() => setIsProjectDetailsOpen(true)}
+            disabled={!project}
+            title="Klikněte pro úpravu údajů projektu"
+          >
+            {project?.name || "Načítám..."}
+            <svg 
+              className="w-4 h-4 text-slate-400 group-hover:text-indigo-500" 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+          </button>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -622,15 +675,57 @@ const AppInner: React.FC = () => {
                 if (file) void onImportProject(file);
               }}
             />
-            Import project.json
+            Import JSON
           </label>
-          <button
-            className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500"
-            onClick={onExportProject}
-            disabled={!project}
-          >
-            Export project.json
-          </button>
+          
+          {/* Export dropdown */}
+          <div className="relative" ref={exportMenuRef}>
+            <button
+              className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500 flex items-center gap-1"
+              onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+              disabled={!project}
+            >
+              Export
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            
+            {isExportMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-48 rounded-md border border-slate-200 bg-white shadow-lg z-50">
+                <div className="py-1">
+                  <button
+                    className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    onClick={onExportProject}
+                  >
+                    <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    JSON
+                  </button>
+                  <button
+                    className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 flex items-center gap-2"
+                    onClick={onExportIDS}
+                  >
+                    <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    IDS
+                  </button>
+                  <button
+                    className="w-full px-4 py-2 text-left text-sm text-slate-400 hover:bg-slate-100 flex items-center gap-2 cursor-not-allowed"
+                    onClick={onExportExcel}
+                  >
+                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Excel
+                    <span className="ml-auto text-xs text-slate-400">brzy</span>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -698,6 +793,26 @@ const AppInner: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Project Details Dialog */}
+      {project && (
+        <ProjectDetailsDialog
+          project={project}
+          isOpen={isProjectDetailsOpen}
+          onClose={() => setIsProjectDetailsOpen(false)}
+          onSave={onUpdateProjectDetails}
+        />
+      )}
+
+      {/* IDS Export Dialog */}
+      {project && (
+        <IDSExportDialog
+          project={project}
+          classification={classification}
+          isOpen={isIDSExportOpen}
+          onClose={() => setIsIDSExportOpen(false)}
+        />
+      )}
     </div>
   );
 };
