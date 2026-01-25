@@ -66,6 +66,85 @@ const getCardinality = (occurrence?: "required" | "prohibited" | "optional"): st
 };
 
 /**
+ * Valid IDS data types from DataTypes.md (IFC4X3)
+ * Only these types are allowed in the dataType attribute
+ */
+const VALID_IDS_DATA_TYPES = new Set([
+  // Common simple types
+  "IFCBOOLEAN", "IFCLOGICAL", "IFCINTEGER", "IFCREAL", "IFCTEXT", "IFCLABEL", "IFCIDENTIFIER",
+  // Measure types (most common)
+  "IFCLENGTHMEASURE", "IFCAREAMEASURE", "IFCVOLUMEMEASURE", "IFCMASSMEASURE", "IFCTIMEMEASURE",
+  "IFCCOUNTMEASURE", "IFCTHERMODYNAMICTEMPERATUREMEASURE", "IFCELECTRICCURRENTMEASURE",
+  "IFCPLANEANGLEMEASURE", "IFCPRESSUREMEASURE", "IFCFORCEMEASURE", "IFCENERGYMEASURE",
+  "IFCPOWERMEASURE", "IFCFREQUENCYMEASURE", "IFCELECTRICVOLTAGEMEASURE", "IFCMONETARYMEASURE",
+  "IFCPOSITIVELENGTHMEASURE", "IFCNONNEGATIVELENGTHMEASURE", "IFCRATIOMEASURE",
+  "IFCNORMALISEDRATIOMEASURE", "IFCPOSITIVERATIOMEASURE", "IFCNUMERICMEASURE",
+  "IFCTHERMALCONDUCTIVITYMEASURE", "IFCTHERMALTRANSMITTANCEMEASURE", "IFCMASSDENSITYMEASURE",
+  // Date/time types
+  "IFCDATE", "IFCDATETIME", "IFCTIME", "IFCDURATION", "IFCTIMESTAMP",
+  // Other types
+  "IFCGLOBALLYUNIQUEID", "IFCURIREFERENCE",
+]);
+
+/**
+ * Map IFC data types to valid IDS data types
+ * Returns undefined if dataType should be omitted from IDS output
+ */
+const mapDataTypeToIds = (dataType?: string): string | undefined => {
+  if (!dataType) return undefined;
+  
+  const dt = dataType.trim();
+  const dtLower = dt.toLowerCase();
+  const dtUpper = dt.toUpperCase();
+  
+  // OMIT dataType for IFC Quantity types (IfcQuantityWeight, etc.)
+  // These are NOT valid IDS dataTypes - the validator will infer from Qto_ definition
+  if (dtLower.startsWith("ifcquantity")) {
+    return undefined;
+  }
+  
+  // OMIT dataType for IFC Property container types
+  if (dtLower.startsWith("ifcproperty")) {
+    return undefined;
+  }
+  
+  // Handle PEnum_ types - use IFCLABEL
+  if (dtLower.startsWith("penum")) {
+    return "IFCLABEL";
+  }
+  
+  // Check if it's a valid IDS type directly
+  if (VALID_IDS_DATA_TYPES.has(dtUpper)) {
+    return dtUpper;
+  }
+  
+  // Common mappings
+  const mappings: Record<string, string> = {
+    "string": "IFCLABEL",
+    "text": "IFCTEXT",
+    "number": "IFCREAL",
+    "integer": "IFCINTEGER",
+    "real": "IFCREAL",
+    "double": "IFCREAL",
+    "float": "IFCREAL",
+    "boolean": "IFCBOOLEAN",
+    "bool": "IFCBOOLEAN",
+  };
+  
+  if (mappings[dtLower]) {
+    return mappings[dtLower];
+  }
+  
+  // For unknown types that look like IFC types but aren't in valid set, omit
+  if (dtLower.startsWith("ifc") && !VALID_IDS_DATA_TYPES.has(dtUpper)) {
+    return undefined; // Omit unknown IFC types
+  }
+  
+  // Default fallback for strings
+  return "IFCLABEL";
+};
+
+/**
  * Generate attribute element for requirements
  */
 const generateAttribute = (attr: AttributeRequirement, indent: string): string => {
@@ -94,7 +173,8 @@ const generateAttribute = (attr: AttributeRequirement, indent: string): string =
 const generateProperty = (prop: PropertyRequirement, indent: string): string => {
   const cardinality = getCardinality(prop.occurrence);
   const instructions = prop.note ? ` instructions="${escapeXml(prop.note)}"` : "";
-  const dataType = prop.dataType ? ` dataType="${escapeXml(prop.dataType.toUpperCase())}"` : "";
+  const mappedDataType = mapDataTypeToIds(prop.dataType);
+  const dataType = mappedDataType ? ` dataType="${escapeXml(mappedDataType)}"` : "";
   
   const lines: string[] = [];
   lines.push(`${indent}<ids:property cardinality="${cardinality}"${dataType}${instructions}>`);

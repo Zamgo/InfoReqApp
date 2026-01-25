@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { ClassificationPanel } from "./ui/components/ClassificationPanel";
 import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { ProjectDetailsDialog } from "./ui/components/ProjectDetailsDialog";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
+import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
 import { parseClassificationTsv, collectLeaves, findNodeByCode } from "./classification/parser";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
@@ -17,6 +18,7 @@ import {
 } from "./project/storage";
 import { ensurePhaseList, ensureProjectPhases, removePhaseFromProject } from "./project/phases";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues } from "./project/enumeration";
+import { exportExcelFile } from "./export/excel";
 import "./index.css";
 import { makeId } from "./utils/id";
 
@@ -58,6 +60,7 @@ const AppInner: React.FC = () => {
   const [isProjectDetailsOpen, setIsProjectDetailsOpen] = useState<boolean>(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
   const [isIDSExportOpen, setIsIDSExportOpen] = useState<boolean>(false);
+  const [isExcelExportOpen, setIsExcelExportOpen] = useState<boolean>(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   
   // Resizable panel state
@@ -285,10 +288,22 @@ const AppInner: React.FC = () => {
   };
 
   const onExportExcel = () => {
-    // TODO: Implement Excel export
-    setStatus("Export do Excel bude brzy dostupný");
     setIsExportMenuOpen(false);
-    setTimeout(() => setStatus(""), 3000);
+    setIsExcelExportOpen(true);
+  };
+
+  const handleExcelExport = async (selection: SheetSelection) => {
+    if (!project) return;
+    setIsExcelExportOpen(false);
+    setStatus("Generuji Excel soubor...");
+    try {
+      await exportExcelFile(project, selection);
+      setStatus("Excel soubor byl úspěšně exportován");
+      setTimeout(() => setStatus(""), 3000);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Export do Excel se nezdařil");
+      setTimeout(() => setStatus(""), 5000);
+    }
   };
 
   const onAddPhase = (phase: Phase) => {
@@ -713,14 +728,13 @@ const AppInner: React.FC = () => {
                     IDS
                   </button>
                   <button
-                    className="w-full px-4 py-2 text-left text-sm text-slate-400 hover:bg-slate-100 flex items-center gap-2 cursor-not-allowed"
+                    className="w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-100 flex items-center gap-2"
                     onClick={onExportExcel}
                   >
-                    <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                     Excel
-                    <span className="ml-auto text-xs text-slate-400">brzy</span>
                   </button>
                 </div>
               </div>
@@ -811,6 +825,16 @@ const AppInner: React.FC = () => {
           classification={classification}
           isOpen={isIDSExportOpen}
           onClose={() => setIsIDSExportOpen(false)}
+        />
+      )}
+
+      {/* Excel Export Dialog */}
+      {project && (
+        <ExcelExportDialog
+          project={project}
+          isOpen={isExcelExportOpen}
+          onClose={() => setIsExcelExportOpen(false)}
+          onExport={(selection) => void handleExcelExport(selection)}
         />
       )}
     </div>

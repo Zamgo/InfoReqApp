@@ -11,6 +11,7 @@
     "ensure:schema": "node scripts/checkSchemaIndex.js"
   },
   "dependencies": {
+    "exceljs": "^4.4.0",
     "idb-keyval": "^6.2.1",
     "jszip": "^3.10.1",
     "react": "^18.3.1",

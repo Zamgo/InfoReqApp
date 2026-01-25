@@ -367,23 +367,66 @@ const DATA_TYPE_MAPPING: Record<string, string> = {
   "ifcduration": "IFCDURATION",
   "ifcgloballyuniqueid": "IFCGLOBALLYUNIQUEID",
   "ifcurireference": "IFCURIREFERENCE",
+  
+  // IFC Quantity types → OMIT dataType (let IDS infer from Qto_ definition)
+  // These return empty string to signal "don't include dataType attribute"
+  // IfcQuantityWeight, IfcQuantityLength, etc. are not valid IDS dataTypes
+  // The actual value types (IFCMASSMEASURE, IFCLENGTHMEASURE) will be inferred by validator
+  
+  // Additional IFC property value types - also omit for complex types
+  // These are container types, not actual data types
+  
+  // Common string/text types
+  "string": "IFCLABEL",
+  "text": "IFCTEXT",
+  
+  // Common numeric types
+  "number": "IFCREAL",
+  "integer": "IFCINTEGER",
+  "real": "IFCREAL",
+  "double": "IFCREAL",
+  "float": "IFCREAL",
+  
+  // Boolean
+  "boolean": "IFCBOOLEAN",
+  "bool": "IFCBOOLEAN",
+  
+  // Positive/non-negative length measures
+  "ifcpositivelengthmeasure": "IFCPOSITIVELENGTHMEASURE",
 };
 
+// Types that should NOT have dataType attribute in IDS output
+// These are IFC container/quantity types that are not valid IDS dataTypes
+// The IDS validator will infer the correct type from Qto_/Pset_ definitions
+const OMIT_DATATYPE_PATTERNS = [
+  "ifcquantity",        // IfcQuantityWeight, IfcQuantityLength, IfcQuantityArea, etc.
+  "ifcproperty",        // IfcPropertySingleValue, IfcPropertyEnumeratedValue, etc.
+];
+
 // Helper to map IFC data types to valid IDS data types
+// Returns undefined if dataType should be omitted from IDS output
 const mapDataTypeToIds = (dataType?: string): string | undefined => {
   if (!dataType) return undefined;
   
   const dt = dataType.trim();
   const dtLower = dt.toLowerCase();
   
-  // Check direct mapping first
+  // FIRST: Check if this type should be OMITTED from IDS output
+  // IFC Quantity types (IfcQuantityWeight, etc.) and Property types are NOT valid IDS dataTypes
+  // The IDS validator will infer the correct measure type from the Qto_ definition
+  for (const pattern of OMIT_DATATYPE_PATTERNS) {
+    if (dtLower.startsWith(pattern)) {
+      return undefined; // Omit dataType attribute entirely
+    }
+  }
+  
+  // Check direct mapping
   if (DATA_TYPE_MAPPING[dtLower]) {
     return DATA_TYPE_MAPPING[dtLower];
   }
   
   // Handle PEnum_ types - these are Property Enumerations stored as IfcLabel in IFC
   // PEnum_AssemblyPlace → IFCLABEL (not IFCASSEMBLYPLACEENUM!)
-  // The enum type (like IFCASSEMBLYPLACEENUM) is for entity attributes, not properties
   if (dtLower.startsWith("penum_") || dtLower.startsWith("penum")) {
     return "IFCLABEL";
   }
@@ -400,12 +443,12 @@ const mapDataTypeToIds = (dataType?: string): string | undefined => {
     if (VALID_IDS_DATA_TYPES.has(normalized)) {
       return normalized;
     }
-    // If ends with MEASURE, assume it's a valid measure type
-    if (normalized.endsWith("MEASURE")) {
+    // If ends with MEASURE and is in valid types, use it
+    if (normalized.endsWith("MEASURE") && VALID_IDS_DATA_TYPES.has(normalized)) {
       return normalized;
     }
-    // If ends with ENUM, it might be valid
-    if (normalized.endsWith("ENUM")) {
+    // If ends with ENUM and is in valid types, use it
+    if (normalized.endsWith("ENUM") && VALID_IDS_DATA_TYPES.has(normalized)) {
       return normalized;
     }
   }
@@ -540,16 +583,22 @@ const validateIdsCompliance = (obj: import("../../project/types").ProjectObject)
       const mapped = mapDataTypeToIds(prop.dataType);
       const dtLower = prop.dataType.toLowerCase();
       const dtUpper = prop.dataType.toUpperCase().replace(/[^A-Z]/g, "");
-      // Info about type mapping - only show for non-trivial mappings
-      if (mapped && mapped !== dtUpper && !dtLower.startsWith("penum")) {
-        // Show info only for non-PEnum types that get remapped
+      
+      // Check if this is a known/expected mapping (in DATA_TYPE_MAPPING)
+      const isKnownMapping = DATA_TYPE_MAPPING[dtLower] !== undefined;
+      
+      // Only show warning for unknown types that get fallback mapping
+      // Don't show warning for:
+      // - Types that are already valid IDS types (mapped === dtUpper)
+      // - PEnum types (handled correctly)
+      // - Known mappings in DATA_TYPE_MAPPING (e.g., IfcQuantityWeight → IFCMASSMEASURE)
+      if (mapped && mapped !== dtUpper && !dtLower.startsWith("penum") && !isKnownMapping) {
         errors.push({ 
           type: "warning", 
           message: `Vlastnost "${prop.propertyName}": "${prop.dataType}" → ${mapped}`, 
           field: `property.${idx}` 
         });
       }
-      // PEnum types don't need warning - IFCLABEL is the correct type
     }
     if (!prop.psetName) {
       errors.push({ type: "error", message: `Vlastnost #${idx + 1}: PropertySet je povinný`, field: `property.${idx}` });

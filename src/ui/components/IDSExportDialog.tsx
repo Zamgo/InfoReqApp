@@ -73,11 +73,30 @@ const formatPropertyHuman = (prop: PropertyRequirement): string => {
 };
 
 /**
+ * Map data type to valid IDS dataType (for preview)
+ * Returns undefined if dataType should be omitted
+ */
+const mapDataTypeForPreview = (dataType?: string): string | undefined => {
+  if (!dataType) return undefined;
+  const dtLower = dataType.toLowerCase();
+  // Omit IFC Quantity types - not valid IDS dataTypes
+  if (dtLower.startsWith("ifcquantity") || dtLower.startsWith("ifcproperty")) {
+    return undefined;
+  }
+  // Handle PEnum
+  if (dtLower.startsWith("penum")) {
+    return "IFCLABEL";
+  }
+  return dataType.toUpperCase();
+};
+
+/**
  * Format property requirement for IDS schema view
  */
 const formatPropertyIDS = (prop: PropertyRequirement): string => {
   const parts: string[] = [];
-  parts.push(`<ids:property cardinality="${prop.occurrence || "required"}"${prop.dataType ? ` dataType="${prop.dataType.toUpperCase()}"` : ""}>`);
+  const mappedDataType = mapDataTypeForPreview(prop.dataType);
+  parts.push(`<ids:property cardinality="${prop.occurrence || "required"}"${mappedDataType ? ` dataType="${mappedDataType}"` : ""}>`);
   parts.push(`  <ids:propertySet><ids:simpleValue>${prop.psetName}</ids:simpleValue></ids:propertySet>`);
   parts.push(`  <ids:baseName><ids:simpleValue>${prop.propertyName}</ids:simpleValue></ids:baseName>`);
   if (prop.value) {
