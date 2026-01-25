@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, MouseEvent as ReactMouseEvent } from "react";
 import { ClassificationPanel } from "./ui/components/ClassificationPanel";
 import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { parseClassificationTsv, collectLeaves, findNodeByCode } from "./classification/parser";
@@ -53,6 +53,14 @@ const AppInner: React.FC = () => {
   const [selectedCode, setSelectedCode] = useState<string>();
   const [selectedObject, setSelectedObject] = useState<ProjectObject | null>(null);
   const [status, setStatus] = useState<string>("");
+  
+  // Resizable panel state
+  const [panelWidth, setPanelWidth] = useState<number>(() => {
+    const stored = localStorage.getItem("infoReqApp_panelWidth");
+    return stored ? parseInt(stored, 10) : 360;
+  });
+  const isResizingRef = useRef<boolean>(false);
+  const resizeContainerRef = useRef<HTMLDivElement>(null);
   
   // Undo/Redo history
   const historyRef = useRef<Project[]>([]);
@@ -512,6 +520,45 @@ const AppInner: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleUndo, handleRedo]);
 
+  // Panel resize handlers
+  const handleResizeStart = useCallback((e: ReactMouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }, []);
+
+  useEffect(() => {
+    const handleMouseMove = (e: globalThis.MouseEvent) => {
+      if (!isResizingRef.current || !resizeContainerRef.current) return;
+      
+      const containerRect = resizeContainerRef.current.getBoundingClientRect();
+      const newWidth = e.clientX - containerRect.left;
+      
+      // Limit width between 250px and 800px
+      const clampedWidth = Math.max(250, Math.min(800, newWidth));
+      setPanelWidth(clampedWidth);
+    };
+
+    const handleMouseUp = () => {
+      if (isResizingRef.current) {
+        isResizingRef.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        // Save width to localStorage
+        localStorage.setItem("infoReqApp_panelWidth", panelWidth.toString());
+      }
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [panelWidth]);
+
   return (
     <div className="flex h-screen flex-col bg-slate-100">
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
@@ -570,27 +617,39 @@ const AppInner: React.FC = () => {
         <div className="bg-amber-50 px-4 py-2 text-sm text-amber-700">{status}</div>
       )}
 
-      <div className="grid flex-1 grid-cols-1 overflow-hidden md:grid-cols-[360px_1fr]">
-        <ClassificationPanel
-          classification={classification}
-          selectedCode={selectedCode}
-          onSelectLeaf={onSelectLeaf}
-          onUploadFile={onUploadClassification}
-          onResetDefault={() => void loadDefaultClassification()}
-          phases={project?.phases ?? []}
-          onAddPhase={onAddPhase}
-          onUpdatePhase={onUpdatePhase}
-          onDeletePhase={onDeletePhase}
-          codeLists={project?.codeLists ?? []}
-          onAddCodeList={onAddCodeList}
-          onUpdateCodeList={onUpdateCodeList}
-          onDeleteCodeList={onDeleteCodeList}
-          codeListUsage={codeListUsage}
-          classificationSystemEntries={project?.classificationSystemEntries ?? []}
-          onAddClassificationSystemEntry={onAddClassificationSystemEntry}
-          onUpdateClassificationSystemEntry={onUpdateClassificationSystemEntry}
-          onDeleteClassificationSystemEntry={onDeleteClassificationSystemEntry}
-          classificationSystemUsage={classificationSystemUsage}
+      <div ref={resizeContainerRef} className="flex flex-1 overflow-hidden">
+        <div 
+          className="flex-shrink-0 overflow-hidden"
+          style={{ width: panelWidth }}
+        >
+          <ClassificationPanel
+            classification={classification}
+            selectedCode={selectedCode}
+            onSelectLeaf={onSelectLeaf}
+            onUploadFile={onUploadClassification}
+            onResetDefault={() => void loadDefaultClassification()}
+            phases={project?.phases ?? []}
+            onAddPhase={onAddPhase}
+            onUpdatePhase={onUpdatePhase}
+            onDeletePhase={onDeletePhase}
+            codeLists={project?.codeLists ?? []}
+            onAddCodeList={onAddCodeList}
+            onUpdateCodeList={onUpdateCodeList}
+            onDeleteCodeList={onDeleteCodeList}
+            codeListUsage={codeListUsage}
+            classificationSystemEntries={project?.classificationSystemEntries ?? []}
+            onAddClassificationSystemEntry={onAddClassificationSystemEntry}
+            onUpdateClassificationSystemEntry={onUpdateClassificationSystemEntry}
+            onDeleteClassificationSystemEntry={onDeleteClassificationSystemEntry}
+            classificationSystemUsage={classificationSystemUsage}
+          />
+        </div>
+        
+        {/* Resize handle */}
+        <div
+          className="w-1 cursor-col-resize bg-slate-200 hover:bg-indigo-400 active:bg-indigo-500 transition-colors flex-shrink-0"
+          onMouseDown={handleResizeStart}
+          title="Táhněte pro změnu šířky panelu"
         />
 
         <div className="flex-1 overflow-hidden">

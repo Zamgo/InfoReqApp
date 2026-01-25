@@ -1934,15 +1934,26 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-slate-200 bg-white px-4 py-3 shadow-sm">
-        <div className="mb-2 text-lg font-semibold text-slate-800">Identifikační údaje</div>
+      {/* Název objektu */}
+      <div className="border-b border-indigo-200 bg-gradient-to-r from-indigo-50 to-white px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className="h-8 w-1 rounded-full bg-indigo-500"></div>
+          <div className="text-xl font-bold text-slate-800">{node.description || node.code}</div>
+        </div>
+      </div>
+
+      {/* Identifikační údaje */}
+      <div className="border-b border-slate-200 bg-white px-4 py-3">
+        <div className="mb-3 flex items-center gap-2">
+          <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Identifikační údaje</div>
+          <div className="h-px flex-1 bg-slate-200"></div>
+        </div>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800">Entita</div>
               <DocLink href={getIfcDocUrl(object.ifcEntity)} label={object.ifcEntity ?? ""} />
             </div>
-            <div className="mb-2 text-xs text-slate-500">{node.description || node.code}</div>
             <div className="flex flex-col gap-2">
               <div>
                 <label className="text-xs text-slate-600">IfcEntity</label>
@@ -1981,20 +1992,42 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800">Klasifikace</div>
             </div>
-            <div className="text-xs text-slate-500">
-              <span>Záznamy IfcClassificationReference: <span className="font-semibold text-slate-700">{object.requirements.classifications.length}</span></span>
-            </div>
+            {object.requirements.classifications.length > 0 ? (
+              <div className="space-y-2">
+                {object.requirements.classifications.map((cls, idx) => (
+                  <div key={cls.id || idx} className={`rounded px-2 py-1.5 text-xs ${cls.readOnly ? "bg-indigo-100 border border-indigo-200" : "bg-white border border-slate-200"}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold text-slate-800">{cls.value || cls.identification || cls.code || "—"}</span>
+                      {cls.readOnly && <span className="rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-medium text-white">Primární</span>}
+                    </div>
+                    <div className="mt-0.5 text-slate-500">
+                      {cls.system && <span>{cls.system}</span>}
+                      {cls.name && cls.name !== cls.value && <span className="ml-1">• {cls.name}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 italic">Žádná klasifikace</div>
+            )}
             <button 
               className="mt-2 text-xs text-indigo-600 hover:underline" 
               onClick={() => setActiveTab("classification")}
             >
-              Zobrazit a upravit na kartě Klasifikace
+              Upravit klasifikace →
             </button>
           </div>
         </div>
       </div>
 
+      {/* Požadavky */}
       <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="bg-white px-4 pt-3">
+          <div className="mb-2 flex items-center gap-2">
+            <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Požadavky</div>
+            <div className="h-px flex-1 bg-slate-200"></div>
+          </div>
+        </div>
         <div className="flex items-center border-b border-slate-200 bg-white px-4">
           {(Object.keys(TAB_LABELS) as TabKey[]).map((key) => (
             <button
