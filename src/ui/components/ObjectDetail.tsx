@@ -2171,221 +2171,216 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           </div>
         </div>
 
-        {/* Atributy v použitelnosti – velká tabulka (jako u klasifikací) */}
-        {object.requirements.attributes.some((a) => a.isApplicability && a.attribute !== "PredefinedType") && (
-          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Atributy v použitelnosti</div>
-              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("attributes")}>
-                Přidat / upravit v kartě Atributy →
-              </button>
-            </div>
-            <div className="overflow-auto rounded border border-slate-200 bg-white">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-2 py-2">Atribut</th>
-                    <th className="px-2 py-2">Omezení</th>
-                    <th className="px-2 py-2">Hodnota</th>
-                    <th className="px-2 py-2">Fáze</th>
-                    <th className="px-2 py-2 text-right">Akce</th>
-                  </tr>
-                </thead>
-                <tbody>
+        {/* Grid pro požadavky v použitelnosti */}
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          {/* Atributy v použitelnosti – kompaktní zobrazení */}
+          {object.requirements.attributes.some((a) => a.isApplicability && a.attribute !== "PredefinedType") && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                  Atributy
+                  <DocLink 
+                    href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/attribute-facet.md"
+                    label="Attribute Facet"
+                    type="ids"
+                  />
+                </div>
+              </div>
+              {object.requirements.attributes.filter((a) => a.isApplicability && a.attribute !== "PredefinedType").length > 0 ? (
+                <div className="space-y-2">
                   {object.requirements.attributes
                     .filter((a) => a.isApplicability && a.attribute !== "PredefinedType")
-                    .map((attr) => (
-                      <tr key={attr.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.attribute} onChange={(e) => updateAttributeField(attr.id, { attribute: e.target.value })}>
-                            {getAvailableAttributes(attr.id).filter((opt) => opt !== "PredefinedType").map((opt) => (
-                              <option key={opt} value={opt}>{opt}</option>
+                    .map((attr) => {
+                      const constraintLabel = ATTRIBUTE_CONSTRAINT_OPTIONS.find(opt => opt.value === (attr.constraint ?? "FILLED"))?.label ?? "Vyplněno";
+                      const attrPhases = attr.phases ?? phases.map(p => p.id);
+                      return (
+                        <div key={attr.id} className="rounded px-2 py-1.5 text-xs bg-white border border-slate-200">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-800">{attr.attribute}</span>
+                          </div>
+                          <div className="mt-0.5 text-slate-500">
+                            <span>{constraintLabel}</span>
+                            {attr.value && <span className="ml-1">• {attr.value}</span>}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-slate-500">Fáze:</span>
+                            {phases.filter(p => attrPhases.includes(p.id)).map(phase => (
+                              <span key={phase.id} className="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                                {phase.code}
+                              </span>
                             ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.constraint ?? "FILLED"} onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH" })}>
-                            {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.value ?? ""} onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })} placeholder="Hodnota" />
-                        </td>
-                        <td className="px-2 py-2">
-                          <PhaseSelector phases={phases} value={attr.phases} onChange={(ids) => updateAttributeField(attr.id, { phases: ids })} />
-                        </td>
-                        <td className="px-2 py-2 text-right">
-                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updateAttributeField(attr.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Vlastnosti v použitelnosti – velká tabulka */}
-        {object.requirements.properties.some((p) => p.isApplicability && (p.psetName || p.propertyName)) && (
-          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Vlastnosti v použitelnosti</div>
-              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("properties")}>
-                Přidat / upravit v kartě Vlastnosti →
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 italic">Žádné atributy</div>
+              )}
+              <button 
+                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                onClick={() => setActiveTab("attributes")}
+              >
+                Upravit atributy →
               </button>
             </div>
-            <div className="overflow-auto rounded border border-slate-200 bg-white">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-2 py-2">Property set / Qto</th>
-                    <th className="px-2 py-2">Vlastnost</th>
-                    <th className="px-2 py-2">Hodnota</th>
-                    <th className="px-2 py-2">Fáze</th>
-                    <th className="px-2 py-2 text-right">Akce</th>
-                  </tr>
-                </thead>
-                <tbody>
+          )}
+
+          {/* Vlastnosti v použitelnosti – kompaktní zobrazení */}
+          {object.requirements.properties.some((p) => p.isApplicability && (p.psetName || p.propertyName)) && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                  Vlastnosti
+                  <DocLink 
+                    href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/property-facet.md"
+                    label="Property Facet"
+                    type="ids"
+                  />
+                </div>
+              </div>
+              {object.requirements.properties.filter((p) => p.isApplicability && (p.psetName || p.propertyName)).length > 0 ? (
+                <div className="space-y-2">
                   {object.requirements.properties
                     .filter((p) => p.isApplicability && (p.psetName || p.propertyName))
-                    .map((prop) => (
-                      <tr key={prop.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.psetName ?? ""} onChange={(e) => updatePropertyField(prop.id, { psetName: e.target.value })} placeholder="Pset/Qto" />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.propertyName ?? ""} onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })} placeholder="Vlastnost" />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.value ?? ""} onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })} placeholder="Hodnota" />
-                        </td>
-                        <td className="px-2 py-2">
-                          <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
-                        </td>
-                        <td className="px-2 py-2 text-right">
-                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updatePropertyField(prop.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Součásti v použitelnosti – velká tabulka */}
-        {object.requirements.relations.some((r) => r.isApplicability) && (
-          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Součásti v použitelnosti</div>
-              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("partOf")}>
-                Přidat / upravit v kartě Součástí →
+                    .map((prop) => {
+                      const propPhases = prop.phases ?? phases.map(p => p.id);
+                      return (
+                        <div key={prop.id} className="rounded px-2 py-1.5 text-xs bg-white border border-slate-200">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-800">{prop.propertyName || "—"}</span>
+                          </div>
+                          <div className="mt-0.5 text-slate-500">
+                            {prop.psetName && <span>{prop.psetName}</span>}
+                            {prop.value && <span className="ml-1">• {prop.value}</span>}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-slate-500">Fáze:</span>
+                            {phases.filter(p => propPhases.includes(p.id)).map(phase => (
+                              <span key={phase.id} className="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                                {phase.code}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 italic">Žádné vlastnosti</div>
+              )}
+              <button 
+                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                onClick={() => setActiveTab("properties")}
+              >
+                Upravit vlastnosti →
               </button>
             </div>
-            <div className="overflow-auto rounded border border-slate-200 bg-white">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-2 py-2">Vztah</th>
-                    <th className="px-2 py-2">Součást entity</th>
-                    <th className="px-2 py-2">PredefinedType</th>
-                    <th className="px-2 py-2">Fáze</th>
-                    <th className="px-2 py-2 text-right">Akce</th>
-                  </tr>
-                </thead>
-                <tbody>
+          )}
+
+          {/* Součásti v použitelnosti – kompaktní zobrazení */}
+          {object.requirements.relations.some((r) => r.isApplicability) && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                  Součásti
+                  <DocLink 
+                    href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/partof-facet.md"
+                    label="PartOf Facet"
+                    type="ids"
+                  />
+                </div>
+              </div>
+              {object.requirements.relations.filter((r) => r.isApplicability).length > 0 ? (
+                <div className="space-y-2">
                   {object.requirements.relations
                     .filter((r) => r.isApplicability)
                     .map((rel) => {
-                      const relEntityDef = rel.entityType ? schema?.entities[rel.entityType] : undefined;
-                      const relPredefinedOptions = relEntityDef?.predefinedTypeValues ?? [];
+                      const relPhases = rel.phases ?? phases.map(p => p.id);
                       return (
-                        <tr key={rel.id} className="border-t border-slate-200">
-                          <td className="px-2 py-2">
-                            <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.relationType} onChange={(e) => updateRelationField(rel.id, { relationType: e.target.value as RelationRequirement["relationType"] })}>
-                              {relationTypeOptions.map((opt) => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-2 py-2">
-                            <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.entityType ?? ""} onChange={(e) => updateRelationField(rel.id, { entityType: e.target.value, entityPredefinedType: "" })}>
-                              <option value="">-- Entita --</option>
-                              {entities.map((ent) => (
-                                <option key={ent} value={ent}>{ent}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-2 py-2">
-                            <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.entityPredefinedType ?? ""} onChange={(e) => updateRelationField(rel.id, { entityPredefinedType: e.target.value })} disabled={!rel.entityType || relPredefinedOptions.length === 0}>
-                              <option value="">--</option>
-                              {relPredefinedOptions.map((opt) => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
-                          </td>
-                          <td className="px-2 py-2">
-                            <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
-                          </td>
-                          <td className="px-2 py-2 text-right">
-                            <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updateRelationField(rel.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
-                          </td>
-                        </tr>
+                        <div key={rel.id} className="rounded px-2 py-1.5 text-xs bg-white border border-slate-200">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-800">{rel.entityType || "—"}</span>
+                          </div>
+                          <div className="mt-0.5 text-slate-500">
+                            <span>{rel.relationType}</span>
+                            {rel.entityPredefinedType && <span className="ml-1">• {rel.entityPredefinedType}</span>}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-slate-500">Fáze:</span>
+                            {phases.filter(p => relPhases.includes(p.id)).map(phase => (
+                              <span key={phase.id} className="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                                {phase.code}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
                       );
                     })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Klasifikace – již existující blok; zobrazují se všechny, v použitelnosti jsou ty s isApplicability nebo readOnly */}
-
-        {/* Materiál v použitelnosti – velká tabulka */}
-        {object.requirements.materials.some((m) => m.isApplicability) && (
-          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Materiál v použitelnosti</div>
-              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("material")}>
-                Přidat / upravit v kartě Materiál →
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 italic">Žádné součásti</div>
+              )}
+              <button 
+                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                onClick={() => setActiveTab("partOf")}
+              >
+                Upravit součásti →
               </button>
             </div>
-            <div className="overflow-auto rounded border border-slate-200 bg-white">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
-                  <tr>
-                    <th className="px-2 py-2">Kategorie</th>
-                    <th className="px-2 py-2">Hodnota</th>
-                    <th className="px-2 py-2">Fáze</th>
-                    <th className="px-2 py-2 text-right">Akce</th>
-                  </tr>
-                </thead>
-                <tbody>
+          )}
+
+          {/* Materiál v použitelnosti – kompaktní zobrazení */}
+          {object.requirements.materials.some((m) => m.isApplicability) && (
+            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                  Materiál
+                  <DocLink 
+                    href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/material-facet.md"
+                    label="Material Facet"
+                    type="ids"
+                  />
+                </div>
+              </div>
+              {object.requirements.materials.filter((m) => m.isApplicability).length > 0 ? (
+                <div className="space-y-2">
                   {object.requirements.materials
                     .filter((m) => m.isApplicability)
-                    .map((mat) => (
-                      <tr key={mat.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.category ?? ""} onChange={(e) => updateMaterialField(mat.id, { category: e.target.value })} placeholder="Kategorie" />
-                        </td>
-                        <td className="px-2 py-2">
-                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.value ?? ""} onChange={(e) => updateMaterialField(mat.id, { value: e.target.value })} placeholder="Hodnota" />
-                        </td>
-                        <td className="px-2 py-2">
-                          <PhaseSelector phases={phases} value={mat.phases} onChange={(ids) => updateMaterialField(mat.id, { phases: ids })} />
-                        </td>
-                        <td className="px-2 py-2 text-right">
-                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updateMaterialField(mat.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
-                        </td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
+                    .map((mat) => {
+                      const matPhases = mat.phases ?? phases.map(p => p.id);
+                      return (
+                        <div key={mat.id} className="rounded px-2 py-1.5 text-xs bg-white border border-slate-200">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-slate-800">{mat.value || "—"}</span>
+                          </div>
+                          <div className="mt-0.5 text-slate-500">
+                            {mat.category && <span>{mat.category}</span>}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] text-slate-500">Fáze:</span>
+                            {phases.filter(p => matPhases.includes(p.id)).map(phase => (
+                              <span key={phase.id} className="inline-flex items-center rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+                                {phase.code}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <div className="text-xs text-slate-500 italic">Žádný materiál</div>
+              )}
+              <button 
+                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                onClick={() => setActiveTab("material")}
+              >
+                Upravit materiál →
+              </button>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Požadavky */}
@@ -2470,7 +2465,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
+                      <th className="px-2 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <span>Použitelnost</span>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
+                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
+                          >
+                            ?
+                          </button>
+                        </div>
+                      </th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
@@ -3069,7 +3075,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 <th className="px-2 py-2">Jednotka</th>
                                 <th className="px-2 py-2">Poznámka</th>
                                 <th className="px-2 py-2">Fáze</th>
-                                <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
+                                <th className="px-2 py-2 text-center">
+                                  <div className="flex items-center justify-center gap-1">
+                                    <span>Použitelnost</span>
+                                    <button
+                                      type="button"
+                                      className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
+                                      title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
+                                    >
+                                      ?
+                                    </button>
+                                  </div>
+                                </th>
                                 <th className="px-2 py-2 text-right">Akce</th>
                               </tr>
                             </thead>
@@ -3868,7 +3885,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Vztah</th>
                       <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
+                      <th className="px-2 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <span>Použitelnost</span>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
+                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
+                          >
+                            ?
+                          </button>
+                        </div>
+                      </th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
@@ -4060,7 +4088,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Omezení</th>
                       <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
+                      <th className="px-2 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <span>Použitelnost</span>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
+                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
+                          >
+                            ?
+                          </button>
+                        </div>
+                      </th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
@@ -4755,7 +4794,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">URI</th>
                       <th className="px-2 py-2">Popis</th>
                       <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, klasifikace bude v části Použitelnost (applicability) místo Požadavky">Použitelnost</th>
+                      <th className="px-2 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <span>Použitelnost</span>
+                          <button
+                            type="button"
+                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
+                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
+                          >
+                            ?
+                          </button>
+                        </div>
+                      </th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
