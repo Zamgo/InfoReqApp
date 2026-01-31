@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { collectLeaves, filterTree } from "../../classification/parser";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
-import type { ClassificationSystemEntry, CodeList, Phase } from "../../project/types";
+import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject } from "../../project/types";
 import { PhaseManager } from "./PhaseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
 
-type ViewMode = "classification" | "ifc";
+/** Pohled v hierarchii = jedno „dělení“ primárního namapovaného systému */
+type HierarchyViewMode = "classification" | "ifc" | "predefinedType" | `mapped:${string}`;
 
 /**
  * Collect all unique IFC entities from tree
@@ -37,30 +38,7 @@ const getMaxLevel = (nodes: ClassificationNode[]): number => {
 };
 
 /**
- * Filter tree by IFC entity type
- */
-const filterByIfcEntity = (nodes: ClassificationNode[], entity: string): ClassificationNode[] => {
-  const filter = (node: ClassificationNode): ClassificationNode | null => {
-    // If this node matches, include it with filtered children
-    if (node.ifcEntity === entity) {
-      return { ...node, children: [] };
-    }
-    // Otherwise check children
-    const filteredChildren = node.children
-      .map(filter)
-      .filter((n): n is ClassificationNode => n !== null);
-    
-    if (filteredChildren.length > 0) {
-      return { ...node, children: filteredChildren };
-    }
-    return null;
-  };
-  
-  return nodes.map(filter).filter((n): n is ClassificationNode => n !== null);
-};
-
-/**
- * Build a tree grouped by IFC entity types
+ * Build a tree grouped by IFC entity types (jeden pohled – dělení dle IFC Entity)
  */
 const buildIfcTree = (nodes: ClassificationNode[]): ClassificationNode[] => {
   const leaves = collectLeaves(nodes);
@@ -92,8 +70,95 @@ const buildIfcTree = (nodes: ClassificationNode[]): ClassificationNode[] => {
   }));
 };
 
+/**
+ * Build a tree grouped by IFC predefined types (jeden pohled – dělení dle PredefinedType)
+ */
+const buildPredefinedTypeTree = (nodes: ClassificationNode[]): ClassificationNode[] => {
+  const leaves = collectLeaves(nodes);
+  const byType: Record<string, ClassificationNode[]> = {};
+  leaves.forEach((leaf) => {
+    const key = leaf.predefinedType || "Bez PredefinedType";
+    (byType[key] ??= []).push(leaf);
+  });
+  const sortedKeys = Object.keys(byType).sort((a, b) => {
+    if (a === "Bez PredefinedType") return 1;
+    if (b === "Bez PredefinedType") return -1;
+    return a.localeCompare(b);
+  });
+  return sortedKeys.map((key) => ({
+    code: key,
+    description: key,
+    level: 1,
+    children: byType[key]
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map((item) => ({ ...item, level: 2, children: [] })),
+  }));
+};
+
+const UNASSIGNED_LABEL = "nepřiřazeno";
+
+/**
+ * Build a tree grouped by a mapped system's values from classification nodes (node.mappedValues)
+ */
+const buildMappedSystemTree = (
+  nodes: ClassificationNode[],
+  systemEntryId: string
+): ClassificationNode[] => {
+  const leaves = collectLeaves(nodes);
+  const byValue: Record<string, ClassificationNode[]> = {};
+  leaves.forEach((leaf) => {
+    const key = leaf.mappedValues?.[systemEntryId] ?? "—";
+    (byValue[key] ??= []).push(leaf);
+  });
+  const sortedKeys = Object.keys(byValue).sort((a, b) => {
+    if (a === "—") return 1;
+    if (b === "—") return -1;
+    return a.localeCompare(b);
+  });
+  return sortedKeys.map((key) => ({
+    code: key,
+    description: key,
+    level: 1,
+    children: byValue[key]
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map((item) => ({ ...item, level: 2, children: [] })),
+  }));
+};
+
+/**
+ * Build a tree grouped by value per leaf (object assignment nebo node.mappedValues).
+ * getValue(leaf) vrací hodnotu pro daný list; prázdné → "nepřiřazeno".
+ */
+const buildMappedSystemTreeByValue = (
+  nodes: ClassificationNode[],
+  getValue: (leaf: ClassificationNode) => string
+): ClassificationNode[] => {
+  const leaves = collectLeaves(nodes);
+  const byValue: Record<string, ClassificationNode[]> = {};
+  leaves.forEach((leaf) => {
+    const raw = getValue(leaf);
+    const key = raw && raw.trim() !== "" ? raw.trim() : UNASSIGNED_LABEL;
+    (byValue[key] ??= []).push(leaf);
+  });
+  const sortedKeys = Object.keys(byValue).sort((a, b) => {
+    if (a === UNASSIGNED_LABEL) return 1;
+    if (b === UNASSIGNED_LABEL) return -1;
+    return a.localeCompare(b);
+  });
+  return sortedKeys.map((key) => ({
+    code: key,
+    description: key,
+    level: 1,
+    children: byValue[key]
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map((item) => ({ ...item, level: 2, children: [] })),
+  }));
+};
+
 interface Props {
   classification: ClassificationData | null;
+  /** Objekty projektu (code -> object) – pro pohled „třídění autorských nástrojů“ seskupení dle přiřazených hodnot */
+  objects?: Record<string, ProjectObject>;
   selectedCode?: string;
   onSelectLeaf: (node: ClassificationNode) => void;
   onUploadFile: (file: File) => Promise<void>;
@@ -190,6 +255,7 @@ const TreeItem: React.FC<{
 
 export const ClassificationPanel: React.FC<Props> = ({
   classification,
+  objects = {},
   selectedCode,
   onSelectLeaf,
   onUploadFile,
@@ -210,41 +276,97 @@ export const ClassificationPanel: React.FC<Props> = ({
 }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists" | "classificationsystems">("hierarchy");
-  const [viewMode, setViewMode] = useState<ViewMode>("classification");
-  const [ifcEntityFilter, setIfcEntityFilter] = useState<string>(""); // filter by IFC entity
+  const [viewMode, setViewMode] = useState<HierarchyViewMode>("classification");
   const [expandLevel, setExpandLevel] = useState<number | null>(null);
   const [expandTrigger, setExpandTrigger] = useState(0);
 
-  // Get the primary classification system if available
+  // Primární namapovaná klasifikace – z ní vycházejí pohledy (dělení)
   const primarySystem = useMemo(() => {
     return classificationSystemEntries.find((s) => s.isPrimary);
   }, [classificationSystemEntries]);
 
-  // Collect available IFC entities for filtering
-  const availableIfcEntities = useMemo(() => {
-    if (!classification) return [];
-    return collectIfcEntities(classification.nodes);
-  }, [classification]);
+  // Seznam pohledů = dělení primárního namapovaného systému (hlavní klasifikace, IFC Entity, PredefinedType, namapované systémy)
+  const hierarchyViewOptions = useMemo((): { value: HierarchyViewMode; label: string }[] => {
+    const fallback = [
+      { value: "classification" as HierarchyViewMode, label: primarySystem?.name ?? "Klasifikace" },
+    ];
+    if (!classification) return fallback;
+    const options: { value: HierarchyViewMode; label: string }[] = [];
 
-  // Build the base nodes depending on view mode
+    const nodes = classification.nodes;
+    const hasIfcEntities = collectIfcEntities(nodes).length > 0;
+    const hasPredefinedTypes = (() => {
+      const set = new Set<string>();
+      const traverse = (node: ClassificationNode) => {
+        if (node.predefinedType) set.add(node.predefinedType);
+        node.children.forEach(traverse);
+      };
+      nodes.forEach(traverse);
+      return set.size > 0;
+    })();
+
+    // 1. Hlavní klasifikace (vždy)
+    options.push({
+      value: "classification",
+      label: primarySystem?.name ?? "Klasifikace",
+    });
+    // 2. IFC Entity (pokud má data)
+    if (hasIfcEntities) {
+      options.push({ value: "ifc", label: "IFC Entity" });
+    }
+    // 3. IFC PredefinedType (pokud má data)
+    if (hasPredefinedTypes) {
+      options.push({ value: "predefinedType", label: "IFC PredefinedType" });
+    }
+    // 4. Každý namapovaný systém (třídění nástrojů, Kategorie RVT, …)
+    (primarySystem?.mappedSystemIds ?? []).forEach((systemEntryId) => {
+      const entry = classificationSystemEntries.find((e) => e.id === systemEntryId);
+      options.push({
+        value: `mapped:${systemEntryId}` as HierarchyViewMode,
+        label: entry?.name ?? systemEntryId,
+      });
+    });
+
+    return options;
+  }, [classification, primarySystem, classificationSystemEntries]);
+
+  // Strom podle vybraného pohledu (jedno dělení = jeden strom)
   const baseNodes = useMemo(() => {
     if (!classification) return [];
-    if (viewMode === "ifc") {
-      return buildIfcTree(classification.nodes);
+    const nodes = classification.nodes;
+    if (viewMode === "classification") return nodes;
+    if (viewMode === "ifc") return buildIfcTree(nodes);
+    if (viewMode === "predefinedType") return buildPredefinedTypeTree(nodes);
+    if (viewMode.startsWith("mapped:")) {
+      const systemEntryId = viewMode.slice(7);
+      // Když máme objekty, seskupujeme dle přiřazené hodnoty na objektu (authoringClassifications), jinak dle node.mappedValues
+      if (Object.keys(objects).length > 0) {
+        const getValue = (leaf: ClassificationNode): string => {
+          const fromObject = objects[leaf.code]?.authoringClassifications?.find(
+            (c) => c.systemEntryId === systemEntryId
+          )?.code;
+          if (fromObject != null && fromObject.trim() !== "") return fromObject.trim();
+          return leaf.mappedValues?.[systemEntryId] ?? "";
+        };
+        return buildMappedSystemTreeByValue(nodes, getValue);
+      }
+      return buildMappedSystemTree(nodes, systemEntryId);
     }
-    return classification.nodes;
-  }, [classification, viewMode]);
-
-  // Apply IFC entity filter
-  const ifcFilteredNodes = useMemo(() => {
-    if (!baseNodes.length || !ifcEntityFilter || viewMode === "ifc") return baseNodes;
-    return filterByIfcEntity(baseNodes, ifcEntityFilter);
-  }, [baseNodes, ifcEntityFilter, viewMode]);
+    return nodes;
+  }, [classification, viewMode, objects]);
 
   const filteredNodes = useMemo(() => {
-    if (!ifcFilteredNodes.length) return [];
-    return filterTree(ifcFilteredNodes, search);
-  }, [ifcFilteredNodes, search]);
+    if (!baseNodes.length) return [];
+    return filterTree(baseNodes, search);
+  }, [baseNodes, search]);
+
+  // Pokud aktuální pohled už není v seznamu (např. změna primárního systému), přepni na hlavní klasifikaci
+  useEffect(() => {
+    const valid = hierarchyViewOptions.some((opt) => opt.value === viewMode);
+    if (hierarchyViewOptions.length > 0 && !valid) {
+      setViewMode("classification");
+    }
+  }, [hierarchyViewOptions, viewMode]);
 
   // Get max level from the currently displayed tree (after filtering)
   const maxLevel = useMemo(() => {
@@ -265,7 +387,7 @@ export const ClassificationPanel: React.FC<Props> = ({
           { key: "hierarchy", label: "Hierarchie" },
           { key: "phases", label: "Fáze" },
           { key: "codelists", label: "Číselníky" },
-          { key: "classificationsystems", label: "Klasifikační systémy" },
+          { key: "classificationsystems", label: "Klasifikační systémy a mapování" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -281,21 +403,24 @@ export const ClassificationPanel: React.FC<Props> = ({
 
       {activeTab === "hierarchy" && (
         <div className="flex h-full flex-col gap-2 overflow-hidden p-3">
-          {/* View mode selector and search */}
+          {/* Pohled = dělení primárního namapovaného systému (hlavní klasifikace, IFC Entity, PredefinedType, namapované systémy) */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-slate-500">Pohled:</span>
+            <div className="flex items-center gap-2">
+              <select
+                value={viewMode}
+                onChange={(e) => setViewMode(e.target.value as HierarchyViewMode)}
+                className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+              >
+                {hierarchyViewOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="flex items-center gap-2">
-            <select
-              value={viewMode}
-              onChange={(e) => {
-                setViewMode(e.target.value as ViewMode);
-                setIfcEntityFilter(""); // reset filter when switching view
-              }}
-              className="rounded border border-slate-300 px-2 py-1 text-sm"
-            >
-              <option value="classification">
-                {primarySystem?.name || "Klasifikace"}
-              </option>
-              <option value="ifc">IFC Entity</option>
-            </select>
             <input
               type="text"
               placeholder="Hledat kód nebo popis"
@@ -304,34 +429,6 @@ export const ClassificationPanel: React.FC<Props> = ({
               className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
             />
           </div>
-
-          {/* IFC Entity filter - only in classification view */}
-          {viewMode === "classification" && availableIfcEntities.length > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">IFC filtr:</span>
-              <select
-                value={ifcEntityFilter}
-                onChange={(e) => setIfcEntityFilter(e.target.value)}
-                className="flex-1 rounded border border-slate-300 px-2 py-1 text-xs"
-              >
-                <option value="">Všechny entity ({availableIfcEntities.length})</option>
-                {availableIfcEntities.map((entity) => (
-                  <option key={entity} value={entity}>
-                    {entity}
-                  </option>
-                ))}
-              </select>
-              {ifcEntityFilter && (
-                <button
-                  onClick={() => setIfcEntityFilter("")}
-                  className="rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                  title="Zrušit filtr"
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Expand/Collapse controls */}
           {classification && maxLevel > 1 && (
@@ -355,24 +452,19 @@ export const ClassificationPanel: React.FC<Props> = ({
           )}
 
           {classification && (
-            <div className="flex items-center gap-2 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span className="text-[11px] text-slate-500">
                 Zdroj: {classification.sourceName}
               </span>
-              {ifcEntityFilter && (
-                <span className="rounded bg-indigo-100 px-2 py-0.5 text-[10px] text-indigo-700">
-                  {ifcEntityFilter}
-                </span>
-              )}
               <span className="ml-auto text-[11px] text-slate-400">
-                {viewMode === "classification" ? "Pohled: Klasifikace" : "Pohled: IFC Entity"}
+                Pohled: {hierarchyViewOptions.find((o) => o.value === viewMode)?.label ?? viewMode}
               </span>
             </div>
           )}
           <div className="flex-1 overflow-auto rounded border border-slate-200 bg-slate-50 p-2">
             {!classification && (
               <div className="text-sm text-slate-500">
-                Není načtena klasifikace. Přejděte do záložky "Klasifikační systémy".
+                Není načtena klasifikace. Přejděte do záložky "Klasifikační systémy a mapování".
               </div>
             )}
             {classification &&
@@ -390,12 +482,12 @@ export const ClassificationPanel: React.FC<Props> = ({
               ) : (
                 <div className="text-sm text-slate-500">
                   Žádný výsledek
-                  {ifcEntityFilter && (
+                  {search && (
                     <button
-                      onClick={() => setIfcEntityFilter("")}
+                      onClick={() => setSearch("")}
                       className="ml-2 text-indigo-600 hover:underline"
                     >
-                      Zrušit IFC filtr
+                      Zrušit hledání
                     </button>
                   )}
                 </div>

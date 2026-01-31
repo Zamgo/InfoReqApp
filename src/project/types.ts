@@ -126,6 +126,12 @@ export interface ObjectRequirements {
   materials: MaterialRequirement[];
 }
 
+/** Authoring tool classification (e.g. Revit category) – not required for IFC/IDS */
+export interface AuthoringClassification {
+  systemEntryId: string;
+  code: string;
+}
+
 export interface ProjectObject {
   code: string;
   description: string;
@@ -137,6 +143,8 @@ export interface ProjectObject {
   predefinedTypePhases?: string[];
   /** @deprecated Use ifcEntityPhases and predefinedTypePhases instead. */
   entityPhases?: string[];
+  /** Třídění autorských nástrojů – klasifikace dle nástroje (např. Kategorie RVT), nevyžadované v IFC/IDS */
+  authoringClassifications?: AuthoringClassification[];
   requirements: ObjectRequirements;
 }
 
@@ -169,6 +177,12 @@ export interface ClassificationSystemEntry {
   hash?: string;
   /** Whether this is the primary classification for object structure */
   isPrimary?: boolean;
+  /** IDs of classification systems mapped onto this one (extra columns: code from that system per row) */
+  mappedSystemIds?: string[];
+  /** IDs of mapped systems that are "třídění autorských nástrojů" (zobrazí se v kartě Identifikační údaje). Podmnožina mappedSystemIds. */
+  authoringToolSystemIds?: string[];
+  /** True if this is a "pure" list (only code, description, level) – e.g. imported from RVT TXT */
+  isPure?: boolean;
 }
 
 export interface Project {

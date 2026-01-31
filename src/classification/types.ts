@@ -5,6 +5,8 @@ export interface ClassificationNode {
   category?: string;
   ifcEntity?: string;
   predefinedType?: string;
+  /** Mapped values from other classification systems (systemEntryId -> code) */
+  mappedValues?: Record<string, string>;
   children: ClassificationNode[];
 }
 

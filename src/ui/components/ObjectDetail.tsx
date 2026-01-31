@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClassificationNode } from "../../classification/types";
+import { collectLeaves } from "../../classification/parser";
+import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
 import type { ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
@@ -669,15 +671,15 @@ const generateIdsXml = (
             <ids:simpleValue>${escapeXml(entityName)}</ids:simpleValue>
           </ids:name>`;
   
-  // IfcEntity and PredefinedType phases are independent
-  const ifcEntityPhases = obj.ifcEntityPhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
+  // PredefinedType phases
   const predefinedTypePhases = obj.predefinedTypePhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
-  const entityAppliesToPhase = !phaseId ? (ifcEntityPhases.length > 0) : (ifcEntityPhases.length === 0 || ifcEntityPhases.includes(phaseId));
-  const predefinedTypeApplies = filteredObj.predefinedType.mode !== "NONE" && !!filteredObj.predefinedType.value && (!phaseId ? (predefinedTypePhases.length > 0) : (predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId)));
+  const ptVal = (filteredObj.predefinedType.value ?? "").trim();
+  const predefinedTypeApplies = filteredObj.predefinedType.mode !== "NONE" && !!ptVal && ptVal !== EMPTY_PLACEHOLDER && (!phaseId ? (predefinedTypePhases.length > 0) : (predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId)));
   if (predefinedTypeApplies) {
+    const ptValue = ptVal;
     xml += `
           <ids:predefinedType>
-            <ids:simpleValue>${escapeXml(filteredObj.predefinedType.value.toUpperCase())}</ids:simpleValue>
+            <ids:simpleValue>${escapeXml(ptValue.toUpperCase())}</ids:simpleValue>
           </ids:predefinedType>`;
   }
   
@@ -2044,7 +2046,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       </div>
 
       {/* Identifikační údaje – údaje specifikující objekt (lze odvodit z klasifikačního systému / hierarchie) */}
-      <div className="border-b border-slate-200 bg-white px-4 py-3">
+      <div className="min-w-0 border-b border-slate-200 bg-white px-4 py-3">
         <div className="mb-3 flex items-center gap-2">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Identifikační údaje</div>
           <div className="h-px flex-1 bg-slate-200"></div>
@@ -2057,11 +2059,19 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               className="flex-shrink-0 rounded border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
               onClick={() => {
                 const phaseIds = phases.map((p) => p.id);
+                const primaryEntry = classificationSystemEntries.find((e) => e.isPrimary);
+                const authoringIds = (primaryEntry?.authoringToolSystemIds?.length
+                  ? primaryEntry.authoringToolSystemIds
+                  : primaryEntry?.mappedSystemIds) ?? [];
+                const authoringFromNode = authoringIds
+                  .map((systemEntryId) => ({ systemEntryId, code: node.mappedValues?.[systemEntryId] ?? "" }))
+                  .filter((ac) => ac.code);
                 updateObject({
                   ifcEntity: node.ifcEntity ?? "",
                   predefinedType: node.predefinedType ? { mode: "ENUM", value: node.predefinedType } : { mode: "NONE" },
                   ifcEntityPhases: phaseIds,
                   predefinedTypePhases: phaseIds,
+                  authoringClassifications: authoringFromNode.length > 0 ? authoringFromNode : undefined,
                 });
               }}
             >
@@ -2069,8 +2079,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             </button>
           </div>
         )}
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded border border-slate-200 bg-slate-50 p-3">
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 flex items-center gap-1.5">
               <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                 Entita
@@ -2128,7 +2138,69 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             </div>
           </div>
 
-          <div className="rounded border border-slate-200 bg-slate-50 p-3">
+          {(() => {
+            const primaryEntry = classificationSystemEntries.find((e) => e.isPrimary);
+            const authoringSystemIds = (primaryEntry?.authoringToolSystemIds?.length
+              ? primaryEntry.authoringToolSystemIds
+              : primaryEntry?.mappedSystemIds) ?? [];
+            const authoringEntries = authoringSystemIds
+              .map((id) => classificationSystemEntries.find((e) => e.id === id))
+              .filter((e): e is ClassificationSystemEntry => !!e);
+            const getAuthoringCode = (systemEntryId: string) => {
+              const fromObject = (object.authoringClassifications ?? []).find((a) => a.systemEntryId === systemEntryId)?.code ?? "";
+              if (fromObject) return fromObject;
+              return node.mappedValues?.[systemEntryId] ?? "";
+            };
+            const setAuthoringCode = (systemEntryId: string, code: string) => {
+              const current = object.authoringClassifications ?? [];
+              const rest = current.filter((a) => a.systemEntryId !== systemEntryId);
+              const next = code ? [...rest, { systemEntryId, code }] : rest;
+              updateObject({ authoringClassifications: next.length ? next : undefined });
+            };
+            return (
+              <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                  Třídění autorských nástrojů
+                </div>
+                <p className="mb-2 text-xs text-slate-500">
+                  Klasifikace dle autorského nástroje (např. Kategorie RVT). Nepoužívá se v IFC/IDS.
+                </p>
+                {authoringEntries.length > 0 ? (
+                  <div className="space-y-2">
+                    {authoringEntries.map((entry) => {
+                      const codes = entry.nodes ? collectLeaves(entry.nodes).map((n) => n.code) : [];
+                      const value = getAuthoringCode(entry.id);
+                      return (
+                        <div key={entry.id} className="flex flex-wrap items-center gap-2">
+                          <label className="min-w-[100px] text-xs font-medium text-slate-600">{entry.name}</label>
+                          <select
+                            className="min-w-[140px] max-w-[220px] rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={value}
+                            onChange={(e) => setAuthoringCode(entry.id, e.target.value)}
+                          >
+                            <option value="">— Nevybráno</option>
+                            {codes.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs italic text-slate-500">
+                    V záložce „Klasifikační systémy a mapování“ připojte k primárnímu systému další systém (např. Kategorie RVT) tlačítkem Mapovat.
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                 Klasifikace
@@ -2169,13 +2241,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               Upravit klasifikace →
             </button>
           </div>
-        </div>
 
-        {/* Grid pro požadavky v použitelnosti */}
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          {/* Karty v použitelnosti – stejná mřížka jako Klasifikace */}
           {/* Atributy v použitelnosti – kompaktní zobrazení */}
           {object.requirements.attributes.some((a) => a.isApplicability && a.attribute !== "PredefinedType") && (
-            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+            <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                   Atributy
@@ -2228,7 +2298,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           {/* Vlastnosti v použitelnosti – kompaktní zobrazení */}
           {object.requirements.properties.some((p) => p.isApplicability && (p.psetName || p.propertyName)) && (
-            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+            <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                   Vlastnosti
@@ -2280,7 +2350,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           {/* Součásti v použitelnosti – kompaktní zobrazení */}
           {object.requirements.relations.some((r) => r.isApplicability) && (
-            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+            <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                   Součásti
@@ -2332,7 +2402,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           {/* Materiál v použitelnosti – kompaktní zobrazení */}
           {object.requirements.materials.some((m) => m.isApplicability) && (
-            <div className="rounded border border-slate-200 bg-slate-50 p-3">
+            <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                   Materiál

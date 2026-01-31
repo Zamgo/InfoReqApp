@@ -1,11 +1,16 @@
 import React, { useState, useMemo } from "react";
 import type { ClassificationNode } from "../../classification/types";
 import type { ClassificationSystemEntry } from "../../project/types";
+import { collectLeaves } from "../../classification/parser";
+import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
 
 interface Props {
   system: ClassificationSystemEntry;
+  allSystems?: ClassificationSystemEntry[];
   onSave: (system: ClassificationSystemEntry) => void;
   onClose: () => void;
+  /** Skrýt tlačítko Mapovat – mapování probíhá jen v záložce Klasifikační systémy a mapování */
+  hideMapButton?: boolean;
 }
 
 interface FlatNode {
@@ -14,17 +19,20 @@ interface FlatNode {
   level: number;
   ifcEntity: string;
   predefinedType: string;
+  mappedValues?: Record<string, string>;
 }
 
 const flattenNodes = (nodes: ClassificationNode[]): FlatNode[] => {
   const result: FlatNode[] = [];
   const traverse = (node: ClassificationNode) => {
+    const clean = (v: string | undefined) => (v === EMPTY_PLACEHOLDER ? "" : (v ?? ""));
     result.push({
       code: node.code,
       description: node.description,
       level: node.level,
-      ifcEntity: node.ifcEntity || "",
-      predefinedType: node.predefinedType || "",
+      ifcEntity: clean(node.ifcEntity),
+      predefinedType: clean(node.predefinedType),
+      mappedValues: node.mappedValues ? Object.fromEntries(Object.entries(node.mappedValues).map(([k, v]) => [k, clean(v)])) : undefined,
     });
     node.children.forEach(traverse);
   };
@@ -43,6 +51,7 @@ const buildTreeFromFlat = (flatNodes: FlatNode[]): ClassificationNode[] => {
       level: flat.level,
       ifcEntity: flat.ifcEntity || undefined,
       predefinedType: flat.predefinedType || undefined,
+      mappedValues: flat.mappedValues && Object.keys(flat.mappedValues).length > 0 ? { ...flat.mappedValues } : undefined,
       children: [],
     };
 
@@ -62,11 +71,29 @@ const buildTreeFromFlat = (flatNodes: FlatNode[]): ClassificationNode[] => {
   return roots;
 };
 
-export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose }) => {
+const getLeafCodes = (entry: ClassificationSystemEntry): string[] => {
+  const leaves = entry.nodes ? collectLeaves(entry.nodes) : [];
+  return leaves.map((n) => n.code);
+};
+
+export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [], onSave, onClose, hideMapButton }) => {
   const initialFlat = useMemo(() => flattenNodes(system.nodes || []), [system.nodes]);
   const [rows, setRows] = useState<FlatNode[]>(initialFlat);
   const [search, setSearch] = useState("");
-  
+  const [mappedSystemIds, setMappedSystemIds] = useState<string[]>(system.mappedSystemIds ?? []);
+  const [authoringToolSystemIds, setAuthoringToolSystemIds] = useState<string[]>(system.authoringToolSystemIds ?? []);
+  const [showMapDropdown, setShowMapDropdown] = useState(false);
+
+  const isPure = system.isPure === true;
+  const availableToMap = useMemo(
+    () => allSystems.filter((s) => s.id !== system.id && !mappedSystemIds.includes(s.id)),
+    [allSystems, system.id, mappedSystemIds],
+  );
+  const mappedEntries = useMemo(
+    () => mappedSystemIds.map((id) => allSystems.find((s) => s.id === id)).filter(Boolean) as ClassificationSystemEntry[],
+    [mappedSystemIds, allSystems],
+  );
+
   // Metadata state
   const [systemName, setSystemName] = useState(system.name || "");
   const [systemUri, setSystemUri] = useState(system.uri || "");
@@ -97,7 +124,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
     const actualIndex = search.trim()
       ? rows.findIndex((r) => r.code === filteredRows[index].code)
       : index;
-    
+
     setRows((prev) => {
       const next = [...prev];
       next[actualIndex] = { ...next[actualIndex], [field]: value };
@@ -105,18 +132,58 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
     });
   };
 
+  const handleMappedChange = (index: number, systemId: string, value: string) => {
+    const actualIndex = search.trim()
+      ? rows.findIndex((r) => r.code === filteredRows[index].code)
+      : index;
+    setRows((prev) => {
+      const next = [...prev];
+      const row = next[actualIndex];
+      next[actualIndex] = {
+        ...row,
+        mappedValues: { ...(row.mappedValues ?? {}), [systemId]: value },
+      };
+      return next;
+    });
+  };
+
+  const handleAddMappedSystem = (systemId: string) => {
+    setMappedSystemIds((prev) => [...prev, systemId]);
+    setRows((prev) => prev.map((r) => ({
+      ...r,
+      mappedValues: { ...(r.mappedValues ?? {}), [systemId]: "" },
+    })));
+    setShowMapDropdown(false);
+  };
+
+  const handleRemoveMappedSystem = (systemId: string) => {
+    setMappedSystemIds((prev) => prev.filter((id) => id !== systemId));
+    setAuthoringToolSystemIds((prev) => prev.filter((id) => id !== systemId));
+    setRows((prev) => prev.map((r) => {
+      const { [systemId]: _, ...rest } = r.mappedValues ?? {};
+      return { ...r, mappedValues: Object.keys(rest).length ? rest : undefined };
+    }));
+  };
+
+  const toggleAuthoringTool = (systemId: string) => {
+    setAuthoringToolSystemIds((prev) =>
+      prev.includes(systemId) ? prev.filter((id) => id !== systemId) : [...prev, systemId]
+    );
+  };
+
   const handleAddRow = () => {
     const newLevel = rows.length > 0 ? rows[rows.length - 1].level : 1;
-    setRows((prev) => [
-      ...prev,
-      {
-        code: "",
-        description: "",
-        level: newLevel,
-        ifcEntity: "",
-        predefinedType: "",
-      },
-    ]);
+    const base: FlatNode = {
+      code: "",
+      description: "",
+      level: newLevel,
+      ifcEntity: "",
+      predefinedType: "",
+    };
+    if (mappedSystemIds.length > 0) {
+      base.mappedValues = Object.fromEntries(mappedSystemIds.map((id) => [id, ""]));
+    }
+    setRows((prev) => [...prev, base]);
   };
 
   const handleDeleteRow = (index: number) => {
@@ -135,6 +202,9 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
       uri: systemUri.trim() || undefined,
       description: systemDescription.trim() || undefined,
       nodes,
+      mappedSystemIds: mappedSystemIds.length > 0 ? mappedSystemIds : undefined,
+      authoringToolSystemIds: authoringToolSystemIds.length > 0 ? authoringToolSystemIds : undefined,
+      isPure: system.isPure,
     });
   };
 
@@ -245,7 +315,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
         </div>
 
         {/* Toolbar */}
-        <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2">
           <input
             type="text"
             placeholder="Hledat..."
@@ -259,12 +329,75 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
           >
             + Přidat řádek
           </button>
+          {!hideMapButton && allSystems.length > 0 && (
+            <div className="relative ml-2">
+              <button
+                type="button"
+                className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+                onClick={() => setShowMapDropdown((v) => !v)}
+                disabled={availableToMap.length === 0}
+                title="Mapování probíhá v záložce Klasifikační systémy a mapování tlačítkem Mapovat"
+              >
+                Mapovat
+              </button>
+              {showMapDropdown && availableToMap.length > 0 && (
+                <>
+                  <div className="absolute left-0 top-full z-10 mt-1 min-w-[200px] rounded border border-slate-200 bg-white py-1 shadow-lg">
+                    {availableToMap.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className="w-full px-3 py-1.5 text-left text-sm hover:bg-slate-100"
+                        onClick={() => handleAddMappedSystem(s.id)}
+                      >
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div
+                    className="fixed inset-0 z-0"
+                    aria-hidden
+                    onClick={() => setShowMapDropdown(false)}
+                  />
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Table */}
         <div className="flex-1 overflow-auto p-4">
           <table className="min-w-full border-collapse text-sm">
             <thead className="sticky top-0 bg-slate-50">
+              {/* Nultý řádek – oddělení klasifikačního systému a namapovaných systémů */}
+              <tr className="border-b border-slate-300">
+                <th
+                  colSpan={3}
+                  className="border border-slate-200 bg-slate-200/80 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-slate-700"
+                >
+                  Klasifikační systém
+                </th>
+                {!isPure && (
+                  <th
+                    colSpan={2}
+                    className="border border-slate-200 bg-indigo-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-indigo-800"
+                  >
+                    IFC mapování
+                  </th>
+                )}
+                {mappedEntries.length > 0 && (
+                  <th
+                    colSpan={mappedEntries.length}
+                    className="border border-slate-200 bg-indigo-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-indigo-800"
+                  >
+                    Namapované systémy
+                  </th>
+                )}
+                <th className="w-28 border border-slate-200 bg-slate-200/80 px-2 py-1.5 text-center text-xs font-bold uppercase tracking-wide text-slate-700">
+                  Akce
+                </th>
+              </tr>
+              {/* Řádek se názvy sloupců */}
               <tr>
                 <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
                   Kód
@@ -275,12 +408,45 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
                 <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 w-20">
                   Úroveň
                 </th>
-                <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                  IFC Entita
-                </th>
-                <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                  IFC PredefinedType
-                </th>
+                {!isPure && (
+                  <>
+                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
+                      IFC Entita
+                    </th>
+                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
+                      IFC PredefinedType
+                    </th>
+                  </>
+                )}
+                {mappedEntries.map((entry) => {
+                  const isAuthoringTool = authoringToolSystemIds.includes(entry.id);
+                  return (
+                    <th key={entry.id} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span>{entry.name}</span>
+                          <button
+                            type="button"
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                            onClick={() => handleRemoveMappedSystem(entry.id)}
+                            title="Odebrat mapování"
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-normal normal-case text-slate-500">
+                          <input
+                            type="checkbox"
+                            checked={isAuthoringTool}
+                            onChange={() => toggleAuthoringTool(entry.id)}
+                            className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span>Třídění nástrojů</span>
+                        </label>
+                      </div>
+                    </th>
+                  );
+                })}
                 <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 w-28">
                   Akce
                 </th>
@@ -350,32 +516,56 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
                         </button>
                       </div>
                     </td>
-                    <td className="border border-slate-200 px-1 py-1">
-                      {row.level <= 2 ? (
-                        <span className="block px-2 py-0.5 text-center text-slate-300">—</span>
-                      ) : (
-                        <input
-                          type="text"
-                          value={row.ifcEntity}
-                          onChange={(e) => handleChange(index, "ifcEntity", e.target.value)}
-                          className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
-                          placeholder="např. IfcWall"
-                        />
-                      )}
-                    </td>
-                    <td className="border border-slate-200 px-1 py-1">
-                      {row.level <= 2 ? (
-                        <span className="block px-2 py-0.5 text-center text-slate-300">—</span>
-                      ) : (
-                        <input
-                          type="text"
-                          value={row.predefinedType}
-                          onChange={(e) => handleChange(index, "predefinedType", e.target.value)}
-                          className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
-                          placeholder="např. SOLIDWALL"
-                        />
-                      )}
-                    </td>
+                    {!isPure && (
+                      <>
+                        <td className="border border-slate-200 px-1 py-1">
+                          {row.level <= 2 ? (
+                            <span className="block px-2 py-0.5 text-center text-slate-300">—</span>
+                          ) : (
+                            <input
+                              type="text"
+                              value={row.ifcEntity}
+                              onChange={(e) => handleChange(index, "ifcEntity", e.target.value)}
+                              className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                              placeholder="např. IfcWall"
+                            />
+                          )}
+                        </td>
+                        <td className="border border-slate-200 px-1 py-1">
+                          {row.level <= 2 ? (
+                            <span className="block px-2 py-0.5 text-center text-slate-300">—</span>
+                          ) : (
+                            <input
+                              type="text"
+                              value={row.predefinedType}
+                              onChange={(e) => handleChange(index, "predefinedType", e.target.value)}
+                              className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                              placeholder="např. SOLIDWALL"
+                            />
+                          )}
+                        </td>
+                      </>
+                    )}
+                    {mappedEntries.map((entry) => {
+                      const codes = getLeafCodes(entry);
+                      const value = row.mappedValues?.[entry.id] ?? "";
+                      return (
+                        <td key={entry.id} className="border border-slate-200 px-1 py-1">
+                          <select
+                            className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            value={value}
+                            onChange={(e) => handleMappedChange(index, entry.id, e.target.value)}
+                          >
+                            <option value="">—</option>
+                            {codes.map((c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      );
+                    })}
                     <td className="border border-slate-200 px-1 py-1 text-center">
                       <div className="flex items-center justify-center gap-1">
                         <button
@@ -408,7 +598,10 @@ export const ClassificationEditor: React.FC<Props> = ({ system, onSave, onClose 
               })}
               {filteredRows.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="border border-slate-200 px-4 py-8 text-center text-slate-500">
+                  <td
+                    colSpan={3 + (isPure ? 0 : 2) + mappedEntries.length + 1}
+                    className="border border-slate-200 px-4 py-8 text-center text-slate-500"
+                  >
                     {search.trim() ? "Žádné výsledky" : "Klasifikace je prázdná. Přidejte první položku."}
                   </td>
                 </tr>

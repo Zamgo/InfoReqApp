@@ -306,12 +306,22 @@ const createClassificationHierarchySheet = (
 
 /**
  * Create Sheet 6: OBJEKTY (Objects)
+ * Includes authoring classification columns (e.g. Kategorie RVT) when primary system has mapped systems.
  */
 const createObjectsSheet = (
   workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>
+  objects: Record<string, ProjectObject>,
+  classificationSystemEntries: ClassificationSystemEntry[] = []
 ) => {
   const sheet = workbook.addWorksheet("OBJEKTY");
+
+  const primaryEntry = classificationSystemEntries.find((e) => e.isPrimary);
+  const authoringSystemIds = (primaryEntry?.authoringToolSystemIds?.length
+    ? primaryEntry.authoringToolSystemIds
+    : primaryEntry?.mappedSystemIds) ?? [];
+  const authoringEntries = authoringSystemIds
+    .map((id) => classificationSystemEntries.find((e) => e.id === id))
+    .filter((e): e is ClassificationSystemEntry => !!e);
 
   const headers = [
     "code",
@@ -319,9 +329,13 @@ const createObjectsSheet = (
     "ifcEntity",
     "predefinedTypeMode",
     "predefinedTypeValue",
+    ...authoringEntries.map((e) => `authoring_${e.name}`),
   ];
   const headerRow = sheet.addRow(headers);
   styleHeaderRow(headerRow);
+
+  const getAuthoringCode = (obj: ProjectObject, systemEntryId: string) =>
+    (obj.authoringClassifications ?? []).find((a) => a.systemEntryId === systemEntryId)?.code ?? "";
 
   const objectList = Object.values(objects);
   objectList.forEach((obj, index) => {
@@ -331,11 +345,13 @@ const createObjectsSheet = (
       obj.ifcEntity,
       obj.predefinedType.mode,
       obj.predefinedType.value || "",
+      ...authoringEntries.map((e) => getAuthoringCode(obj, e.id)),
     ]);
     styleDataRow(row, index % 2 === 1);
   });
 
-  finalizeSheet(sheet, [15, 40, 20, 18, 20]);
+  const widths = [15, 40, 20, 18, 20, ...authoringEntries.map(() => 25)];
+  finalizeSheet(sheet, widths);
 };
 
 /**
@@ -663,7 +679,7 @@ export const generateExcelWorkbook = async (
     createClassificationHierarchySheet(workbook, project.classificationSystemEntries || []);
   }
   if (selection.objekty) {
-    createObjectsSheet(workbook, project.objects);
+    createObjectsSheet(workbook, project.objects, project.classificationSystemEntries ?? []);
   }
   if (selection.atributy) {
     createAttributesSheet(workbook, project.objects);

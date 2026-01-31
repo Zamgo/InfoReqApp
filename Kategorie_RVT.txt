@@ -1,0 +1,246 @@
+Kategorie RVT
+Audiovizuální zařízení
+Bloky
+Datová zařízení
+Deska objemu
+Desky
+Desky na svahu
+Dilatační spáry
+Distribuční systémy
+Dokončovací 1 [4]
+Dokončovací 2 [5]
+Dolní pás
+Drát sítě
+Dveře
+Dílčí přípoj
+Elektrická spojka
+Elektrická tělesa
+Elektrické obvody
+Elektrické vybavení
+Elektroinstalační trubky
+Hardware
+Hlavice pilířů
+Horní madla
+Horní pás
+Hrany desek
+Instalatérská zařízení
+Instalační zařizovací předměty
+Izolace
+Izolace potrubí
+Izolace trubky
+Izolace vodičů
+Izolátory vibrací
+Kabelové lávky
+Kamery
+Komunikační zařízení
+Konstrukce [1]
+Konstrukční oblasti svařovaných sítí
+Konstrukční předpjaté výztuže
+Konstrukční příhradové nosníky
+Konstrukční přípoje
+Konstrukční rámová konstrukce
+Konstrukční rámy výztuže
+Konstrukční sloupy
+Konstrukční výztuhy
+Konstrukční výztuž
+Konstrukční výztuž plochy
+Konstrukční výztuž podél trajektorie
+Konstrukční výztuž sítě
+Konstrukční výztuž – výtahy výztuže
+Konstrukční základy
+Kotvy
+Ložiska
+Lékařské vybavení
+Madla
+Mechanická zařízení
+Membrána
+Modifikátory
+Mostní kabely
+Mostovky
+Místnosti
+Napětí
+Neposuvné dveře
+Nosná konstrukce mostu
+Nábytek
+Nábytkový systém
+Obecné modely
+Objem
+Objemová zóna
+Objemy
+Oblasti elektrického zatížení
+Oblouky
+Obvodové pláště
+Ohebná potrubí
+Ohebné trubky
+Okapy
+Okna
+Okna a světlíky objemů
+Opakovaná komponenta
+Opakovač
+Opěry
+Osnovy obvodového pláště
+Osnovy pláště střechy
+Osnovy systému pláště
+Osvětlení
+Osvětlovací tělesa
+Otevíratelná okna
+Otevíratelné světlíky
+Otvor objemu
+Otvory šacht
+Panel
+Panely
+Panely obvodového pláště
+Parapet/nadpraží
+Parkování
+Pevná okna
+Pevné světlíky
+Piloty opěry
+Piloty pilířů
+Pilíře
+Plechy
+Plochy
+Podbití střechy
+Podesty
+Podhledy
+Podlahy
+Podlaží
+Podlaží objemu
+Podlaží objemů
+Podpěry
+Podzemní desky
+Podzemní podhledy
+Podzemní stěny
+Pole
+Posuvné dveře
+Potrubí
+Pozemek
+Požární ochrana
+Požární poplachová zařízení
+Profily
+Prostory
+Prvek spojky
+Průvlak
+Průvlaky
+Pylony
+Pásnice
+Přídavky stěny
+Příhradové nosníky
+Příslušenství potrubí
+Příslušenství trubek
+Přístupové desky
+Příčle
+Příčle obvodového pláště
+Příčné ztužidlo
+Příčníky
+Ramena
+Ramena kabelové lávky
+Rampy
+Revize
+Revizní obláčky
+Rezervy/prostory elektrických obvodů
+Rozdělená trajektorie
+Rozstřikovače
+Rám/Příčel
+Sady mechanických zařízení
+Schodiště
+Schodnice
+Segmenty
+Segmenty potrubí
+Silnice
+Sklo
+Skupiny
+Sloupky/Balustry
+Sloupy
+Sloupy pilířů
+Složené stěny
+Speciální vybavení
+Správa vibrací
+Spřahovací trny
+Stafáž
+Standardy elektroinstalačních trubek
+Stavby
+Stavební prvky krajiny
+Stojina
+Stojky
+Stropnice
+Stupnice/podstupnice
+Stín objemu
+Stěny
+Stěny objemů
+Stěny opěr
+Stěny pilířů
+Střecha objemu
+Střechy
+Substrát [2]
+Světla
+Světlík objemu
+Systémové zóny
+Systémy konstrukčních trámů
+Systémy potrubí
+Systémy trubek
+Telefonní přístroje
+Terénní útvar
+Tlumiče vibrací
+Trasy
+Trubky
+Truhlářské výrobky
+Tuhá připojení
+Tvarovky
+Tvarovky elektroinstalační trubky
+Tvarovky kabelové lávky
+Tvarovky potrubí
+Vaznice
+Vertikální oběh
+Vertikální ztužidlo
+Vnitřní podlaží
+Vnitřní stěna objemu
+Vnitřní stěny
+Vnitřní vazby
+Vnější stěna objemu
+Vnější stěna objemu – základová
+Vnější stěny
+Vodiče
+Vodní okruhy
+Vrstevnice
+Vrstva tepelné/vzduchové izolace [3]
+Vrstvy podlaží
+Vrstvy stěn
+Vybavení zásobování
+Vyústky vzduchotechniky
+Vzduchové povrchy
+Vzduchové systémy
+Vzpěra
+Vícepodlažní schodiště
+Výchozí výztuž
+Výkazy zatížení vzduchotechniky
+Výroba – potrubí TZB
+Výroba – trubky TZB
+Výroba – závěsy TZB
+Výroba – žlaby TZB
+Výsadba
+Výstelka
+Výstelka potrubí
+Výztuhy potrubí TZB výroby
+Větve elektroinstalačních trubek
+Zabezpečovací zařízení
+Zakončení
+Zakončení střešního pláště
+Zasklení objemu
+Zavětrování
+Zařízení na přivolání ošetřovatelky
+Zařízení zóny
+Zdroj světla
+Značení
+Zvýšená podlaží
+Zábradlí
+Základna trajektorie rozvržení – trubky
+Základy opěry
+Základy pilířů
+Zástupci potrubí
+Zástupci trubek
+Závitové spojky konstrukčních výztuží
+Zóny VZT
+Šablony výkazů rozvaděčů – datový panel
+Šablony výkazů rozvaděčů – panelový rozvaděč
+Šablony výkazů rozvaděčů – rozvodná skříň
+Šrouby

@@ -4,7 +4,8 @@ import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { ProjectDetailsDialog } from "./ui/components/ProjectDetailsDialog";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
-import { parseClassificationTsv, collectLeaves, findNodeByCode } from "./classification/parser";
+import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode } from "./classification/parser";
+import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
 import type { ClassificationSystemEntry, CodeList, Phase, Project, ProjectObject } from "./project/types";
@@ -215,31 +216,52 @@ const AppInner: React.FC = () => {
 
   const onUploadClassification = async (file: File) => {
     if (!project) return;
-    
-    const text = await file.text();
-    const parsed = parseClassificationTsv(text, file.name);
-    
-    // Create a new ClassificationSystemEntry for the uploaded classification
+
+    const isXlsx = /\.xlsx$/i.test(file.name);
+    let parsed: import("./classification/types").ClassificationData;
+    let isPure: boolean;
+    let displayName: string;
+
+    if (isXlsx) {
+      try {
+        parsed = await parseClassificationXlsx(file, file.name.replace(/\.xlsx$/i, ""));
+      } catch (err) {
+        setStatus(err instanceof Error ? err.message : "Import XLSX se nezdařil");
+        setTimeout(() => setStatus(""), 5000);
+        return;
+      }
+      const hasIfcInTree = (nodes: typeof parsed.nodes): boolean =>
+        nodes.some((n) => !!n.ifcEntity || !!n.predefinedType || (n.children?.length ? hasIfcInTree(n.children) : false));
+      isPure = !hasIfcInTree(parsed.nodes);
+      displayName = parsed.sourceName || file.name.replace(/\.xlsx$/i, "");
+    } else {
+      const text = await file.text();
+      const format = detectClassificationFormat(text);
+      parsed = format === "simple"
+        ? parseClassificationSimpleList(text, file.name)
+        : parseClassificationTsv(text, file.name);
+      isPure = format === "simple";
+      displayName = isPure && parsed.sourceName ? parsed.sourceName : file.name.replace(/\.txt$/i, "");
+    }
+
     const uploadedEntry: ClassificationSystemEntry = {
       id: makeId(),
-      name: file.name.replace(/\.txt$/i, ""),
+      name: displayName,
       sourceName: file.name,
       nodes: parsed.nodes,
-      hash: parsed.hash,
-      isPrimary: false, // Don't set as primary automatically
+      hash: parsed.hash ?? undefined,
+      isPrimary: false,
+      isPure: isPure,
     };
-    
-    // Add to existing project
+
     const next: Project = {
       ...project,
       classificationSystemEntries: [...(project.classificationSystemEntries ?? []), uploadedEntry],
       updatedAt: new Date().toISOString(),
     };
-    
+
     updateProjectWithHistory(next);
     setStatus(`Klasifikace "${uploadedEntry.name}" byla importována`);
-    
-    // Clear status after 3 seconds
     setTimeout(() => setStatus(""), 3000);
   };
 
@@ -754,6 +776,7 @@ const AppInner: React.FC = () => {
         >
           <ClassificationPanel
             classification={classification}
+            objects={project?.objects}
             selectedCode={selectedCode}
             onSelectLeaf={onSelectLeaf}
             onUploadFile={onUploadClassification}

@@ -28,13 +28,17 @@ export const parseClassificationTsv = (
     const parts = line.split("\t");
     if (parts.length < 3) continue;
     const [codeRaw, descriptionRaw, levelRaw, categoryRaw, ifcEntityRaw] = parts;
+    const code = (codeRaw ?? "").trim();
+    const description = (descriptionRaw ?? "").trim();
+    if (!code && !description) continue;
     const level = Number(levelRaw?.trim());
+    const ifcVal = (ifcEntityRaw?.trim() ?? "").trim();
     rows.push({
-      code: codeRaw?.trim(),
-      description: descriptionRaw?.trim(),
+      code,
+      description,
       level: Number.isFinite(level) ? level : rows.length,
       category: categoryRaw?.trim() || undefined,
-      ifcEntity: ifcEntityRaw?.trim() || undefined,
+      ifcEntity: ifcVal || undefined,
     });
   }
 
@@ -69,6 +73,38 @@ export const parseClassificationTsv = (
     sourceName,
     hash: hashString(content),
   };
+};
+
+/**
+ * Parse simple list format (e.g. Kategorie RVT): first line = name, rest = one item per line.
+ * Produces flat list with level 1, code = description.
+ */
+export const parseClassificationSimpleList = (
+  content: string,
+  sourceName: string,
+): ClassificationData => {
+  const lines = content.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const nameLine = lines[0] ?? "";
+  const itemLines = lines.slice(1);
+
+  const nodes: ClassificationNode[] = itemLines.map((line) => ({
+    code: line,
+    description: line,
+    level: 1,
+    children: [],
+  }));
+
+  return {
+    nodes,
+    sourceName: nameLine || sourceName,
+    hash: hashString(content),
+  };
+};
+
+/** Detect format: TSV has tabs in first non-empty line; otherwise simple list */
+export const detectClassificationFormat = (content: string): "tsv" | "simple" => {
+  const firstLine = content.split(/\r?\n/).find((l) => l.trim().length > 0);
+  return firstLine && firstLine.includes("\t") ? "tsv" : "simple";
 };
 
 export const findNodeByCode = (
