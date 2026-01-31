@@ -60,6 +60,8 @@ export const ensureObject = (
       description,
       ifcEntity: defaultIfcEntity ?? "",
       predefinedType: { mode: "NONE" },
+      ifcEntityPhases: project.phases.map((p) => p.id),
+      predefinedTypePhases: project.phases.map((p) => p.id),
       requirements: {
         attributes: [],
         properties: [],
@@ -74,6 +76,7 @@ export const ensureObject = (
             value: code, // Primary classification value should be the code
             name: description,
             readOnly: true,
+            occurrence: "required", // Primární klasifikace je vždy požadované
             isApplicability: true, // Primary classification is always in applicability
             extensions: {},
             phases: project.phases.map((p) => p.id), // All phases by default

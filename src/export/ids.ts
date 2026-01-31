@@ -5,6 +5,7 @@ import type {
   PropertyRequirement,
   ClassificationRequirement,
   MaterialRequirement,
+  RelationRequirement,
 } from "../project/types";
 
 const IDS_NAMESPACE = "http://standards.buildingsmart.org/IDS";
@@ -145,14 +146,14 @@ const mapDataTypeToIds = (dataType?: string): string | undefined => {
 };
 
 /**
- * Generate attribute element for requirements
+ * Generate attribute element for requirements or applicability (no cardinality in applicability)
  */
-const generateAttribute = (attr: AttributeRequirement, indent: string): string => {
-  const cardinality = getCardinality(attr.occurrence);
+const generateAttribute = (attr: AttributeRequirement, indent: string, isApplicability = false): string => {
+  const cardinality = isApplicability ? "" : ` cardinality="${getCardinality(attr.occurrence)}"`;
   const instructions = attr.note ? ` instructions="${escapeXml(attr.note)}"` : "";
   
   const lines: string[] = [];
-  lines.push(`${indent}<ids:attribute cardinality="${cardinality}"${instructions}>`);
+  lines.push(`${indent}<ids:attribute${cardinality}${instructions}>`);
   lines.push(`${indent}  <ids:name>`);
   lines.push(`${indent}    <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>`);
   lines.push(`${indent}  </ids:name>`);
@@ -168,16 +169,16 @@ const generateAttribute = (attr: AttributeRequirement, indent: string): string =
 };
 
 /**
- * Generate property element for requirements
+ * Generate property element for requirements or applicability (no cardinality in applicability)
  */
-const generateProperty = (prop: PropertyRequirement, indent: string): string => {
-  const cardinality = getCardinality(prop.occurrence);
+const generateProperty = (prop: PropertyRequirement, indent: string, isApplicability = false): string => {
+  const cardinality = isApplicability ? "" : ` cardinality="${getCardinality(prop.occurrence)}"`;
   const instructions = prop.note ? ` instructions="${escapeXml(prop.note)}"` : "";
   const mappedDataType = mapDataTypeToIds(prop.dataType);
   const dataType = mappedDataType ? ` dataType="${escapeXml(mappedDataType)}"` : "";
   
   const lines: string[] = [];
-  lines.push(`${indent}<ids:property cardinality="${cardinality}"${dataType}${instructions}>`);
+  lines.push(`${indent}<ids:property${cardinality}${dataType}${instructions}>`);
   lines.push(`${indent}  <ids:propertySet>`);
   lines.push(`${indent}    <ids:simpleValue>${escapeXml(prop.psetName)}</ids:simpleValue>`);
   lines.push(`${indent}  </ids:propertySet>`);
@@ -199,7 +200,7 @@ const generateProperty = (prop: PropertyRequirement, indent: string): string => 
  * Generate classification element
  */
 const generateClassification = (cls: ClassificationRequirement, isApplicability: boolean, indent: string): string => {
-  const cardinality = isApplicability ? "" : ` cardinality="required"`;
+  const cardinality = isApplicability ? "" : ` cardinality="${getCardinality(cls.occurrence ?? "required")}"`;
   const uri = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
   
   const lines: string[] = [];
@@ -222,23 +223,48 @@ const generateClassification = (cls: ClassificationRequirement, isApplicability:
 };
 
 /**
- * Generate material element for requirements
+ * Generate material element for requirements or applicability (no cardinality in applicability)
  */
-const generateMaterial = (mat: MaterialRequirement, indent: string): string => {
-  const cardinality = getCardinality(mat.occurrence);
+const generateMaterial = (mat: MaterialRequirement, indent: string, isApplicability = false): string => {
+  const cardinality = isApplicability ? "" : ` cardinality="${getCardinality(mat.occurrence)}"`;
   const uri = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
   const instructions = mat.note ? ` instructions="${escapeXml(mat.note)}"` : "";
   
   const lines: string[] = [];
-  lines.push(`${indent}<ids:material cardinality="${cardinality}"${uri}${instructions}>`);
+  lines.push(`${indent}<ids:material${cardinality}${uri}${instructions}>`);
   
-  if (mat.value) {
+  const val = mat.value || (mat.category && mat.categoryMode !== "NONE" ? mat.category : "");
+  if (val) {
     lines.push(`${indent}  <ids:value>`);
-    lines.push(generateIdsValueContent(mat.value, mat.constraint, `${indent}    `));
+    lines.push(generateIdsValueContent(val, mat.constraint, `${indent}    `));
     lines.push(`${indent}  </ids:value>`);
   }
   
   lines.push(`${indent}</ids:material>`);
+  return lines.join("\n");
+};
+
+/**
+ * Generate partOf (relation) element for requirements or applicability
+ */
+const generatePartOf = (rel: RelationRequirement, indent: string, isApplicability = false): string => {
+  const cardinality = isApplicability ? "" : ` cardinality="${rel.occurrence === "prohibited" ? "prohibited" : "required"}"`;
+  const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
+  const entityName = (rel.entityType || "IFCBUILDINGELEMENT").toUpperCase();
+  
+  const lines: string[] = [];
+  lines.push(`${indent}<ids:partOf${relationAttr}${cardinality}>`);
+  lines.push(`${indent}  <ids:entity>`);
+  lines.push(`${indent}    <ids:name>`);
+  lines.push(`${indent}      <ids:simpleValue>${escapeXml(entityName)}</ids:simpleValue>`);
+  lines.push(`${indent}    </ids:name>`);
+  if (rel.entityPredefinedType) {
+    lines.push(`${indent}    <ids:predefinedType>`);
+    lines.push(`${indent}      <ids:simpleValue>${escapeXml(rel.entityPredefinedType.toUpperCase())}</ids:simpleValue>`);
+    lines.push(`${indent}    </ids:predefinedType>`);
+  }
+  lines.push(`${indent}  </ids:entity>`);
+  lines.push(`${indent}</ids:partOf>`);
   return lines.join("\n");
 };
 
@@ -265,24 +291,43 @@ const isValidProperty = (prop: PropertyRequirement): boolean => {
  * Generate a specification element for a single object
  */
 const generateSpecification = (obj: ProjectObject, phaseId: string, phaseName: string): string | null => {
-  // Filter requirements for this phase, and filter out invalid/incomplete requirements
-  const attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute);
+  // Filter requirements for this phase
+  const attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute && r.attribute !== "PredefinedType");
   const properties = obj.requirements.properties.filter((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r));
   const classifications = obj.requirements.classifications.filter((r) => requirementAppliesToPhase(r, phaseId));
+  const relations = obj.requirements.relations.filter((r) => requirementAppliesToPhase(r, phaseId));
   const materials = obj.requirements.materials.filter((r) => requirementAppliesToPhase(r, phaseId));
   
-  // Find applicability classification (primary/readOnly)
+  // Split by applicability (isApplicability = true goes to applicability section)
   const applicabilityClassifications = classifications.filter((c) => c.isApplicability || c.readOnly);
   const requirementClassifications = classifications.filter((c) => !c.isApplicability && !c.readOnly);
+  const applicabilityAttributes = attributes.filter((a) => a.isApplicability);
+  const requirementAttributes = attributes.filter((a) => !a.isApplicability);
+  const applicabilityProperties = properties.filter((p) => p.isApplicability);
+  const requirementProperties = properties.filter((p) => !p.isApplicability);
+  const applicabilityRelations = relations.filter((r) => r.isApplicability);
+  const requirementRelations = relations.filter((r) => !r.isApplicability);
+  const applicabilityMaterials = materials.filter((m) => m.isApplicability);
+  const requirementMaterials = materials.filter((m) => !m.isApplicability);
   
   // If no entity, skip this specification (entity is required for applicability)
   if (!obj.ifcEntity) {
     return null;
   }
   
-  // If no requirements for this phase, skip
-  const hasRequirements = attributes.length > 0 || properties.length > 0 || 
-    requirementClassifications.length > 0 || materials.length > 0;
+  // If IfcEntity phases are set and this phase is not included, skip this specification for this phase
+  const ifcEntityPhases = obj.ifcEntityPhases ?? obj.entityPhases;
+  if (ifcEntityPhases && ifcEntityPhases.length > 0 && !ifcEntityPhases.includes(phaseId)) {
+    return null;
+  }
+  
+  // If no requirements for this phase, skip (at least one requirement facet must be present)
+  const hasRequirements =
+    requirementAttributes.length > 0 ||
+    requirementProperties.length > 0 ||
+    requirementClassifications.length > 0 ||
+    requirementRelations.length > 0 ||
+    requirementMaterials.length > 0;
   
   if (!hasRequirements) {
     return null;
@@ -294,51 +339,61 @@ const generateSpecification = (obj: ProjectObject, phaseId: string, phaseName: s
   const lines: string[] = [];
   lines.push(`    <ids:specification name="${escapeXml(specName)}" ifcVersion="IFC4X3_ADD2" description="${escapeXml(specDescription)}">`);
   
-  // Applicability section - minOccurs="1" means at least one matching element must exist
+  // Applicability section
   lines.push(`      <ids:applicability minOccurs="1" maxOccurs="unbounded">`);
   
-  // Entity (required) - must be UPPERCASE for IDS validity
+  // Entity (required); PredefinedType only when set and phase is in predefinedTypePhases
+  const predefinedTypePhases = obj.predefinedTypePhases ?? obj.entityPhases;
+  const includePredefinedType = obj.predefinedType.mode === "ENUM" && obj.predefinedType.value && (!predefinedTypePhases || predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId));
   lines.push(`        <ids:entity>`);
   lines.push(`          <ids:name>`);
   lines.push(`            <ids:simpleValue>${escapeXml(obj.ifcEntity.toUpperCase())}</ids:simpleValue>`);
   lines.push(`          </ids:name>`);
-  if (obj.predefinedType.mode === "ENUM" && obj.predefinedType.value) {
+  if (includePredefinedType) {
     lines.push(`          <ids:predefinedType>`);
-    lines.push(`            <ids:simpleValue>${escapeXml(obj.predefinedType.value.toUpperCase())}</ids:simpleValue>`);
+    lines.push(`            <ids:simpleValue>${escapeXml(obj.predefinedType.value!.toUpperCase())}</ids:simpleValue>`);
     lines.push(`          </ids:predefinedType>`);
   }
   lines.push(`        </ids:entity>`);
   
-  // Applicability classifications
   applicabilityClassifications.forEach((cls) => {
     lines.push(generateClassification(cls, true, "        "));
+  });
+  applicabilityAttributes.forEach((attr) => {
+    lines.push(generateAttribute(attr, "        ", true));
+  });
+  applicabilityProperties.forEach((prop) => {
+    lines.push(generateProperty(prop, "        ", true));
+  });
+  applicabilityRelations.forEach((rel) => {
+    lines.push(generatePartOf(rel, "        ", true));
+  });
+  applicabilityMaterials.forEach((mat) => {
+    lines.push(generateMaterial(mat, "        ", true));
   });
   
   lines.push(`      </ids:applicability>`);
   
   // Requirements section
-  if (hasRequirements) {
-    lines.push(`      <ids:requirements>`);
-    
-    attributes.forEach((attr) => {
-      lines.push(generateAttribute(attr, "        "));
-    });
-    
-    properties.forEach((prop) => {
-      lines.push(generateProperty(prop, "        "));
-    });
-    
-    requirementClassifications.forEach((cls) => {
-      lines.push(generateClassification(cls, false, "        "));
-    });
-    
-    materials.forEach((mat) => {
-      lines.push(generateMaterial(mat, "        "));
-    });
-    
-    lines.push(`      </ids:requirements>`);
-  }
+  lines.push(`      <ids:requirements>`);
   
+  requirementAttributes.forEach((attr) => {
+    lines.push(generateAttribute(attr, "        "));
+  });
+  requirementProperties.forEach((prop) => {
+    lines.push(generateProperty(prop, "        "));
+  });
+  requirementRelations.forEach((rel) => {
+    lines.push(generatePartOf(rel, "        "));
+  });
+  requirementClassifications.forEach((cls) => {
+    lines.push(generateClassification(cls, false, "        "));
+  });
+  requirementMaterials.forEach((mat) => {
+    lines.push(generateMaterial(mat, "        "));
+  });
+  
+  lines.push(`      </ids:requirements>`);
   lines.push(`    </ids:specification>`);
   
   return lines.join("\n");
@@ -448,11 +503,12 @@ export const getObjectsWithRequirementsForPhase = (
   return Object.values(project.objects).filter((obj) => {
     if (!obj.ifcEntity) return false; // Skip objects without IFC entity
     const { requirements } = obj;
-    const hasReqs = 
-      requirements.attributes.some((r) => requirementAppliesToPhase(r, phaseId) && r.attribute) ||
-      requirements.properties.some((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r)) ||
+    const hasReqs =
+      requirements.attributes.some((r) => requirementAppliesToPhase(r, phaseId) && r.attribute && r.attribute !== "PredefinedType" && !r.isApplicability) ||
+      requirements.properties.some((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r) && !r.isApplicability) ||
       requirements.classifications.some((r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability && !r.readOnly) ||
-      requirements.materials.some((r) => requirementAppliesToPhase(r, phaseId));
+      requirements.relations.some((r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability) ||
+      requirements.materials.some((r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability);
     return hasReqs;
   });
 };

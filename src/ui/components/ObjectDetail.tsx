@@ -76,7 +76,7 @@ interface Props {
 const TAB_LABELS: Record<TabKey, string> = {
   attributes: "Atributy",
   properties: "Vlastnosti",
-  partOf: "Součástí (PartOf)",
+  partOf: "Součástí",
   material: "Materiál",
   classification: "Klasifikace",
   ids: "IDS náhled",
@@ -625,8 +625,8 @@ const validateIdsCompliance = (obj: import("../../project/types").ProjectObject)
 const requirementMatchesPhase = (phases: string[] | undefined, phaseId: string | null): boolean => {
   // null phaseId means "all" - show everything
   if (phaseId === null) return true;
-  // If requirement has no phases checked, don't show in any specific phase view
-  if (!phases || phases.length === 0) return false;
+  // If requirement has no phases set, treat as "applies to all phases" (zobrazit vždy)
+  if (!phases || phases.length === 0) return true;
   // Check if the phase is in the requirement's phases
   return phases.includes(phaseId);
 };
@@ -679,8 +679,12 @@ const generateIdsXml = (
             <ids:simpleValue>${escapeXml(entityName)}</ids:simpleValue>
           </ids:name>`;
   
-  // Add PredefinedType if set
-  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value) {
+  // IfcEntity and PredefinedType phases are independent
+  const ifcEntityPhases = obj.ifcEntityPhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
+  const predefinedTypePhases = obj.predefinedTypePhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
+  const entityAppliesToPhase = !phaseId ? (ifcEntityPhases.length > 0) : (ifcEntityPhases.length === 0 || ifcEntityPhases.includes(phaseId));
+  const predefinedTypeApplies = filteredObj.predefinedType.mode !== "NONE" && !!filteredObj.predefinedType.value && (!phaseId ? (predefinedTypePhases.length > 0) : (predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId)));
+  if (predefinedTypeApplies) {
     xml += `
           <ids:predefinedType>
             <ids:simpleValue>${escapeXml(filteredObj.predefinedType.value.toUpperCase())}</ids:simpleValue>
@@ -740,14 +744,104 @@ const generateIdsXml = (
         </ids:classification>`;
   });
   
+  // Applicability: attributes, properties, partOf, materials (marked as isApplicability)
+  filteredObj.requirements.attributes.forEach((attr) => {
+    if (!attr.isApplicability || attr.attribute === "PredefinedType") return;
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
+    xml += `
+        <ids:attribute>
+          <ids:name>
+            <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>
+          </ids:name>`;
+    const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ");
+    if (constraintXml) xml += `\n${constraintXml}`;
+    xml += `
+        </ids:attribute>`;
+  });
+  filteredObj.requirements.properties.forEach((prop) => {
+    if (!prop.isApplicability || !prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
+    const dataType = mapDataTypeToIds(prop.dataType);
+    const dataTypeAttr = dataType ? ` dataType="${escapeXml(dataType)}"` : "";
+    xml += `
+        <ids:property${dataTypeAttr}>
+          <ids:propertySet>
+            <ids:simpleValue>${escapeXml(prop.psetName)}</ids:simpleValue>
+          </ids:propertySet>
+          <ids:baseName>
+            <ids:simpleValue>${escapeXml(prop.propertyName)}</ids:simpleValue>
+          </ids:baseName>`;
+    const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ");
+    if (constraintXml) xml += `\n${constraintXml}`;
+    xml += `
+        </ids:property>`;
+  });
+  filteredObj.requirements.relations.forEach((rel) => {
+    if (!rel.isApplicability) return;
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
+    const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
+    const relatedEntityName = normalizeEntityName(rel.entityType || "IFCBUILDINGELEMENT");
+    xml += `
+        <ids:partOf${relationAttr}>
+          <ids:entity>
+            <ids:name>
+              <ids:simpleValue>${escapeXml(relatedEntityName)}</ids:simpleValue>
+            </ids:name>`;
+    if (rel.entityPredefinedType) {
+      xml += `
+            <ids:predefinedType>
+              <ids:simpleValue>${escapeXml(rel.entityPredefinedType.toUpperCase())}</ids:simpleValue>
+            </ids:predefinedType>`;
+    }
+    xml += `
+          </ids:entity>
+        </ids:partOf>`;
+  });
+  filteredObj.requirements.materials.forEach((mat) => {
+    if (!mat.isApplicability) return;
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
+    const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
+    xml += `
+        <ids:material${uriAttr}>`;
+    if (mat.value || (mat.category && mat.categoryMode !== "NONE")) {
+      const val = mat.value || mat.category || "";
+      const constraint = mat.constraint ?? "FILLED";
+      if (constraint === "ENUM" && val.includes("|")) {
+        const values = val.split("|").map((v) => v.trim()).filter(Boolean);
+        xml += `
+          <ids:value>
+            <xs:restriction base="xs:string">`;
+        values.forEach((v) => { xml += `
+              <xs:enumeration value="${escapeXml(v)}" />`; });
+        xml += `
+            </xs:restriction>
+          </ids:value>`;
+      } else if (constraint === "PATTERN") {
+        xml += `
+          <ids:value>
+            <xs:restriction base="xs:string">
+              <xs:pattern value="${escapeXml(val)}" />
+            </xs:restriction>
+          </ids:value>`;
+      } else {
+        xml += `
+          <ids:value>
+            <ids:simpleValue>${escapeXml(val)}</ids:simpleValue>
+          </ids:value>`;
+      }
+    }
+    xml += `
+        </ids:material>`;
+  });
+  
   xml += `
       </ids:applicability>
       <ids:requirements>`;
   
-  // Attributes
+  // Requirements: only non-applicability items
   filteredObj.requirements.attributes.forEach((attr) => {
     if (attr.attribute === "PredefinedType") return; // Skip, already handled in entity
-    // Apply occurrence filter
+    if (attr.isApplicability) return; // In applicability section
     if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = attr.occurrence === "prohibited" ? "prohibited" : attr.occurrence === "optional" ? "optional" : "required";
     xml += `
@@ -763,11 +857,9 @@ const generateIdsXml = (
         </ids:attribute>`;
   });
   
-  // Properties
   filteredObj.requirements.properties.forEach((prop) => {
-    // Skip properties without required fields or with temporary pset names
     if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
-    // Apply occurrence filter
+    if (prop.isApplicability) return; // In applicability section
     if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     
     const cardinality: ConditionalCardinality = prop.occurrence === "prohibited" ? "prohibited" : prop.occurrence === "optional" ? "optional" : "required";
@@ -790,11 +882,10 @@ const generateIdsXml = (
         </ids:property>`;
   });
   
-  // Relations (PartOf) - note: cardinality for partOf is simpleCardinality (only required/prohibited)
+  // Relations (PartOf) - only non-applicability
   filteredObj.requirements.relations.forEach((rel) => {
-    // Apply occurrence filter (relations only have required/prohibited)
+    if (rel.isApplicability) return; // In applicability section
     if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
-    // For partOf, cardinality can only be "required" or "prohibited" (simpleCardinality)
     const cardinality: SimpleCardinality = rel.occurrence === "prohibited" ? "prohibited" : "required";
     const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
     const relatedEntityName = normalizeEntityName(rel.entityType || "IFCBUILDINGELEMENT");
@@ -818,17 +909,16 @@ const generateIdsXml = (
   
   // Classifications - system is required, value comes BEFORE system according to XSD sequence
   // Only include non-applicability classifications in requirements (exclude readOnly primary classifications)
-  // Classifications are always "required" cardinality
-  if (occurrenceFilter === "all" || occurrenceFilter === "required") {
   const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => !cls.isApplicability && !cls.readOnly);
   requirementClassifications.forEach((cls) => {
+    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(cls.occurrence ?? "required", occurrenceFilter)) return;
     // Look up system name from entries first, fall back to stored value
     const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
     const system = entryName || cls.system || cls.name;
     // Skip classifications without system (required by XSD)
     if (!system) return;
     
-    const cardinality: ConditionalCardinality = "required"; // Classifications are typically required
+    const cardinality: ConditionalCardinality = cls.occurrence === "prohibited" ? "prohibited" : cls.occurrence === "optional" ? "optional" : "required";
     const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
     
     xml += `
@@ -871,11 +961,10 @@ const generateIdsXml = (
           </ids:system>
         </ids:classification>`;
   });
-  } // end of classifications occurrence filter
   
   // Materials
   filteredObj.requirements.materials.forEach((mat) => {
-    // Apply occurrence filter
+    if (mat.isApplicability) return; // In applicability section
     if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = mat.occurrence === "prohibited" ? "prohibited" : mat.occurrence === "optional" ? "optional" : "required";
     const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
@@ -980,34 +1069,43 @@ const generateHumanReadable = (
   const applicability: string[] = [];
   const requirements: string[] = [];
   
-  // Entity applicability (always shown regardless of occurrence filter)
-  if (filteredObj.ifcEntity && occurrenceFilter === "all") {
+  // Entity a PredefinedType jsou v IDS vždy v applicability a vždy požadované – zobrazovat bez ohledu na filtr výskytu
+  if (filteredObj.ifcEntity) {
     applicability.push(`IFC třídu **${filteredObj.ifcEntity}**`);
   }
-  
-  // PredefinedType applicability (always shown regardless of occurrence filter)
-  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value && occurrenceFilter === "all") {
+  const predefinedTypePhasesReadable = obj.predefinedTypePhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
+  const predefinedTypeAppliesReadable = phaseId === null ? predefinedTypePhasesReadable.length > 0 : predefinedTypePhasesReadable.length === 0 || predefinedTypePhasesReadable.includes(phaseId);
+  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value && predefinedTypeAppliesReadable) {
     applicability.push(`s předdefinovaným typem **${filteredObj.predefinedType.value}**`);
   }
   
-  // Attributes - some can be in applicability, some in requirements
+  // Attributes - applicability vs requirements (PredefinedType is only in Entity card, not in attributes)
   filteredObj.requirements.attributes.forEach((attr) => {
-    if (attr.attribute === "PredefinedType") return; // Already handled
+    if (attr.attribute === "PredefinedType") return; // Handled in Entity card
     if (!matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const occurrence = attr.occurrence === "prohibited" ? "NESMÍ" : attr.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
     const constraintText = translateConstraint(attr.constraint, attr.value, attr.dataType);
-    requirements.push(`**${occurrence}** mít atribut **${attr.attribute}** ${constraintText}${attr.dataType ? ` *(${attr.dataType})*` : ""}`);
+    const line = `atribut **${attr.attribute}** ${constraintText}${attr.dataType ? ` *(${attr.dataType})*` : ""}`;
+    if (attr.isApplicability && occurrenceFilter === "all") {
+      applicability.push(line);
+    } else {
+      requirements.push(`**${occurrence}** mít ${line}`);
+    }
   });
   
   // Properties
   filteredObj.requirements.properties.forEach((prop) => {
-    // Skip properties without required fields or with temporary pset names
     if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
     if (!matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     const occurrence = prop.occurrence === "prohibited" ? "NESMÍ" : prop.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
     const constraintText = translateConstraint(prop.constraint, prop.value, prop.dataType);
     const psetType = prop.source === "PSET" ? "property setu" : prop.source === "QTO" ? "quantity setu" : "vlastní sady";
-    requirements.push(`**${occurrence}** mít vlastnost **${prop.propertyName}** ${psetType} **${prop.psetName}** ${constraintText}${prop.dataType ? ` *(${prop.dataType})*` : ""}`);
+    const line = `vlastnost **${prop.propertyName}** ${psetType} **${prop.psetName}** ${constraintText}${prop.dataType ? ` *(${prop.dataType})*` : ""}`;
+    if (prop.isApplicability && occurrenceFilter === "all") {
+      applicability.push(line);
+    } else {
+      requirements.push(`**${occurrence}** mít ${line}`);
+    }
   });
   
   // Relations
@@ -1016,7 +1114,12 @@ const generateHumanReadable = (
     const occurrence = rel.occurrence === "prohibited" ? "NESMÍ" : rel.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
     const entityText = rel.entityType ? `IFC třídou **${rel.entityType}**` : "prvkem";
     const predefinedText = rel.entityPredefinedType ? ` s typem **${rel.entityPredefinedType}**` : "";
-    requirements.push(`**${occurrence}** mít relaci **${rel.relationType}** s ${entityText}${predefinedText}`);
+    const line = `relaci **${rel.relationType}** s ${entityText}${predefinedText}`;
+    if (rel.isApplicability && occurrenceFilter === "all") {
+      applicability.push(line);
+    } else {
+      requirements.push(`**${occurrence}** mít ${line}`);
+    }
   });
   
   // Classifications - split by applicability
@@ -1027,28 +1130,26 @@ const generateHumanReadable = (
     const systemName = entryName || cls.system || cls.name;
     
     if (cls.isApplicability || cls.readOnly) {
-      // Add to applicability section (primary classifications are always applicability)
-      // Only show in "all" filter mode
-      if (occurrenceFilter === "all") {
-        if (cls.value) {
-          applicability.push(`klasifikaci **${cls.value}** ze systému **${systemName}**`);
-        } else {
-          applicability.push(`klasifikaci ze systému **${systemName}**`);
-        }
+      // Add to applicability section (primary classifications are always applicability) – zobrazovat vždy bez ohledu na filtr výskytu
+      if (cls.value) {
+        applicability.push(`klasifikaci **${cls.value}** ze systému **${systemName}**`);
+      } else {
+        applicability.push(`klasifikaci ze systému **${systemName}**`);
       }
     } else {
-      // Add to requirements section - classifications are always "required"
-      if (occurrenceFilter === "all" || occurrenceFilter === "required") {
+      // Add to requirements section - use classification occurrence (primární je vždy required)
+      const occurrence = cls.occurrence === "prohibited" ? "NESMÍ" : cls.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
+      if (matchesOccurrenceFilter(cls.occurrence ?? "required", occurrenceFilter)) {
         if (cls.value) {
-          requirements.push(`**MUSÍ** mít klasifikaci **${cls.value}** ze systému **${systemName}**`);
+          requirements.push(`**${occurrence}** mít klasifikaci **${cls.value}** ze systému **${systemName}**`);
         } else {
-          requirements.push(`**MUSÍ** mít klasifikaci ze systému **${systemName}**`);
+          requirements.push(`**${occurrence}** mít klasifikaci ze systému **${systemName}**`);
         }
       }
     }
   });
   
-  // Materials
+  // Materials - applicability vs requirements
   filteredObj.requirements.materials.forEach((mat) => {
     if (!matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const occurrence = mat.occurrence === "prohibited" ? "NESMÍ" : mat.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
@@ -1056,7 +1157,12 @@ const generateHumanReadable = (
     if (mat.category && mat.categoryMode !== "NONE") {
       categoryText = ` s kategorií **${mat.category}**`;
     }
-    requirements.push(`**${occurrence}** mít materiál${categoryText}`);
+    const line = `materiál${categoryText}`;
+    if (mat.isApplicability && occurrenceFilter === "all") {
+      applicability.push(line);
+    } else {
+      requirements.push(`**${occurrence}** mít ${line}`);
+    }
   });
   
   return { applicability, requirements };
@@ -1145,54 +1251,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     }
   }, [object.requirements.properties, object]);
 
-  // Synchronizace PredefinedType mezi kartou IFC entity a atributy
+  // Odstranit PredefinedType z atributů – řeší se pouze v identifikačních údajích (entita)
   useEffect(() => {
-    const predefinedTypeAttr = object.requirements.attributes.find((a) => a.attribute === "PredefinedType");
-    
-    // Pokud není nastavena IFC entity nebo je PredefinedType nastaven na NONE, odstraníme atribut
-    if (!object.ifcEntity || object.predefinedType.mode === "NONE") {
-      if (predefinedTypeAttr) {
-        updateRequirements((reqs) => {
-          reqs.attributes = reqs.attributes.filter((a) => a.id !== predefinedTypeAttr.id);
-        });
-      }
-      return;
-    }
-
-    // Pokud PredefinedType není NONE, musí existovat atribut
-    if (!predefinedTypeAttr) {
-      // Přidáme nový atribut PredefinedType
-      const newAttr: import("../../project/types").AttributeRequirement = {
-        id: makeId(),
-        attribute: "PredefinedType",
-        dataType: "IfcLabel",
-        required: true,
-        occurrence: "required",
-        constraint: "ENUM",
-        value: object.predefinedType.value ?? "",
-        unit: "",
-        note: "",
-        extensions: {},
-        phases: phases.map((p) => p.id), // All phases by default
-      };
-      updateRequirements((reqs) => {
-        reqs.attributes.push(newAttr);
-      });
-      return;
-    }
-
-    // Aktualizujeme existující atribut podle aktuálního stavu predefinedType
-    const currentValue = object.predefinedType.value ?? "";
-    if (predefinedTypeAttr.constraint !== "ENUM" || 
-        predefinedTypeAttr.occurrence !== "required" || 
-        predefinedTypeAttr.value !== currentValue) {
-      updateAttributeField(predefinedTypeAttr.id, {
-        constraint: "ENUM",
-        occurrence: "required",
-        value: currentValue,
+    const hasPredefinedTypeAttr = object.requirements.attributes.some((a) => a.attribute === "PredefinedType");
+    if (hasPredefinedTypeAttr) {
+      const nextAttrs = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
+      onChangeRef.current({
+        ...object,
+        requirements: { ...object.requirements, attributes: nextAttrs },
       });
     }
-  }, [object.predefinedType, object.ifcEntity]);
+  }, [object]);
 
   const groupKey = (source: PropertyRequirement["source"], psetName?: string) => `${source}:${psetName || "(custom)"}`;
 
@@ -1337,14 +1406,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const getAvailableAttributes = (currentId?: string) => {
-    const allAttributes = ["Name", "Description", "Tag", "ObjectType", "GlobalId", "PredefinedType"];
+    const allAttributes = ["Name", "Description", "Tag", "ObjectType", "GlobalId"];
     const used = new Set(
       object.requirements.attributes
-        .filter((a) => a.id !== currentId)
+        .filter((a) => a.id !== currentId && a.attribute !== "PredefinedType")
         .map((a) => a.attribute),
     );
-    
-    // PredefinedType je vždy v seznamu, ale může být zašedlý pokud je nastaven na kartě IFC entity
     return allAttributes.filter((attr) => !used.has(attr));
   };
 
@@ -1632,16 +1699,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   // === ATRIBUTY - výběr a mazání ===
-  const isAttributeProtected = (attr: import("../../project/types").AttributeRequirement) => {
-    // PredefinedType je chráněn, pokud je řízen z karty IFC entity
-    return attr.attribute === "PredefinedType" && object.predefinedType.mode !== "NONE";
-  };
-
   const toggleAttributeSelection = (attrId: string) => {
-    // Nenechat vybrat chráněné atributy
-    const attr = object.requirements.attributes.find((a) => a.id === attrId);
-    if (attr && isAttributeProtected(attr)) return;
-    
     setSelectedAttributes((prev) => {
       const next = new Set(prev);
       if (next.has(attrId)) next.delete(attrId);
@@ -1652,20 +1710,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
 
   const selectAllAttributes = () => {
-    // Nevybírat chráněné atributy
-    const selectableIds = object.requirements.attributes
-      .filter((a) => !isAttributeProtected(a))
-      .map((a) => a.id);
-    setSelectedAttributes(new Set(selectableIds));
+    const visibleAttrs = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
+    setSelectedAttributes(new Set(visibleAttrs.map((a) => a.id)));
   };
 
   const deleteSelectedAttributes = () => {
     const idsToDelete = Array.from(selectedAttributes);
     updateRequirements((reqs) => {
-      // Nemazat chráněné atributy
-      reqs.attributes = reqs.attributes.filter((a) => 
-        !idsToDelete.includes(a.id) || isAttributeProtected(a)
-      );
+      reqs.attributes = reqs.attributes.filter((a) => !idsToDelete.includes(a.id));
     });
     setSelectedAttributes(new Set());
   };
@@ -1807,6 +1859,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         identification: "",
         name: "",
         readOnly: false,
+        occurrence: "required",
         description: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
@@ -1929,59 +1982,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         // Pokud se změní atribut, aktualizujeme datový typ
         if (patch.attribute !== undefined) {
           next.dataType = ATTRIBUTE_DATA_TYPES[patch.attribute] ?? "IfcLabel";
-          
-          // Pokud se mění atribut z PredefinedType na jiný, nastavíme predefinedType na NONE
-          if (prev.attribute === "PredefinedType" && patch.attribute !== "PredefinedType") {
-            updateObject({ predefinedType: { mode: "NONE" } });
-          }
-        }
-        
-        // Speciální logika pro PredefinedType - synchronizace s kartou IFC entity
-        if (next.attribute === "PredefinedType" || prev.attribute === "PredefinedType") {
-          if (next.attribute === "PredefinedType") {
-            // Pokud se mění hodnota nebo constraint
-            if (patch.value !== undefined || patch.constraint !== undefined) {
-              // Pokud je constraint ENUM a hodnota je z IFC seznamu, synchronizujeme s predefinedType
-              if (next.constraint === "ENUM") {
-                // Pro USERDEFINED mode - hodnota je jednoduchý string, ne výčet
-                if (object.predefinedType.mode === "USERDEFINED") {
-                  // Pokud se mění hodnota, aktualizujeme predefinedType.value
-                  if (patch.value !== undefined) {
-                    updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value ?? "" } });
-                  }
-                } else {
-                  // Pro ENUM mode - hodnota může být výčet nebo jednoduchá hodnota
-                  const enumValues = parseEnumValues(next.value ?? "");
-                  if (enumValues.length > 0) {
-                    // Pokud je hodnota v seznamu predefinedOptions, nastavíme ENUM mode
-                    const matchingValue = predefinedOptions.find((opt) => enumValues.includes(opt));
-                    if (matchingValue && matchingValue !== "USERDEFINED") {
-                      updateObject({ predefinedType: { mode: "ENUM", value: matchingValue } });
-                    } else if (enumValues.includes("USERDEFINED")) {
-                      // Pokud je USERDEFINED v hodnotách, nastavíme USERDEFINED mode
-                      const userDefinedValue = enumValues.find((v) => v !== "USERDEFINED") || "";
-                      updateObject({ predefinedType: { mode: "USERDEFINED", value: userDefinedValue } });
-                    } else if (enumValues.length === 1 && !predefinedOptions.includes(enumValues[0])) {
-                      // Pokud je to jedna hodnota, která není v predefinedOptions, je to USERDEFINED
-                      updateObject({ predefinedType: { mode: "USERDEFINED", value: enumValues[0] } });
-                    }
-                  } else if (next.value && !predefinedOptions.includes(next.value)) {
-                    // Pokud je hodnota jednoduchý string a není v predefinedOptions, je to USERDEFINED
-                    updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value } });
-                  }
-                }
-              } else if (next.constraint === "PATTERN" && next.value) {
-                // Pokud je PATTERN, použijeme hodnotu jako vlastní USERDEFINED
-                updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value } });
-              } else if (next.constraint === "FILLED" || !next.constraint) {
-                // Pokud je FILLED nebo není constraint, resetujeme na NONE
-                updateObject({ predefinedType: { mode: "NONE" } });
-              } else if ((next.constraint === "RANGE" || next.constraint === "LENGTH") && next.value) {
-                // Pro RANGE a LENGTH použijeme hodnotu jako USERDEFINED
-                updateObject({ predefinedType: { mode: "USERDEFINED", value: next.value } });
-              }
-            }
-          }
         }
         
         // Zajistíme, že omezení je platné pro daný atribut
@@ -2003,11 +2003,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const removeRequirement = (type: keyof ProjectObject["requirements"], id: string) => {
     updateRequirements((reqs) => {
-      const item = reqs[type].find((i) => i.id === id);
-      // Pokud odstraňujeme PredefinedType atribut, nastavíme predefinedType na NONE
-      if (type === "attributes" && item && "attribute" in item && item.attribute === "PredefinedType") {
-        updateObject({ predefinedType: { mode: "NONE" } });
-      }
       reqs[type] = reqs[type].filter((item) => item.id !== id) as any;
     });
   };
@@ -2058,22 +2053,42 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
       </div>
 
-      {/* Identifikační údaje */}
+      {/* Identifikační údaje – údaje specifikující objekt (lze odvodit z klasifikačního systému / hierarchie) */}
       <div className="border-b border-slate-200 bg-white px-4 py-3">
         <div className="mb-3 flex items-center gap-2">
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Identifikační údaje</div>
           <div className="h-px flex-1 bg-slate-200"></div>
         </div>
+        {(node.ifcEntity != null && node.ifcEntity !== "" && object.ifcEntity !== node.ifcEntity) && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
+            <span>V hierarchii / klasifikačním systému je pro tento objekt uvedena entita <strong>{node.ifcEntity}</strong>. Údaje lze odvodit z klasifikace.</span>
+            <button
+              type="button"
+              className="flex-shrink-0 rounded border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+              onClick={() => {
+                const phaseIds = phases.map((p) => p.id);
+                updateObject({
+                  ifcEntity: node.ifcEntity ?? "",
+                  predefinedType: node.predefinedType ? { mode: "ENUM", value: node.predefinedType } : { mode: "NONE" },
+                  ifcEntityPhases: phaseIds,
+                  predefinedTypePhases: phaseIds,
+                });
+              }}
+            >
+              Použít z hierarchie
+            </button>
+          </div>
+        )}
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 flex items-center justify-between">
               <div className="text-sm font-semibold text-slate-800">Entita</div>
               <DocLink href={getIfcDocUrl(object.ifcEntity)} label={object.ifcEntity ?? ""} />
             </div>
-            <div className="flex flex-col gap-2">
-              <div>
-                <label className="text-xs text-slate-600">IfcEntity</label>
-                <select className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm" value={object.ifcEntity} onChange={(e) => handleIfcEntityChange(e.target.value)}>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="text-xs text-slate-600 shrink-0">IfcEntity</label>
+                <select className="min-w-[140px] max-w-[220px] rounded border border-slate-300 px-2 py-1 text-sm" value={object.ifcEntity} onChange={(e) => handleIfcEntityChange(e.target.value)}>
                   <option value="">-- Vyberte entitu --</option>
                   {entities.map((ent) => (
                     <option key={ent} value={ent}>
@@ -2081,10 +2096,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </option>
                   ))}
                 </select>
+                <span className="text-xs text-slate-600 shrink-0">Fáze</span>
+                <PhaseSelector
+                  phases={phases}
+                  value={object.ifcEntityPhases ?? object.entityPhases ?? phases.map((p) => p.id)}
+                  onChange={(ids) => updateObject({ ifcEntityPhases: ids })}
+                />
               </div>
-              <div>
-                <label className="text-xs text-slate-600">PredefinedType</label>
-                <select className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "" : (object.predefinedType.mode === "USERDEFINED" ? "USERDEFINED" : object.predefinedType.value ?? "")} onChange={(e) => handlePredefinedChange(e.target.value)}>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="text-xs text-slate-600 shrink-0">PredefinedType</label>
+                <select className="min-w-[120px] max-w-[180px] rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "" : (object.predefinedType.mode === "USERDEFINED" ? "USERDEFINED" : object.predefinedType.value ?? "")} onChange={(e) => handlePredefinedChange(e.target.value)}>
                   <option value="">-- Není definováno --</option>
                   {predefinedOptions.map((opt) => (
                     <option key={opt} value={opt}>
@@ -2094,12 +2115,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </select>
                 {object.predefinedType.mode === "USERDEFINED" && (
                   <input
-                    className="mt-1 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    placeholder="Zadejte vlastní typ"
+                    className="min-w-[100px] max-w-[160px] rounded border border-slate-300 px-2 py-1 text-sm"
+                    placeholder="Vlastní typ"
                     value={object.predefinedType.value ?? ""}
                     onChange={(e) => updateObject({ predefinedType: { mode: "USERDEFINED", value: e.target.value } })}
                   />
                 )}
+                <span className="text-xs text-slate-600 shrink-0">Fáze</span>
+                <PhaseSelector
+                  phases={phases}
+                  value={object.predefinedTypePhases ?? object.entityPhases ?? phases.map((p) => p.id)}
+                  onChange={(ids) => updateObject({ predefinedTypePhases: ids })}
+                />
               </div>
             </div>
           </div>
@@ -2139,6 +2166,222 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             </button>
           </div>
         </div>
+
+        {/* Atributy v použitelnosti – velká tabulka (jako u klasifikací) */}
+        {object.requirements.attributes.some((a) => a.isApplicability && a.attribute !== "PredefinedType") && (
+          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-semibold text-slate-800">Atributy v použitelnosti</div>
+              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("attributes")}>
+                Přidat / upravit v kartě Atributy →
+              </button>
+            </div>
+            <div className="overflow-auto rounded border border-slate-200 bg-white">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-2 py-2">Atribut</th>
+                    <th className="px-2 py-2">Omezení</th>
+                    <th className="px-2 py-2">Hodnota</th>
+                    <th className="px-2 py-2">Fáze</th>
+                    <th className="px-2 py-2 text-right">Akce</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {object.requirements.attributes
+                    .filter((a) => a.isApplicability && a.attribute !== "PredefinedType")
+                    .map((attr) => (
+                      <tr key={attr.id} className="border-t border-slate-200">
+                        <td className="px-2 py-2">
+                          <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.attribute} onChange={(e) => updateAttributeField(attr.id, { attribute: e.target.value })}>
+                            {getAvailableAttributes(attr.id).filter((opt) => opt !== "PredefinedType").map((opt) => (
+                              <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-2 py-2">
+                          <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.constraint ?? "FILLED"} onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH" })}>
+                            {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-2 py-2">
+                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.value ?? ""} onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })} placeholder="Hodnota" />
+                        </td>
+                        <td className="px-2 py-2">
+                          <PhaseSelector phases={phases} value={attr.phases} onChange={(ids) => updateAttributeField(attr.id, { phases: ids })} />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updateAttributeField(attr.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Vlastnosti v použitelnosti – velká tabulka */}
+        {object.requirements.properties.some((p) => p.isApplicability && (p.psetName || p.propertyName)) && (
+          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-semibold text-slate-800">Vlastnosti v použitelnosti</div>
+              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("properties")}>
+                Přidat / upravit v kartě Vlastnosti →
+              </button>
+            </div>
+            <div className="overflow-auto rounded border border-slate-200 bg-white">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-2 py-2">Property set / Qto</th>
+                    <th className="px-2 py-2">Vlastnost</th>
+                    <th className="px-2 py-2">Hodnota</th>
+                    <th className="px-2 py-2">Fáze</th>
+                    <th className="px-2 py-2 text-right">Akce</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {object.requirements.properties
+                    .filter((p) => p.isApplicability && (p.psetName || p.propertyName))
+                    .map((prop) => (
+                      <tr key={prop.id} className="border-t border-slate-200">
+                        <td className="px-2 py-2">
+                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.psetName ?? ""} onChange={(e) => updatePropertyField(prop.id, { psetName: e.target.value })} placeholder="Pset/Qto" />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.propertyName ?? ""} onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })} placeholder="Vlastnost" />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.value ?? ""} onChange={(e) => updatePropertyField(prop.id, { value: e.target.value })} placeholder="Hodnota" />
+                        </td>
+                        <td className="px-2 py-2">
+                          <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updatePropertyField(prop.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Součásti v použitelnosti – velká tabulka */}
+        {object.requirements.relations.some((r) => r.isApplicability) && (
+          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-semibold text-slate-800">Součásti v použitelnosti</div>
+              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("partOf")}>
+                Přidat / upravit v kartě Součástí →
+              </button>
+            </div>
+            <div className="overflow-auto rounded border border-slate-200 bg-white">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-2 py-2">Vztah</th>
+                    <th className="px-2 py-2">Součást entity</th>
+                    <th className="px-2 py-2">PredefinedType</th>
+                    <th className="px-2 py-2">Fáze</th>
+                    <th className="px-2 py-2 text-right">Akce</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {object.requirements.relations
+                    .filter((r) => r.isApplicability)
+                    .map((rel) => {
+                      const relEntityDef = rel.entityType ? schema?.entities[rel.entityType] : undefined;
+                      const relPredefinedOptions = relEntityDef?.predefinedTypeValues ?? [];
+                      return (
+                        <tr key={rel.id} className="border-t border-slate-200">
+                          <td className="px-2 py-2">
+                            <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.relationType} onChange={(e) => updateRelationField(rel.id, { relationType: e.target.value as RelationRequirement["relationType"] })}>
+                              {relationTypeOptions.map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-2 py-2">
+                            <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.entityType ?? ""} onChange={(e) => updateRelationField(rel.id, { entityType: e.target.value, entityPredefinedType: "" })}>
+                              <option value="">-- Entita --</option>
+                              {entities.map((ent) => (
+                                <option key={ent} value={ent}>{ent}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-2 py-2">
+                            <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.entityPredefinedType ?? ""} onChange={(e) => updateRelationField(rel.id, { entityPredefinedType: e.target.value })} disabled={!rel.entityType || relPredefinedOptions.length === 0}>
+                              <option value="">--</option>
+                              {relPredefinedOptions.map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="px-2 py-2">
+                            <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
+                          </td>
+                          <td className="px-2 py-2 text-right">
+                            <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updateRelationField(rel.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Klasifikace – již existující blok; zobrazují se všechny, v použitelnosti jsou ty s isApplicability nebo readOnly */}
+
+        {/* Materiál v použitelnosti – velká tabulka */}
+        {object.requirements.materials.some((m) => m.isApplicability) && (
+          <div className="mt-4 rounded border border-slate-200 bg-slate-50 p-3 md:col-span-2">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-semibold text-slate-800">Materiál v použitelnosti</div>
+              <button type="button" className="text-xs text-indigo-600 hover:underline" onClick={() => setActiveTab("material")}>
+                Přidat / upravit v kartě Materiál →
+              </button>
+            </div>
+            <div className="overflow-auto rounded border border-slate-200 bg-white">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-2 py-2">Kategorie</th>
+                    <th className="px-2 py-2">Hodnota</th>
+                    <th className="px-2 py-2">Fáze</th>
+                    <th className="px-2 py-2 text-right">Akce</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {object.requirements.materials
+                    .filter((m) => m.isApplicability)
+                    .map((mat) => (
+                      <tr key={mat.id} className="border-t border-slate-200">
+                        <td className="px-2 py-2">
+                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.category ?? ""} onChange={(e) => updateMaterialField(mat.id, { category: e.target.value })} placeholder="Kategorie" />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.value ?? ""} onChange={(e) => updateMaterialField(mat.id, { value: e.target.value })} placeholder="Hodnota" />
+                        </td>
+                        <td className="px-2 py-2">
+                          <PhaseSelector phases={phases} value={mat.phases} onChange={(ids) => updateMaterialField(mat.id, { phases: ids })} />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <button type="button" className="text-xs text-red-600 hover:underline" onClick={() => updateMaterialField(mat.id, { isApplicability: false })}>Odebrat z použitelnosti</button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Požadavky */}
@@ -2162,14 +2405,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto p-4">
-          {activeTab === "attributes" && (
+          {activeTab === "attributes" && (() => {
+            const visibleAttributes = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
+            return (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-slate-800">Atributy</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addAttribute}>
                   Přidat atribut
                 </button>
-                {object.requirements.attributes.length > 0 && (
+                {visibleAttributes.length > 0 && (
                   <>
                     <div className="h-4 w-px bg-slate-300" />
                     <button
@@ -2189,6 +2433,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </>
                 )}
               </div>
+              {visibleAttributes.length === 0 ? (
+                <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
+                  Žádné atributy. Přidejte atribut.
+                </div>
+              ) : (
+                <>
               <div className="text-xs text-slate-500">Ifc attributes (Name, Description, Tag ...)</div>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
@@ -2218,17 +2468,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
+                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {object.requirements.attributes.map((attr) => {
+                    {visibleAttributes.map((attr) => {
                       const dataType = attr.dataType ?? ATTRIBUTE_DATA_TYPES[attr.attribute] ?? "IfcLabel";
                       const isDisabled = attr.constraint === "FILLED" || attr.constraint === undefined;
                       const isPattern = attr.constraint === "PATTERN";
                       const isEnum = attr.constraint === "ENUM";
-                      const isPredefinedType = attr.attribute === "PredefinedType";
-                      const isPredefinedTypeFromIFC = isPredefinedType && object.predefinedType.mode !== "NONE";
                       
                       return (
                         <tr key={attr.id} className="border-t border-slate-200">
@@ -2236,18 +2485,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           <td className="px-2 py-2">
                             <input
                               type="checkbox"
-                              className={`h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${isPredefinedTypeFromIFC ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
+                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                               checked={selectedAttributes.has(attr.id)}
-                              onChange={() => !isPredefinedTypeFromIFC && toggleAttributeSelection(attr.id)}
-                              disabled={isPredefinedTypeFromIFC}
-                              title={isPredefinedTypeFromIFC ? "Chráněný atribut - nelze vybrat" : ""}
+                              onChange={() => toggleAttributeSelection(attr.id)}
                             />
                           </td>
                           {/* VÝSKYT */}
                           <td className="px-2 py-2">
                             <select 
-                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                              value={isPredefinedTypeFromIFC ? "required" : (attr.occurrence ?? "optional")} 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              value={attr.occurrence ?? "optional"} 
                               onChange={(e) => {
                                 const newValue = e.target.value as "required" | "prohibited" | "optional";
                                 if (selectedAttributes.has(attr.id) && selectedAttributes.size > 0) {
@@ -2256,8 +2503,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                   updateAttributeField(attr.id, { occurrence: newValue });
                                 }
                               }}
-                              disabled={isPredefinedTypeFromIFC}
-                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
                             >
                               <option value="required">Požadováno (required)</option>
                               <option value="prohibited">Zakázáno (prohibited)</option>
@@ -2268,25 +2513,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           {/* ATRIBUT - Atribut dropdown */}
                           <td className="px-2 py-2">
                             <select
-                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                               value={attr.attribute}
                               onChange={(e) => updateAttributeField(attr.id, { attribute: e.target.value })}
-                              disabled={isPredefinedTypeFromIFC}
-                              title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
                             >
-                              {getAvailableAttributes(attr.id).map((opt) => {
-                                const isPredefinedTypeOption = opt === "PredefinedType";
-                                const isPredefinedTypeSetOnIFCEntity = isPredefinedTypeOption && object.predefinedType.mode !== "NONE";
-                                return (
-                                  <option 
-                                    key={opt} 
-                                    value={opt}
-                                    disabled={isPredefinedTypeSetOnIFCEntity}
-                                  >
-                                    {opt}
-                                  </option>
-                                );
-                              })}
+                              {getAvailableAttributes(attr.id).map((opt) => (
+                                <option key={opt} value={opt}>{opt}</option>
+                              ))}
                             </select>
                           </td>
                           
@@ -2303,46 +2536,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           
                           {/* OMEZENÍ */}
                           <td className="px-2 py-2">
-                            {isPredefinedTypeFromIFC ? (
-                              <span 
-                                className="block w-full rounded border border-slate-200 bg-slate-100 px-2 py-1 text-sm text-slate-400 cursor-not-allowed"
-                                title="PredefinedType je řízen z karty IFC entity"
-                              >
-                                Žádné
-                              </span>
-                            ) : (
-                              <select 
-                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                value={attr.constraint ?? "FILLED"} 
-                                onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as any })}
-                              >
-                                {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => {
-                                  const allowed = isAttributeConstraintAllowed(attr.attribute, opt.value);
-                                  return (
-                                    <option key={opt.value} value={opt.value} disabled={!allowed}>
-                                      {opt.label}
-                                    </option>
-                                  );
-                                })}
-                              </select>
-                            )}
+                            <select 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              value={attr.constraint ?? "FILLED"} 
+                              onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as any })}
+                            >
+                              {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => {
+                                const allowed = isAttributeConstraintAllowed(attr.attribute, opt.value);
+                                return (
+                                  <option key={opt.value} value={opt.value} disabled={!allowed}>
+                                    {opt.label}
+                                  </option>
+                                );
+                              })}
+                            </select>
                           </td>
                           
                           {/* HODNOTA */}
                           <td className="px-2 py-2">
                             {(() => {
-                              // Pro PredefinedType z IFC entity - pouze zašedlá hodnota (ne výčet)
-                              if (isPredefinedTypeFromIFC) {
-                                return (
-                                  <span 
-                                    className="block w-full rounded border border-slate-200 bg-slate-100 px-2 py-1 text-sm text-slate-400 cursor-not-allowed"
-                                    title="PredefinedType je řízen z karty IFC entity"
-                                  >
-                                    {attr.value || "—"}
-                                  </span>
-                                );
-                              }
-                              
                               // Pro PATTERN zobrazit speciální UI + odkazy
                               if (isPattern && !isDisabled) {
                                 return (
@@ -2513,7 +2725,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               }
                               
                               // Pro FILLED (Žádné) - editovatelné pole s respektováním datového typu
-                              if (isDisabled && !isPredefinedTypeFromIFC) {
+                              if (isDisabled) {
                                 const isBool = isIfcBooleanType(dataType);
                                 const isNumeric = isIfcNumericLikeType(dataType);
                                 
@@ -2553,15 +2765,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 );
                               }
                               
-                              // Standardní input nebo disabled pro PredefinedType z IFC
+                              // Standardní input
                               return (
                                 <input
-                                  className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${isPredefinedTypeFromIFC ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                                   value={attr.value ?? ""}
                                   onChange={(e) => updateAttributeField(attr.id, { value: e.target.value })}
-                                  disabled={isPredefinedTypeFromIFC}
-                                  placeholder={isPredefinedTypeFromIFC ? "" : "Hodnota"}
-                                  title={isPredefinedTypeFromIFC ? "PredefinedType je řízen z karty IFC entity" : ""}
+                                  placeholder="Hodnota"
                                 />
                               );
                             })()}
@@ -2585,7 +2795,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               onChange={(ids) => updateAttributeField(attr.id, { phases: ids })}
                             />
                           </td>
-                          
+                          {/* POUŽITELNOST */}
+                          <td className="px-2 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
+                              checked={attr.isApplicability ?? false}
+                              onChange={(e) => updateAttributeField(attr.id, { isApplicability: e.target.checked })}
+                              title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
+                            />
+                          </td>
                           {/* AKCE */}
                           <td className="px-2 py-2 text-right">
                             <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("attributes", attr.id)}>
@@ -2595,31 +2814,26 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         </tr>
                       );
                     })}
-                    {!object.requirements.attributes.length && (
-                      <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={9}>
-                          Žádné atributy nejsou definovány.
-                        </td>
-                      </tr>
-                    )}
                   </tbody>
                 </table>
               </div>
+                </>
+              )}
             </div>
-          )}
+            );
+          })()}
 
           {activeTab === "properties" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-slate-800">Vlastnosti (Pset i Qto)</div>
                 <button className="rounded border border-blue-300 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100" onClick={() => addPropertyGroup("PSET")}>
-                  Přidat Pset
+                  Přidat skupinu vlastností Pset
                 </button>
                 <button className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100" onClick={() => addPropertyGroup("QTO")}>
-                  Přidat Qto
+                  Přidat skupinu vlastností Qto
                 </button>
                 <button className="rounded border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100" onClick={() => addPropertyGroup("CUSTOM")}>
-                  Přidat vlastní
+                  Přidat vlastní skupinu vlastností
                 </button>
                 {propertyGroups.length > 0 && (
                   <>
@@ -2658,12 +2872,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </div>
               )}
 
-              {propertyGroups.length === 0 && (
+              {propertyGroups.length === 0 ? (
                 <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
                   Žádné vlastnosti. Přidejte skupinu Pset/Qto nebo vlastní.
                 </div>
-              )}
-
+              ) : (
               <div className="space-y-3 pr-1">
                 {propertyGroups.map((group) => {
                 const expanded = expandedGroups[group.key] ?? true;
@@ -2856,6 +3069,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 <th className="px-2 py-2">Jednotka</th>
                                 <th className="px-2 py-2">Poznámka</th>
                                 <th className="px-2 py-2">Fáze</th>
+                                <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
                                 <th className="px-2 py-2 text-right">Akce</th>
                               </tr>
                             </thead>
@@ -3485,6 +3699,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                   <td className="px-2 py-2">
                                     <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
                                   </td>
+                                  <td className="px-2 py-2 text-center">
+                                    <input
+                                      type="checkbox"
+                                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
+                                      checked={prop.isApplicability ?? false}
+                                      onChange={(e) => updatePropertyField(prop.id, { isApplicability: e.target.checked })}
+                                      title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
+                                    />
+                                  </td>
                                   <td className="px-2 py-2 text-right">
                                     <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("properties", prop.id)}>
                                       Odebrat
@@ -3501,6 +3724,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 );
                 })}
               </div>
+              )}
             </div>
           )}
 
@@ -3598,7 +3822,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           {activeTab === "partOf" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-slate-800">Součástí (PartOf)</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addRelation}>
                   Přidat vztah
                 </button>
@@ -3622,6 +3845,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </>
                 )}
               </div>
+              {object.requirements.relations.length === 0 ? (
+                <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
+                  Žádné vztahy. Přidejte vztah.
+                </div>
+              ) : (
+                <>
               <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
@@ -3650,6 +3879,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       </th>
                       <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
+                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
@@ -3765,6 +3995,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           <td className="px-2 py-2">
                             <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
                           </td>
+                          {/* POUŽITELNOST */}
+                          <td className="px-2 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
+                              checked={rel.isApplicability ?? false}
+                              onChange={(e) => updateRelationField(rel.id, { isApplicability: e.target.checked })}
+                              title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
+                            />
+                          </td>
                           {/* AKCE */}
                           <td className="px-2 py-2 text-right">
                             <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>
@@ -3774,23 +4014,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         </tr>
                       );
                     })}
-                    {!object.requirements.relations.length && (
-                      <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={8}>
-                          Žádné vztahy.
-                        </td>
-                      </tr>
-                    )}
                   </tbody>
                 </table>
               </div>
+                </>
+              )}
             </div>
           )}
 
           {activeTab === "material" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-slate-800">Materiál</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addMaterial}>
                   Přidat materiál
                 </button>
@@ -3814,6 +4048,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </>
                 )}
               </div>
+              {object.requirements.materials.length === 0 ? (
+                <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
+                  Žádné materiálové požadavky. Přidejte materiál.
+                </div>
+              ) : (
+                <>
               <div className="text-xs text-slate-500">Materiálové požadavky (IfcMaterial, IfcMaterialLayerSet, ...)</div>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
@@ -3826,6 +4066,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Omezení</th>
                       <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">Fáze</th>
+                      <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
                       <th className="px-2 py-2 text-right">Akce</th>
                     </tr>
                   </thead>
@@ -4445,6 +4686,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         <td className="px-2 py-2">
                           <PhaseSelector phases={phases} value={mat.phases} onChange={(ids) => updateMaterialField(mat.id, { phases: ids })} />
                         </td>
+                        {/* POUŽITELNOST */}
+                        <td className="px-2 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
+                            checked={mat.isApplicability ?? false}
+                            onChange={(e) => updateMaterialField(mat.id, { isApplicability: e.target.checked })}
+                            title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
+                          />
+                        </td>
                         {/* AKCE */}
                         <td className="px-2 py-2 text-right">
                           <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("materials", mat.id)}>
@@ -4453,27 +4704,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         </td>
                       </tr>
                     ))}
-                    {!object.requirements.materials.length && (
-                      <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={8}>
-                          Žádné materiálové požadavky.
-                        </td>
-                      </tr>
-                    )}
                   </tbody>
                 </table>
               </div>
+                </>
+              )}
             </div>
           )}
 
           {activeTab === "classification" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-slate-800">Klasifikace</div>
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addClassification}>
                   Přidat klasifikaci
                 </button>
-                {object.requirements.classifications.length > 0 && (
+                {object.requirements.classifications.some((c) => !c.readOnly) && (
                   <>
                     <div className="h-4 w-px bg-slate-300" />
                     <button
@@ -4493,12 +4738,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </>
                 )}
               </div>
-              <div className="text-xs text-slate-500">Záznamy IfcClassificationReference</div>
+              {object.requirements.classifications.length === 0 ? (
+                <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
+                  Žádné klasifikace. Přidejte klasifikaci.
+                </div>
+              ) : (
+                <>
               <div className="overflow-auto rounded border border-slate-200">
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
                       <th className="w-8 px-2 py-2"></th>
+                      <th className="px-2 py-2">Výskyt</th>
                       <th className="px-2 py-2">Klasifikační systém</th>
                       <th className="px-2 py-2">Omezení</th>
                       <th className="px-2 py-2">Hodnota</th>
@@ -4521,6 +4772,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             disabled={cls.readOnly}
                             title={cls.readOnly ? "Primární klasifikace - nelze vybrat" : ""}
                           />
+                        </td>
+                        <td className="px-2 py-2">
+                          {cls.readOnly ? (
+                            <span className="text-xs font-medium text-slate-700">Požadované</span>
+                          ) : (
+                            <select
+                              className="w-full min-w-[100px] rounded border border-slate-300 px-2 py-1 text-sm"
+                              value={cls.occurrence ?? "required"}
+                              onChange={(e) =>
+                                updateRequirements((reqs) => {
+                                  reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, occurrence: e.target.value as "required" | "prohibited" | "optional" } : c));
+                                })
+                              }
+                            >
+                              <option value="required">Požadované</option>
+                              <option value="prohibited">Zakázané</option>
+                              <option value="optional">Možné</option>
+                            </select>
+                          )}
                         </td>
                         <td className="px-2 py-2">
                           <select
@@ -4658,16 +4928,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         </td>
                       </tr>
                     ))}
-                    {!object.requirements.classifications.length && (
-                      <tr>
-                        <td className="px-2 py-3 text-sm text-slate-500" colSpan={9}>
-                          Žádné klasifikace nejsou definovány.
-                        </td>
-                      </tr>
-                    )}
                   </tbody>
                 </table>
               </div>
+                </>
+              )}
             </div>
           )}
 
@@ -4675,12 +4940,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             const validationErrors = validateIdsCompliance(object);
             const hasErrors = validationErrors.some((e) => e.type === "error");
             const hasWarnings = validationErrors.some((e) => e.type === "warning");
+            // V náhledu IDS zobrazovat jen fáze zaškrtnuté u entity (ifcEntityPhases)
+            const entityPhaseIds = object.ifcEntityPhases ?? object.entityPhases;
+            const phasesForIdsPreview = entityPhaseIds?.length ? phases.filter((p) => entityPhaseIds.includes(p.id)) : phases;
+            const effectivePhaseId = selectedPhaseId && phasesForIdsPreview.some((p) => p.id === selectedPhaseId) ? selectedPhaseId : null;
             
             return (
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <div className="flex items-center gap-3">
-                  <div className="text-sm font-semibold text-slate-800">IDS náhled</div>
                   <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">IFC4X3_ADD2</span>
                   {hasErrors && (
                     <span className="text-xs text-red-600 flex items-center gap-1">
@@ -4711,9 +4979,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   className={`text-sm text-white px-3 py-1.5 rounded flex items-center gap-1.5 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
                   onClick={() => {
                     if (hasErrors) return;
-                    const currentPhase = phases.find((p) => p.id === selectedPhaseId);
+                    const currentPhase = phases.find((p) => p.id === effectivePhaseId);
                     const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
-                    const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries);
+                    const xml = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, phaseName, classificationSystemEntries);
                     const blob = new Blob([xml], { type: "application/xml" });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
@@ -4760,12 +5028,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </div>
               )}
               
-              {/* Phase tabs */}
+              {/* Phase tabs – pouze fáze zaškrtnuté u entity (ifcEntityPhases) */}
               {phases.length > 0 && (
                 <div className="flex flex-wrap gap-1 border-b border-slate-200 pb-1">
                   <button
                     className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
-                      selectedPhaseId === null
+                      effectivePhaseId === null
                         ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
                         : "text-slate-600 hover:bg-slate-100"
                     }`}
@@ -4773,11 +5041,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   >
                     Vše
                   </button>
-                  {phases.map((phase) => (
+                  {phasesForIdsPreview.map((phase) => (
                     <button
                       key={phase.id}
                       className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
-                        selectedPhaseId === phase.id
+                        effectivePhaseId === phase.id
                           ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
                           : "text-slate-600 hover:bg-slate-100"
                       }`}
@@ -4864,8 +5132,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               
               {/* Human-readable view */}
               {idsSubTab === "readable" && (() => {
-                const currentPhase = phases.find((p) => p.id === selectedPhaseId);
-                const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, selectedPhaseId, occurrenceFilter);
+                const currentPhase = phases.find((p) => p.id === effectivePhaseId);
+                const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, effectivePhaseId, occurrenceFilter);
                 const hasContent = applicability.length > 0 || requirements.length > 0;
                 
                 return (
@@ -4877,7 +5145,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     )}
                     {!hasContent ? (
                       <div className="text-slate-500 italic">
-                        {selectedPhaseId 
+                        {effectivePhaseId 
                           ? `Žádné požadavky pro fázi ${currentPhase?.code || ""}.`
                           : "Nejsou definovány žádné požadavky. Přidejte entity, vlastnosti, relace nebo další požadavky v ostatních kartách."
                         }
@@ -4934,11 +5202,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               
               {/* XML Schema view */}
               {idsSubTab === "schema" && (() => {
-                const currentPhase = phases.find((p) => p.id === selectedPhaseId);
+                const currentPhase = phases.find((p) => p.id === effectivePhaseId);
                 const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
                 // For preview, apply occurrence filter; for export, use "all"
-                const xml = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries, occurrenceFilter);
-                const xmlForExport = generateIdsXml(object, selectedIfcVersion, selectedPhaseId, phaseName, classificationSystemEntries, "all");
+                const xml = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, phaseName, classificationSystemEntries, occurrenceFilter);
+                const xmlForExport = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, phaseName, classificationSystemEntries, "all");
                 const fileName = currentPhase 
                   ? `${(object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_")}_${currentPhase.code}`
                   : (object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_");

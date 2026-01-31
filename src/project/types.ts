@@ -30,6 +30,8 @@ export interface AttributeRequirement extends RequirementBase {
   allowedValues?: string[];
   unit?: string;
   note?: string;
+  /** If true, this attribute is used in applicability section (not requirements) */
+  isApplicability?: boolean;
 }
 
 export interface PropertyRequirement extends RequirementBase {
@@ -43,6 +45,8 @@ export interface PropertyRequirement extends RequirementBase {
   value?: string;
   unit?: string;
   note?: string;
+  /** If true, this property is used in applicability section (not requirements) */
+  isApplicability?: boolean;
 }
 
 export interface RelationRequirement extends RequirementBase {
@@ -64,6 +68,8 @@ export interface RelationRequirement extends RequirementBase {
   minCardinality?: number;
   maxCardinality?: number;
   note?: string;
+  /** If true, this relation (partOf) is used in applicability section (not requirements) */
+  isApplicability?: boolean;
 }
 
 export interface ClassificationRequirement extends RequirementBase {
@@ -84,6 +90,8 @@ export interface ClassificationRequirement extends RequirementBase {
   code?: string;
   /** Constraint type for classification value */
   constraint?: "FILLED" | "ENUM" | "PATTERN";
+  /** Occurrence: required / prohibited / optional. Primární klasifikace je vždy required. */
+  occurrence?: "required" | "prohibited" | "optional";
   /** If true, this classification is used in applicability section (not requirements) */
   isApplicability?: boolean;
 }
@@ -106,6 +114,8 @@ export interface MaterialRequirement extends RequirementBase {
   /** @deprecated Use category instead */
   materialType?: "SINGLE" | "LAYER" | "PROFILE" | "CONSTITUENT";
   note?: string;
+  /** If true, this material is used in applicability section (not requirements) */
+  isApplicability?: boolean;
 }
 
 export interface ObjectRequirements {
@@ -121,6 +131,12 @@ export interface ProjectObject {
   description: string;
   ifcEntity: string;
   predefinedType: PredefinedTypeSelection;
+  /** Phases for which the IfcEntity requirement applies. At least one required. */
+  ifcEntityPhases?: string[];
+  /** Phases for which the PredefinedType requirement applies. At least one required when PredefinedType is set. */
+  predefinedTypePhases?: string[];
+  /** @deprecated Use ifcEntityPhases and predefinedTypePhases instead. */
+  entityPhases?: string[];
   requirements: ObjectRequirements;
 }
 
