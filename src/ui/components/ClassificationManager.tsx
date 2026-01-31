@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import type { ClassificationSystem, IfcClassification } from "../../classification/types";
+import { DocLink } from "./DocLink";
 
 interface Props {
   classifications: ClassificationSystem[];
@@ -113,23 +114,11 @@ export const ClassificationManager: React.FC<Props> = ({
               <span className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
                 IFC 4x3
               </span>
-              <a
+              <DocLink 
                 href={IFC_CLASSIFICATION_DOC_URL}
-                target="_blank"
-                rel="noreferrer"
-                title="Otevřít buildingSMART dokumentaci"
-                className="text-indigo-500 hover:text-indigo-700"
-              >
-                <svg
-                  aria-hidden
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 24 24"
-                  fill="currentColor"
-                  className="h-4 w-4"
-                >
-                  <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
-                </svg>
-              </a>
+                label="IfcClassification"
+                type="ifc"
+              />
             </div>
             <p className="mt-1 text-xs text-slate-600">
               Správa klasifikačních systémů dle entity{" "}
@@ -227,14 +216,12 @@ export const ClassificationManager: React.FC<Props> = ({
               <div className="mt-3 rounded border border-slate-200 bg-slate-50 p-3">
                 <div className="mb-2 flex items-center gap-2 border-b border-slate-200 pb-2">
                   <span className="text-xs font-semibold text-slate-600">Atributy IfcClassification</span>
-                  <a
+                  <DocLink 
                     href={IFC_CLASSIFICATION_DOC_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[10px] text-indigo-500 hover:underline"
-                  >
-                    (buildingSMART dokumentace)
-                  </a>
+                    label="IfcClassification"
+                    type="ifc"
+                    className="scale-75"
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <div>
@@ -288,14 +275,12 @@ export const ClassificationManager: React.FC<Props> = ({
               <div className="mt-3 space-y-2 rounded border border-indigo-200 bg-indigo-50/50 p-3">
                 <div className="mb-2 flex items-center gap-2 border-b border-indigo-200 pb-2">
                   <span className="text-xs font-semibold text-indigo-700">Editace atributů IfcClassification</span>
-                  <a
+                  <DocLink 
                     href={IFC_CLASSIFICATION_DOC_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-[10px] text-indigo-500 hover:underline"
-                  >
-                    (buildingSMART dokumentace)
-                  </a>
+                    label="IfcClassification"
+                    type="ifc"
+                    className="scale-75"
+                  />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>

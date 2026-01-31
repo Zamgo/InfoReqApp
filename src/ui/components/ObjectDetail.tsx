@@ -4,6 +4,7 @@ import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
 import type { ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
+import { DocLink } from "./DocLink";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable";
@@ -11,17 +12,6 @@ type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
 
 const IFC_DOC_BASE = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical";
 const getIfcDocUrl = (identifier: string | undefined) => (identifier ? `${IFC_DOC_BASE}/${identifier}.htm` : undefined);
-
-const DocLink: React.FC<{ href?: string; label: string }> = ({ href, label }) => {
-  if (!href) return null;
-  return (
-    <a href={href} target="_blank" rel="noreferrer" className="flex items-center text-slate-500 hover:text-indigo-600" title={`Otevřít dokumentaci pro ${label}`}>
-      <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
-        <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
-      </svg>
-    </a>
-  );
-};
 
 const PhaseSelector: React.FC<{ phases: Phase[]; value?: string[]; onChange: (ids: string[]) => void }> = ({ phases, value, onChange }) => {
   const selected = new Set(value ?? []);
@@ -2081,9 +2071,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         )}
         <div className="grid gap-4 md:grid-cols-2">
           <div className="rounded border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Entita</div>
-              <DocLink href={getIfcDocUrl(object.ifcEntity)} label={object.ifcEntity ?? ""} />
+            <div className="mb-2 flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                Entita
+                <DocLink 
+                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/entity-facet.md"
+                  label="Entity Facet"
+                  type="ids"
+                />
+                <DocLink href={getIfcDocUrl(object.ifcEntity)} label={object.ifcEntity ?? ""} type="ifc" />
+              </div>
             </div>
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -2133,7 +2130,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           <div className="rounded border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 flex items-center justify-between">
-              <div className="text-sm font-semibold text-slate-800">Klasifikace</div>
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                Klasifikace
+                <DocLink 
+                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/classification-facet.md"
+                  label="Classification Facet"
+                  type="ids"
+                />
+              </div>
             </div>
             {object.requirements.classifications.length > 0 ? (
               <div className="space-y-2">
@@ -2410,6 +2414,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             return (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
+                <DocLink 
+                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/attribute-facet.md"
+                  label="Attribute Facet"
+                  type="ids"
+                />
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addAttribute}>
                   Přidat atribut
                 </button>
@@ -2451,18 +2460,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">
                         <div className="flex items-center gap-1">
                           <span>Omezení</span>
-                          <a 
-                            href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            className="text-slate-500 hover:text-indigo-600" 
-                            title="Otevřít dokumentaci k omezením"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3">
-                              <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
-                            </svg>
-                          </a>
+                          <DocLink 
+                            href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md"
+                            label="Restrictions"
+                            type="ids"
+                          />
                         </div>
                       </th>
                       <th className="px-2 py-2">Hodnota</th>
@@ -2826,6 +2828,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           {activeTab === "properties" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
+                <DocLink 
+                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/property-facet.md"
+                  label="Property Facet"
+                  type="ids"
+                />
                 <button className="rounded border border-blue-300 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100" onClick={() => addPropertyGroup("PSET")}>
                   Přidat skupinu vlastností Pset
                 </button>
@@ -3051,18 +3058,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 <th className="px-2 py-2">
                                   <div className="flex items-center gap-1">
                                     <span>Omezení</span>
-                                    <a 
-                                      href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" 
-                                      target="_blank" 
-                                      rel="noreferrer" 
-                                      className="text-slate-500 hover:text-indigo-600" 
-                                      title="Otevřít dokumentaci k omezením"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3">
-                                        <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
-                                      </svg>
-                                    </a>
+                                    <DocLink 
+                                      href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md"
+                                      label="Restrictions"
+                                      type="ids"
+                                    />
                                   </div>
                                 </th>
                                 <th className="px-2 py-2">Hodnota</th>
@@ -3822,6 +3822,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           {activeTab === "partOf" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
+                <DocLink 
+                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/partof-facet.md"
+                  label="PartOf Facet"
+                  type="ids"
+                />
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addRelation}>
                   Přidat vztah
                 </button>
@@ -3860,23 +3865,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Výskyt</th>
                       <th className="px-2 py-2">Součást entity</th>
                       <th className="px-2 py-2">PredefinedType</th>
-                      <th className="px-2 py-2">
-                        <div className="flex items-center gap-1">
-                          <span>Vztah</span>
-                          <a 
-                            href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/partof-facet.md" 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            className="text-slate-500 hover:text-indigo-600" 
-                            title="Otevřít dokumentaci k PartOf facetu"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <svg aria-hidden xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="h-3 w-3">
-                              <path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3ZM5 5h5v2H7v10h10v-3h2v5H5V5Z" />
-                            </svg>
-                          </a>
-                        </div>
-                      </th>
+                      <th className="px-2 py-2">Vztah</th>
                       <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-center" title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)">Použitelnost</th>
@@ -4025,6 +4014,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           {activeTab === "material" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
+                <DocLink 
+                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/material-facet.md"
+                  label="Material Facet"
+                  type="ids"
+                />
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addMaterial}>
                   Přidat materiál
                 </button>
@@ -4715,6 +4709,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           {activeTab === "classification" && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
+                <DocLink 
+                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/classification-facet.md"
+                  label="Classification Facet"
+                  type="ids"
+                />
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addClassification}>
                   Přidat klasifikaci
                 </button>
