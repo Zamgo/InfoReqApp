@@ -125,6 +125,105 @@ const buildMappedSystemTree = (
   }));
 };
 
+const UNMAPPED_LABEL = "—";
+
+/**
+ * Build a 3-level tree for IFC mapped system: Entity → Entity::PredefinedType → leaves.
+ * Level 1 = IFC entity (e.g. IfcAirTerminal), Level 2 = entity::type (e.g. IfcAirTerminal::DIFFUSER), Level 3 = objects.
+ */
+const buildMappedIfcSystemTree = (
+  nodes: ClassificationNode[],
+  systemEntryId: string
+): ClassificationNode[] => {
+  const leaves = collectLeaves(nodes);
+  const byEntity: Record<string, Record<string, ClassificationNode[]>> = {};
+  leaves.forEach((leaf) => {
+    const fullKey = (leaf.mappedValues?.[systemEntryId] ?? "").trim() || UNMAPPED_LABEL;
+    const [entityPart] = fullKey.includes("::") ? fullKey.split("::") : [fullKey];
+    const entityKey = (entityPart ?? "").trim() || UNMAPPED_LABEL;
+    if (!byEntity[entityKey]) byEntity[entityKey] = {};
+    if (!byEntity[entityKey][fullKey]) byEntity[entityKey][fullKey] = [];
+    byEntity[entityKey][fullKey].push(leaf);
+  });
+  const sortedEntities = Object.keys(byEntity).sort((a, b) => {
+    if (a === UNMAPPED_LABEL) return 1;
+    if (b === UNMAPPED_LABEL) return -1;
+    return a.localeCompare(b);
+  });
+  return sortedEntities.map((entity) => {
+    const byFullKey = byEntity[entity];
+    const sortedFullKeys = Object.keys(byFullKey).sort((a, b) => {
+      if (a === UNMAPPED_LABEL) return 1;
+      if (b === UNMAPPED_LABEL) return -1;
+      return a.localeCompare(b);
+    });
+    const level2Children = sortedFullKeys.map((fullKey) => {
+      const items = byFullKey[fullKey].sort((a, b) => a.code.localeCompare(b.code));
+      return {
+        code: fullKey,
+        description: fullKey,
+        level: 2,
+        children: items.map((item) => ({ ...item, level: 3, children: [] })),
+      };
+    });
+    return {
+      code: entity,
+      description: entity,
+      level: 1,
+      children: level2Children,
+    };
+  });
+};
+
+/**
+ * Same 3-level IFC tree but value from getValue(leaf) (e.g. from object's ifcEntity + predefinedType).
+ */
+const buildMappedIfcSystemTreeByValue = (
+  nodes: ClassificationNode[],
+  getValue: (leaf: ClassificationNode) => string
+): ClassificationNode[] => {
+  const leaves = collectLeaves(nodes);
+  const byEntity: Record<string, Record<string, ClassificationNode[]>> = {};
+  const unassignedLabel = UNASSIGNED_LABEL;
+  leaves.forEach((leaf) => {
+    const raw = getValue(leaf);
+    const fullKey = raw && raw.trim() !== "" ? raw.trim() : unassignedLabel;
+    const [entityPart] = fullKey.includes("::") ? fullKey.split("::") : [fullKey];
+    const entityKey = (entityPart ?? "").trim() && entityPart !== unassignedLabel ? entityPart.trim() : unassignedLabel;
+    if (!byEntity[entityKey]) byEntity[entityKey] = {};
+    if (!byEntity[entityKey][fullKey]) byEntity[entityKey][fullKey] = [];
+    byEntity[entityKey][fullKey].push(leaf);
+  });
+  const sortedEntities = Object.keys(byEntity).sort((a, b) => {
+    if (a === unassignedLabel) return 1;
+    if (b === unassignedLabel) return -1;
+    return a.localeCompare(b);
+  });
+  return sortedEntities.map((entity) => {
+    const byFullKey = byEntity[entity];
+    const sortedFullKeys = Object.keys(byFullKey).sort((a, b) => {
+      if (a === unassignedLabel) return 1;
+      if (b === unassignedLabel) return -1;
+      return a.localeCompare(b);
+    });
+    const level2Children = sortedFullKeys.map((fullKey) => {
+      const items = byFullKey[fullKey].sort((a, b) => a.code.localeCompare(b.code));
+      return {
+        code: fullKey,
+        description: fullKey,
+        level: 2,
+        children: items.map((item) => ({ ...item, level: 3, children: [] })),
+      };
+    });
+    return {
+      code: entity,
+      description: entity,
+      level: 1,
+      children: level2Children,
+    };
+  });
+};
+
 /**
  * Build a tree grouped by value per leaf (object assignment nebo node.mappedValues).
  * getValue(leaf) vrací hodnotu pro daný list; prázdné → "nepřiřazeno".
@@ -184,20 +283,28 @@ interface Props {
   onAddClassificationSystemEntry: (entry: ClassificationSystemEntry) => void;
   onUpdateClassificationSystemEntry: (id: string, updates: Partial<ClassificationSystemEntry>) => void;
   onDeleteClassificationSystemEntry: (id: string) => void;
+  schemaIndex?: import("../../schema/types").SchemaIndex | null;
+  onAddIfcClassificationSystem?: (onAdded?: (entry: ClassificationSystemEntry) => void) => void;
 }
 
 const TreeItem: React.FC<{
   node: ClassificationNode;
   selectedCode?: string;
   onSelectLeaf: (node: ClassificationNode) => void;
-  expandLevel: number | null; // null = use default, number = expand to this level
-  expandTrigger: number; // changes when expand/collapse action is triggered
-}> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger }) => {
+  expandLevel: number | null;
+  expandTrigger: number;
+  /** V pohledu klasifikace: text badge IFC třída.PredefinedType (např. IfcAirTerminal.NOTDEFINED) */
+  getIfcBadgeLabel?: (node: ClassificationNode) => string | undefined;
+}> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel }) => {
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
   const isSelected = selectedCode === node.code;
 
-  // React to external expand/collapse commands
+  const ifcBadgeLabel =
+    isLeaf &&
+    (getIfcBadgeLabel?.(node) ??
+      (node.ifcEntity ? `${node.ifcEntity}.${node.predefinedType || "NOTDEFINED"}` : undefined));
+
   useEffect(() => {
     if (expandLevel !== null) {
       setExpanded(node.level <= expandLevel);
@@ -227,13 +334,15 @@ const TreeItem: React.FC<{
           >
             <div className="flex flex-col">
               <span className={`text-sm ${isLeaf ? "font-semibold" : "font-medium"}`}>
-                {node.description || node.code}
+                {(node.description || node.code).replace(/::/g, ".")}
               </span>
-              <span className="text-[11px] text-slate-500">{node.code}</span>
+              {node.code !== (node.description || node.code) && (
+                <span className="text-[11px] text-slate-500">{node.code.replace(/::/g, ".")}</span>
+              )}
             </div>
-            {node.ifcEntity && isLeaf && (
-              <span className="rounded bg-slate-200 px-2 py-0.5 text-[10px] uppercase text-slate-700">
-                {node.ifcEntity}
+            {ifcBadgeLabel && (
+              <span className="shrink-0 rounded bg-slate-200 px-2 py-0.5 text-[10px] text-slate-700">
+                {ifcBadgeLabel.replace(/::/g, ".")}
               </span>
             )}
           </div>
@@ -248,6 +357,7 @@ const TreeItem: React.FC<{
             onSelectLeaf={onSelectLeaf}
             expandLevel={expandLevel}
             expandTrigger={expandTrigger}
+            getIfcBadgeLabel={getIfcBadgeLabel}
           />
         ))}
     </div>
@@ -275,6 +385,8 @@ export const ClassificationPanel: React.FC<Props> = ({
   onAddClassificationSystemEntry,
   onUpdateClassificationSystemEntry,
   onDeleteClassificationSystemEntry,
+  schemaIndex,
+  onAddIfcClassificationSystem,
 }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists" | "classificationsystems">("hierarchy");
@@ -312,15 +424,15 @@ export const ClassificationPanel: React.FC<Props> = ({
       value: "classification",
       label: primarySystem?.name ?? "Klasifikace",
     });
-    // 2. IFC Entity (pokud má data)
-    if (hasIfcEntities) {
+    // 2. IFC Entity a PredefinedType jen když primární NENÍ IFC (jinak je to už obsaženo v „Třídění dle IFC entit“)
+    const isIfcPrimary = primarySystem?.isIfcSystem === true;
+    if (!isIfcPrimary && hasIfcEntities) {
       options.push({ value: "ifc", label: "IFC Entity" });
     }
-    // 3. IFC PredefinedType (pokud má data)
-    if (hasPredefinedTypes) {
+    if (!isIfcPrimary && hasPredefinedTypes) {
       options.push({ value: "predefinedType", label: "IFC PredefinedType" });
     }
-    // 4. Každý namapovaný systém (třídění nástrojů, Kategorie RVT, …)
+    // 3. Každý namapovaný systém (třídění nástrojů, Kategorie RVT, …)
     (primarySystem?.mappedSystemIds ?? []).forEach((systemEntryId) => {
       const entry = classificationSystemEntries.find((e) => e.id === systemEntryId);
       options.push({
@@ -341,26 +453,53 @@ export const ClassificationPanel: React.FC<Props> = ({
     if (viewMode === "predefinedType") return buildPredefinedTypeTree(nodes);
     if (viewMode.startsWith("mapped:")) {
       const systemEntryId = viewMode.slice(7);
-      // Když máme objekty, seskupujeme dle přiřazené hodnoty na objektu (authoringClassifications), jinak dle node.mappedValues
-      if (Object.keys(objects).length > 0) {
+      const entry = classificationSystemEntries.find((e) => e.id === systemEntryId);
+      const isIfcSystem = entry?.isIfcSystem === true;
+      // Když máme objekty, seskupujeme dle přiřazené hodnoty na objektu (IFC: ifcEntity+predefinedType, jinak authoringClassifications), jinak dle node.mappedValues
+      if (Object.keys(objects ?? {}).length > 0) {
         const getValue = (leaf: ClassificationNode): string => {
-          const fromObject = objects[leaf.code]?.authoringClassifications?.find(
+          if (isIfcSystem) {
+            const o = objects![leaf.code];
+            const pt = o?.predefinedType?.mode === "ENUM" ? o?.predefinedType?.value : undefined;
+            return pt ? `${o?.ifcEntity ?? ""}::${pt}`.trim() : (o?.ifcEntity?.trim() ?? leaf.mappedValues?.[systemEntryId] ?? "");
+          }
+          const fromObject = objects![leaf.code]?.authoringClassifications?.find(
             (c) => c.systemEntryId === systemEntryId
           )?.code;
           if (fromObject != null && fromObject.trim() !== "") return fromObject.trim();
           return leaf.mappedValues?.[systemEntryId] ?? "";
         };
-        return buildMappedSystemTreeByValue(nodes, getValue);
+        return isIfcSystem ? buildMappedIfcSystemTreeByValue(nodes, getValue) : buildMappedSystemTreeByValue(nodes, getValue);
       }
-      return buildMappedSystemTree(nodes, systemEntryId);
+      return isIfcSystem ? buildMappedIfcSystemTree(nodes, systemEntryId) : buildMappedSystemTree(nodes, systemEntryId);
     }
     return nodes;
-  }, [classification, viewMode, objects]);
+  }, [classification, viewMode, objects, classificationSystemEntries]);
 
   const filteredNodes = useMemo(() => {
     if (!baseNodes.length) return [];
     return filterTree(baseNodes, search);
   }, [baseNodes, search]);
+
+  // V pohledu „klasifikace“: badge IFC třída.PredefinedType (z uzlu nebo z mappedValues u pure systému)
+  const getIfcBadgeLabel = useMemo((): ((node: ClassificationNode) => string | undefined) | undefined => {
+    if (viewMode !== "classification") return undefined;
+    const ifcSystemId = primarySystem?.mappedSystemIds?.find((sid) =>
+      classificationSystemEntries.some((e) => e.id === sid && e.isIfcSystem)
+    );
+    return (node: ClassificationNode) => {
+      if (node.ifcEntity) {
+        return `${node.ifcEntity}.${node.predefinedType || "NOTDEFINED"}`;
+      }
+      if (ifcSystemId && node.mappedValues?.[ifcSystemId]) {
+        const raw = (node.mappedValues[ifcSystemId] ?? "").trim();
+        if (!raw) return undefined;
+        const withDot = raw.replace(/::/g, ".");
+        return raw.includes("::") ? withDot : `${withDot}.NOTDEFINED`;
+      }
+      return undefined;
+    };
+  }, [viewMode, primarySystem, classificationSystemEntries]);
 
   // Pokud aktuální pohled už není v seznamu (např. změna primárního systému), přepni na hlavní klasifikaci
   useEffect(() => {
@@ -389,7 +528,7 @@ export const ClassificationPanel: React.FC<Props> = ({
           { key: "hierarchy", label: "Hierarchie" },
           { key: "phases", label: "Fáze" },
           { key: "codelists", label: "Číselníky" },
-          { key: "classificationsystems", label: "Klasifikační systémy a mapování" },
+          { key: "classificationsystems", label: "Třídění a mapování prvků" },
         ].map((tab) => (
           <button
             key={tab.key}
@@ -456,7 +595,7 @@ export const ClassificationPanel: React.FC<Props> = ({
           {classification && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span className="text-[11px] text-slate-500">
-                Zdroj: {classification.sourceName}
+                Zdroj: {primarySystem?.name ?? classification.sourceName}
               </span>
               <span className="ml-auto text-[11px] text-slate-400">
                 Pohled: {hierarchyViewOptions.find((o) => o.value === viewMode)?.label ?? viewMode}
@@ -466,7 +605,7 @@ export const ClassificationPanel: React.FC<Props> = ({
           <div className="flex-1 overflow-auto rounded border border-slate-200 bg-slate-50 p-2">
             {!classification && (
               <div className="text-sm text-slate-500">
-                Není načtena klasifikace. Přejděte do záložky "Klasifikační systémy a mapování".
+                Není načtena klasifikace. Přejděte do záložky „Třídění a mapování prvků“ a nahrajte soubor (TXT nebo XLSX) nebo přidejte třídící systém (IFC / čistý).
               </div>
             )}
             {classification &&
@@ -479,6 +618,7 @@ export const ClassificationPanel: React.FC<Props> = ({
                     onSelectLeaf={onSelectLeaf}
                     expandLevel={expandLevel}
                     expandTrigger={expandTrigger}
+                    getIfcBadgeLabel={getIfcBadgeLabel}
                   />
                 ))
               ) : (
@@ -531,6 +671,8 @@ export const ClassificationPanel: React.FC<Props> = ({
             onDelete={onDeleteClassificationSystemEntry}
             onUploadFile={onUploadFile}
             onResetDefault={onResetDefault}
+            schemaIndex={schemaIndex}
+            onAddIfcClassificationSystem={onAddIfcClassificationSystem}
           />
         </div>
       )}

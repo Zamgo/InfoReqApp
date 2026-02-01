@@ -100,6 +100,10 @@ export const loadProjectFromStorage = (): Project | null => {
   }
 };
 
+export const clearProjectFromStorage = (): void => {
+  localStorage.removeItem(STORAGE_KEY);
+};
+
 export const saveProjectToStorage = (project: Project) => {
   project.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(project));

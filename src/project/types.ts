@@ -183,6 +183,10 @@ export interface ClassificationSystemEntry {
   authoringToolSystemIds?: string[];
   /** True if this is a "pure" list (only code, description, level) – e.g. imported from RVT TXT */
   isPure?: boolean;
+  /** True if this is the IFC-based classification (entity + predefined type); nezobrazuje se v kartě klasifikace */
+  isIfcSystem?: boolean;
+  /** Typ třídění: IFC / Autorský nástroj / Klasifikační systém. Pouze „classification“ jde do požadavků na klasifikaci. */
+  systemKind?: "ifc" | "authoring" | "classification";
 }
 
 /** Režim překladů IFC názvů: vypnuto, automatický, bSDD */

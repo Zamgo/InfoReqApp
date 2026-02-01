@@ -148,3 +148,33 @@ export const collectLeaves = (nodes: ClassificationNode[]): ClassificationNode[]
   nodes.flatMap((node) =>
     node.children.length ? collectLeaves(node.children) : [node],
   );
+
+/** Zploští strom uzlů na pole řádků (pořadí pre-order, včetně úrovně). */
+export const flattenNodesToRows = (nodes: ClassificationNode[]): ClassificationNode[] => {
+  const result: ClassificationNode[] = [];
+  const traverse = (list: ClassificationNode[]) => {
+    for (const node of list) {
+      result.push(node);
+      if (node.children.length) traverse(node.children);
+    }
+  };
+  traverse(nodes);
+  return result;
+};
+
+/** Aktualizuje mappedValues u uzlu se zadaným code (listu i vnitřního); vrací nový strom (imutabilně). */
+export const updateLeafMappedValue = (
+  nodes: ClassificationNode[],
+  code: string,
+  systemId: string,
+  value: string,
+): ClassificationNode[] =>
+  nodes.map((node) => {
+    if (node.code === code) {
+      return { ...node, mappedValues: { ...(node.mappedValues ?? {}), [systemId]: value } };
+    }
+    if (node.children.length) {
+      return { ...node, children: updateLeafMappedValue(node.children, code, systemId, value) };
+    }
+    return node;
+  });

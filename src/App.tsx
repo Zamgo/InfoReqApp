@@ -6,13 +6,20 @@ import { SettingsDialog } from "./ui/components/SettingsDialog";
 import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
-import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode } from "./classification/parser";
+import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, updateLeafMappedValue } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
+import {
+  buildClassificationFromSchema,
+  buildClassificationFromSchemaFiltered,
+  collectSelectedCodesFromClassificationNodes,
+  buildPureNodesWithIfcMapping,
+} from "./classification/ifcTree";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
 import type { ClassificationSystemEntry, CodeList, Phase, Project, ProjectObject } from "./project/types";
 import {
   createEmptyProject,
+  clearProjectFromStorage,
   ensureObject,
   exportProjectFile,
   importProjectFile,
@@ -24,8 +31,6 @@ import { ENUM_CODELIST_ID_KEY, formatEnumValues } from "./project/enumeration";
 import { exportExcelFile } from "./export/excel";
 import "./index.css";
 import { makeId } from "./utils/id";
-
-const DEFAULT_CLASSIFICATION_PATH = "/classification/Klasifikace_IfcEntity.txt";
 
 const applyCodeListPropagation = (project: Project, list: CodeList): Project => {
   // Update all properties that are linked to this code list
@@ -137,52 +142,84 @@ const AppInner: React.FC = () => {
     return migrated;
   };
 
-  const loadDefaultClassification = async () => {
-    try {
-      setStatus("Načítám výchozí klasifikaci...");
-      const res = await fetch(DEFAULT_CLASSIFICATION_PATH);
-      if (!res.ok) throw new Error("Nelze načíst výchozí TXT");
-      const text = await res.text();
-      const parsed = parseClassificationTsv(text, "Klasifikace_IfcEntity.txt");
-      setClassification(parsed);
-      const newProject = createEmptyProject(parsed);
-      
-      // Create a ClassificationSystemEntry for the default classification
-      const defaultEntry: ClassificationSystemEntry = {
-        id: makeId(),
-        name: "Klasifikace_IfcEntity",
-        sourceName: "Klasifikace_IfcEntity.txt",
-        nodes: parsed.nodes,
-        hash: parsed.hash,
-        isPrimary: true,
-      };
-      newProject.classificationSystemEntries = [defaultEntry];
-      
-      // Reset history for new project
-      historyRef.current = [JSON.parse(JSON.stringify(newProject))];
-      historyIndexRef.current = 0;
-      setProject(newProject);
-      const leaves = collectLeaves(parsed.nodes);
-      setSelectedCode(leaves[0]?.code);
-      saveProjectToStorage(newProject);
-      setStatus("");
-    } catch (err) {
-      setStatus(err instanceof Error ? err.message : "Chyba při načítání TXT");
+  const clearProject = useCallback(() => {
+    clearProjectFromStorage();
+    historyRef.current = [];
+    historyIndexRef.current = -1;
+    setProject(null);
+    setClassification(null);
+    setSelectedCode(undefined);
+    setSelectedObject(null);
+    setStatus("");
+  }, []);
+
+  /** Vrátí IFC mapování (entity + predefinedType) z primárního klasifikačního systému pro daný kód (z mappedValues). */
+  const getIfcMappingFromPrimary = useCallback((proj: Project, code: string): { entity: string; predefinedType?: string } | null => {
+    const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    const ifcSystemId = primary?.mappedSystemIds?.find((sid) =>
+      (proj.classificationSystemEntries ?? []).some((e) => e.id === sid && e.isIfcSystem)
+    );
+    if (!primary?.nodes || !ifcSystemId) return null;
+    const leaf = findNodeByCode(primary.nodes, code);
+    const mapped = leaf?.mappedValues?.[ifcSystemId]?.trim();
+    if (!mapped) return null;
+    const [entity, typePart] = mapped.includes("::") ? mapped.split("::") : [mapped, ""];
+    const pt = typePart?.trim() || undefined;
+    return { entity: entity?.trim() ?? "", predefinedType: pt || undefined };
+  }, []);
+
+  /** Propaguje IFC mapování z primárního klasifikačního systému do objektů. */
+  const propagateMappingToObjects = useCallback((proj: Project): Project => {
+    const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    const ifcSystemId = primary?.mappedSystemIds?.find((sid) =>
+      (proj.classificationSystemEntries ?? []).some((e) => e.id === sid && e.isIfcSystem)
+    );
+    if (!primary?.nodes || !ifcSystemId) return proj;
+
+    let changed = false;
+    const nextObjects: Project["objects"] = { ...proj.objects };
+    for (const [objCode, obj] of Object.entries(nextObjects)) {
+      const leaf = findNodeByCode(primary.nodes, objCode);
+      const mapped = leaf?.mappedValues?.[ifcSystemId]?.trim();
+      if (!mapped) continue;
+      const [entity, typePart] = mapped.includes("::") ? mapped.split("::") : [mapped, ""];
+      const pt = typePart?.trim() || undefined;
+      const newIfcEntity = entity || "";
+      const newPredefined = pt
+        ? { mode: "ENUM" as const, value: pt }
+        : { mode: "NONE" as const };
+      if (obj.ifcEntity !== newIfcEntity || JSON.stringify(obj.predefinedType) !== JSON.stringify(newPredefined)) {
+        nextObjects[objCode] = {
+          ...obj,
+          ifcEntity: newIfcEntity,
+          predefinedType: newPredefined,
+        };
+        changed = true;
+      }
     }
-  };
+    if (!changed) return proj;
+    return {
+      ...proj,
+      objects: nextObjects,
+      updatedAt: new Date().toISOString(),
+    };
+  }, []);
 
   useEffect(() => {
     const stored = loadProjectFromStorage();
     if (stored) {
       const migrated = migrateProject(stored);
-      setProject(migrated);
-      setClassification(migrated.classification);
-      const leaves = collectLeaves(migrated.classification.nodes);
-      setSelectedCode(migrated.objects[leaves[0]?.code]?.code ?? leaves[0]?.code);
-    } else {
-      void loadDefaultClassification();
+      const withPropagation = propagateMappingToObjects(migrated);
+      setProject(withPropagation);
+      setClassification(withPropagation.classification);
+      const leaves = collectLeaves(withPropagation.classification.nodes);
+      setSelectedCode(withPropagation.objects[leaves[0]?.code]?.code ?? leaves[0]?.code);
+      if (withPropagation !== migrated) {
+        saveProjectToStorage(withPropagation);
+      }
     }
-  }, []);
+    // Bez uloženého projektu zůstane prázdný stav – uživatel si sám nahraje klasifikaci.
+  }, [propagateMappingToObjects]);
 
   const selectedNode = useMemo<ClassificationNode | undefined>(() => {
     if (!classification || !selectedCode) return undefined;
@@ -201,7 +238,17 @@ const AppInner: React.FC = () => {
     }
     if (!project.objects[node.code]) {
       const nextProject = { ...project, objects: { ...project.objects } };
-      const ensured = ensureObject(nextProject, node.code, node.description, node.ifcEntity);
+      // U pure systému jsou IFC hodnoty v mappedValues primárního systému, ne na uzlu
+      const mapping = getIfcMappingFromPrimary(nextProject, node.code);
+      const defaultIfcEntity = node.ifcEntity ?? mapping?.entity ?? "";
+      const ensured = ensureObject(nextProject, node.code, node.description, defaultIfcEntity);
+      if (node.predefinedType) {
+        ensured.predefinedType = { mode: "ENUM", value: node.predefinedType };
+      } else if (mapping?.predefinedType) {
+        ensured.predefinedType = { mode: "ENUM", value: mapping.predefinedType };
+      } else {
+        ensured.predefinedType = { mode: "NONE" };
+      }
       // Don't add to history when auto-creating object on selection
       isUndoRedoRef.current = true;
       setProject(nextProject);
@@ -211,15 +258,13 @@ const AppInner: React.FC = () => {
     } else {
       setSelectedObject(project.objects[node.code]);
     }
-  }, [project, selectedCode, classification]);
+  }, [project, selectedCode, classification, getIfcMappingFromPrimary]);
 
   const onSelectLeaf = (node: ClassificationNode) => {
     setSelectedCode(node.code);
   };
 
   const onUploadClassification = async (file: File) => {
-    if (!project) return;
-
     const isXlsx = /\.xlsx$/i.test(file.name);
     let parsed: import("./classification/types").ClassificationData;
     let isPure: boolean;
@@ -237,14 +282,200 @@ const AppInner: React.FC = () => {
         nodes.some((n) => !!n.ifcEntity || !!n.predefinedType || (n.children?.length ? hasIfcInTree(n.children) : false));
       isPure = !hasIfcInTree(parsed.nodes);
       displayName = parsed.sourceName || file.name.replace(/\.xlsx$/i, "");
+
+      // Již namapovaný systém (sloupce IFC Entita / IFC PredefinedType): vytvořit dva systémy + mapování
+      if (!isPure && schemaIndex) {
+        const selectedCodes = collectSelectedCodesFromClassificationNodes(parsed.nodes, schemaIndex);
+        const existingIfc = project?.classificationSystemEntries?.find((e) => e.isIfcSystem);
+        let ifcEntry: ClassificationSystemEntry;
+        let entries: ClassificationSystemEntry[];
+
+        if (existingIfc?.nodes) {
+          const existingCodes = new Set(collectLeaves(existingIfc.nodes).map((n) => n.code));
+          selectedCodes.forEach((c) => existingCodes.add(c));
+          const ifcData = buildClassificationFromSchemaFiltered(schemaIndex, existingCodes);
+          ifcEntry = {
+            ...existingIfc,
+            nodes: ifcData.nodes,
+            hash: ifcData.hash,
+          };
+          entries = (project!.classificationSystemEntries ?? []).map((e) =>
+            e.id === existingIfc.id ? ifcEntry : e,
+          );
+        } else {
+          const ifcData = buildClassificationFromSchemaFiltered(schemaIndex, selectedCodes);
+          ifcEntry = {
+            id: makeId(),
+            name: "Třídění dle IFC entit",
+            sourceName: "Třídění dle IFC entit",
+            nodes: ifcData.nodes,
+            hash: ifcData.hash,
+            isPrimary: false,
+            isIfcSystem: true,
+            systemKind: "ifc",
+          };
+          entries = [...(project?.classificationSystemEntries ?? []), ifcEntry];
+        }
+
+        const pureNodes = buildPureNodesWithIfcMapping(parsed.nodes, ifcEntry.id, schemaIndex);
+        const pureHash = parsed.hash ?? undefined;
+        const pureEntry: ClassificationSystemEntry = {
+          id: makeId(),
+          name: displayName,
+          sourceName: file.name,
+          nodes: pureNodes,
+          hash: pureHash,
+          isPrimary: true,
+          isPure: true,
+          systemKind: "classification",
+          mappedSystemIds: [ifcEntry.id],
+        };
+
+        const pureClassification: ClassificationData = {
+          nodes: pureNodes,
+          sourceName: displayName,
+          hash: pureHash,
+        };
+
+        if (!project) {
+          const newProject = createEmptyProject(pureClassification);
+          newProject.classificationSystemEntries = [pureEntry, ifcEntry];
+          newProject.primaryClassificationId = pureEntry.id;
+          historyRef.current = [JSON.parse(JSON.stringify(newProject))];
+          historyIndexRef.current = 0;
+          setProject(newProject);
+          setClassification(pureClassification);
+          const leaves = collectLeaves(pureNodes);
+          setSelectedCode(leaves[0]?.code);
+          saveProjectToStorage(newProject);
+          setStatus(`Vytvořeny dva klasifikační systémy a mapování: "${pureEntry.name}" + IFC`);
+        } else {
+          const allEntries = entries.map((e) => ({ ...e, isPrimary: false }));
+          const withPure = [...allEntries, pureEntry];
+          let next: Project = {
+            ...project,
+            classificationSystemEntries: withPure,
+            classification: pureClassification,
+            primaryClassificationId: pureEntry.id,
+            updatedAt: new Date().toISOString(),
+          };
+          next = propagateMappingToObjects(next);
+          updateProjectWithHistory(next);
+          setClassification(pureClassification);
+          const leaves = collectLeaves(pureNodes);
+          setSelectedCode(leaves[0]?.code);
+          setStatus(`Přidány klasifikační systém "${pureEntry.name}" a mapování na IFC`);
+        }
+        setTimeout(() => setStatus(""), 3000);
+        return;
+      }
+
+      if (!isPure && !schemaIndex) {
+        setStatus("Pro automatické vytvoření mapování je potřeba načtené IFC schema. Importuji jeden systém.");
+        setTimeout(() => setStatus(""), 4000);
+      }
     } else {
       const text = await file.text();
       const format = detectClassificationFormat(text);
       parsed = format === "simple"
         ? parseClassificationSimpleList(text, file.name)
         : parseClassificationTsv(text, file.name);
-      isPure = format === "simple";
+      const hasIfcInTreeTxt = (nodes: typeof parsed.nodes): boolean =>
+        nodes.some((n) => !!n.ifcEntity || !!n.predefinedType || (n.children?.length ? hasIfcInTreeTxt(n.children) : false));
+      isPure = format === "simple" ? true : !hasIfcInTreeTxt(parsed.nodes);
       displayName = isPure && parsed.sourceName ? parsed.sourceName : file.name.replace(/\.txt$/i, "");
+
+      // Již namapovaný systém (TSV s IFC sloupcem): vytvořit dva systémy + mapování
+      if (!isPure && schemaIndex) {
+        const selectedCodes = collectSelectedCodesFromClassificationNodes(parsed.nodes, schemaIndex);
+        const existingIfc = project?.classificationSystemEntries?.find((e) => e.isIfcSystem);
+        let ifcEntry: ClassificationSystemEntry;
+        let entries: ClassificationSystemEntry[];
+
+        if (existingIfc?.nodes) {
+          const existingCodes = new Set(collectLeaves(existingIfc.nodes).map((n) => n.code));
+          selectedCodes.forEach((c) => existingCodes.add(c));
+          const ifcData = buildClassificationFromSchemaFiltered(schemaIndex, existingCodes);
+          ifcEntry = {
+            ...existingIfc,
+            nodes: ifcData.nodes,
+            hash: ifcData.hash,
+          };
+          entries = (project!.classificationSystemEntries ?? []).map((e) =>
+            e.id === existingIfc.id ? ifcEntry : e,
+          );
+        } else {
+          const ifcData = buildClassificationFromSchemaFiltered(schemaIndex, selectedCodes);
+          ifcEntry = {
+            id: makeId(),
+            name: "Třídění dle IFC entit",
+            sourceName: "Třídění dle IFC entit",
+            nodes: ifcData.nodes,
+            hash: ifcData.hash,
+            isPrimary: false,
+            isIfcSystem: true,
+            systemKind: "ifc",
+          };
+          entries = [...(project?.classificationSystemEntries ?? []), ifcEntry];
+        }
+
+        const pureNodes = buildPureNodesWithIfcMapping(parsed.nodes, ifcEntry.id, schemaIndex);
+        const pureHash = parsed.hash ?? undefined;
+        const pureEntry: ClassificationSystemEntry = {
+          id: makeId(),
+          name: displayName,
+          sourceName: file.name,
+          nodes: pureNodes,
+          hash: pureHash,
+          isPrimary: true,
+          isPure: true,
+          systemKind: "classification",
+          mappedSystemIds: [ifcEntry.id],
+        };
+
+        const pureClassification: ClassificationData = {
+          nodes: pureNodes,
+          sourceName: displayName,
+          hash: pureHash,
+        };
+
+        if (!project) {
+          const newProject = createEmptyProject(pureClassification);
+          newProject.classificationSystemEntries = [pureEntry, ifcEntry];
+          newProject.primaryClassificationId = pureEntry.id;
+          historyRef.current = [JSON.parse(JSON.stringify(newProject))];
+          historyIndexRef.current = 0;
+          setProject(newProject);
+          setClassification(pureClassification);
+          const leaves = collectLeaves(pureNodes);
+          setSelectedCode(leaves[0]?.code);
+          saveProjectToStorage(newProject);
+          setStatus(`Vytvořeny dva klasifikační systémy a mapování: "${pureEntry.name}" + IFC`);
+        } else {
+          const allEntries = entries.map((e) => ({ ...e, isPrimary: false }));
+          const withPure = [...allEntries, pureEntry];
+          let next: Project = {
+            ...project,
+            classificationSystemEntries: withPure,
+            classification: pureClassification,
+            primaryClassificationId: pureEntry.id,
+            updatedAt: new Date().toISOString(),
+          };
+          next = propagateMappingToObjects(next);
+          updateProjectWithHistory(next);
+          setClassification(pureClassification);
+          const leaves = collectLeaves(pureNodes);
+          setSelectedCode(leaves[0]?.code);
+          setStatus(`Přidány klasifikační systém "${pureEntry.name}" a mapování na IFC`);
+        }
+        setTimeout(() => setStatus(""), 3000);
+        return;
+      }
+
+      if (!isPure && !schemaIndex) {
+        setStatus("Pro automatické vytvoření mapování je potřeba načtené IFC schema. Importuji jeden systém.");
+        setTimeout(() => setStatus(""), 4000);
+      }
     }
 
     const uploadedEntry: ClassificationSystemEntry = {
@@ -253,30 +484,73 @@ const AppInner: React.FC = () => {
       sourceName: file.name,
       nodes: parsed.nodes,
       hash: parsed.hash ?? undefined,
-      isPrimary: false,
+      isPrimary: !project,
       isPure: isPure,
+      systemKind: "classification",
     };
 
-    const next: Project = {
-      ...project,
-      classificationSystemEntries: [...(project.classificationSystemEntries ?? []), uploadedEntry],
-      updatedAt: new Date().toISOString(),
-    };
-
-    updateProjectWithHistory(next);
-    setStatus(`Klasifikace "${uploadedEntry.name}" byla importována`);
+    if (!project) {
+      // První nahraná klasifikace vytvoří nový projekt (jako primární systém).
+      const newProject = createEmptyProject(parsed);
+      newProject.classificationSystemEntries = [uploadedEntry];
+      historyRef.current = [JSON.parse(JSON.stringify(newProject))];
+      historyIndexRef.current = 0;
+      setProject(newProject);
+      setClassification(parsed);
+      const leaves = collectLeaves(parsed.nodes);
+      setSelectedCode(leaves[0]?.code);
+      saveProjectToStorage(newProject);
+      setStatus(`Klasifikace "${uploadedEntry.name}" byla načtena a projekt vytvořen`);
+    } else {
+      const next: Project = {
+        ...project,
+        classificationSystemEntries: [...(project.classificationSystemEntries ?? []), uploadedEntry],
+        updatedAt: new Date().toISOString(),
+      };
+      updateProjectWithHistory(next);
+      setStatus(`Klasifikace "${uploadedEntry.name}" byla importována`);
+    }
     setTimeout(() => setStatus(""), 3000);
   };
 
   const onUpdateObject = (obj: ProjectObject) => {
     if (!project) return;
-    const next: Project = {
+    const prevObj = project.objects[obj.code];
+    const ifcChanged =
+      prevObj &&
+      (prevObj.ifcEntity !== obj.ifcEntity ||
+        JSON.stringify(prevObj.predefinedType) !== JSON.stringify(obj.predefinedType));
+
+    let next: Project = {
       ...project,
       objects: { ...project.objects, [obj.code]: obj },
       updatedAt: new Date().toISOString(),
     };
+
+    if (ifcChanged) {
+      const primary = (project.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+      const ifcSystemId = primary?.mappedSystemIds?.find((sid) =>
+        (project.classificationSystemEntries ?? []).some((e) => e.id === sid && e.isIfcSystem)
+      );
+      if (primary?.nodes && ifcSystemId && window.confirm("Chcete tuto změnu (IFC entita / PredefinedType) promítnout do mapování klasifikace?")) {
+        const ptVal = obj.predefinedType.mode === "ENUM" && obj.predefinedType.value ? obj.predefinedType.value : undefined;
+        const hasTypes = (schemaIndex?.entities[obj.ifcEntity]?.predefinedTypeValues?.length ?? 0) > 0;
+        const mappedValue =
+          obj.ifcEntity && (ptVal ? `${obj.ifcEntity}::${ptVal}` : hasTypes ? `${obj.ifcEntity}::NOTDEFINED` : obj.ifcEntity);
+        const newNodes = updateLeafMappedValue(primary.nodes, obj.code, ifcSystemId, mappedValue);
+        const nextEntries = (next.classificationSystemEntries ?? []).map((e) =>
+          e.id === primary.id ? { ...e, nodes: newNodes } : e
+        );
+        next = {
+          ...next,
+          classificationSystemEntries: nextEntries,
+          classification: next.classification?.nodes === primary.nodes ? { ...next.classification, nodes: newNodes } : next.classification,
+        };
+        setClassification((c) => (c && c.nodes === primary.nodes ? { ...c, nodes: newNodes } : c));
+      }
+    }
+
     updateProjectWithHistory(next);
-    // Aktualizovat selectedObject, pokud je to aktuálně vybraný objekt
     if (selectedObject && selectedObject.code === obj.code) {
       setSelectedObject(obj);
     }
@@ -478,6 +752,15 @@ const AppInner: React.FC = () => {
     let nextEntries = (project.classificationSystemEntries ?? []).map((e) =>
       e.id === id ? { ...e, ...updates } : e
     );
+
+    // Když systém přejde na „Klasifikační systém“, odebrat ho z authoringToolSystemIds u primárního
+    if (updates.systemKind === "classification") {
+      nextEntries = nextEntries.map((e) => {
+        if (!e.isPrimary || !e.authoringToolSystemIds?.length) return e;
+        const filtered = e.authoringToolSystemIds.filter((sid) => sid !== id);
+        return filtered.length === e.authoringToolSystemIds.length ? e : { ...e, authoringToolSystemIds: filtered.length ? filtered : undefined };
+      });
+    }
     
     if (updates.isPrimary === true) {
       nextEntries = nextEntries.map((e) =>
@@ -508,23 +791,138 @@ const AppInner: React.FC = () => {
       setClassification(nextClassification);
     }
     
-    const next: Project = {
+    let next: Project = {
       ...project,
       classification: nextClassification,
       classificationSystemEntries: nextEntries,
       updatedAt: new Date().toISOString(),
     };
+    // Po uložení mapování primárního systému propagovat IFC hodnoty do objektů
+    if (updatedEntry?.isPrimary && updates.nodes) {
+      next = propagateMappingToObjects(next);
+    }
     updateProjectWithHistory(next);
   };
 
+  const onAddIfcClassificationSystem = useCallback(
+    (onAdded?: (entry: ClassificationSystemEntry) => void) => {
+      if (!schemaIndex) {
+        setStatus("Schema IFC není načtené. Spusťte npm run build:schema.");
+        setTimeout(() => setStatus(""), 5000);
+        return;
+      }
+      const ifcData = buildClassificationFromSchema(schemaIndex);
+    const ifcEntry: ClassificationSystemEntry = {
+      id: makeId(),
+      name: ifcData.sourceName,
+      sourceName: ifcData.sourceName,
+      nodes: ifcData.nodes,
+      hash: ifcData.hash,
+      isPrimary: true,
+      isIfcSystem: true,
+      systemKind: "ifc",
+    };
+
+      if (!project) {
+        const newProject = createEmptyProject(ifcData);
+        newProject.classificationSystemEntries = [ifcEntry];
+        historyRef.current = [JSON.parse(JSON.stringify(newProject))];
+        historyIndexRef.current = 0;
+        setProject(newProject);
+        setClassification(ifcData);
+        const leaves = collectLeaves(ifcData.nodes);
+        setSelectedCode(leaves[0]?.code);
+        saveProjectToStorage(newProject);
+        setStatus("Projekt založen na třídění dle IFC entit.");
+      } else {
+        const nextEntries = (project.classificationSystemEntries ?? []).map((e) => ({
+          ...e,
+          isPrimary: false,
+        }));
+        nextEntries.unshift(ifcEntry);
+        const next: Project = {
+          ...project,
+          classification: ifcData,
+          classificationSystemEntries: nextEntries,
+          updatedAt: new Date().toISOString(),
+        };
+        setClassification(ifcData);
+        updateProjectWithHistory(next);
+        setStatus("Třídění dle IFC entit nastaveno jako primární.");
+      }
+      setTimeout(() => setStatus(""), 3000);
+      onAdded?.(ifcEntry);
+    },
+    [schemaIndex, project]
+  );
+
+  const onAddToIfcHierarchy = useCallback(
+    (entityName: string, predefinedType?: string) => {
+      if (!project || !schemaIndex) return;
+      const ifcEntry = (project.classificationSystemEntries ?? []).find((e) => e.isIfcSystem);
+      if (!ifcEntry?.nodes) return;
+      const currentCodes = new Set(collectLeaves(ifcEntry.nodes).map((n) => n.code));
+      const entity = schemaIndex.entities[entityName];
+      const hasPredefinedTypes = (entity?.predefinedTypeValues?.length ?? 0) > 0;
+      const newCode = predefinedType
+        ? `${entityName}::${predefinedType}`
+        : hasPredefinedTypes
+          ? `${entityName}::NOTDEFINED`
+          : entityName;
+      currentCodes.add(newCode);
+      const data = buildClassificationFromSchemaFiltered(schemaIndex, currentCodes);
+      const nextEntries = (project.classificationSystemEntries ?? []).map((e) =>
+        e.id === ifcEntry.id ? { ...e, nodes: data.nodes, hash: data.hash } : e
+      );
+      const next: Project = {
+        ...project,
+        classificationSystemEntries: nextEntries,
+        updatedAt: new Date().toISOString(),
+      };
+      if (ifcEntry.isPrimary) {
+        next.classification = { nodes: data.nodes, sourceName: data.sourceName, hash: data.hash };
+        setClassification(next.classification);
+      }
+      updateProjectWithHistory(next);
+      setStatus(`Do hierarchie přidáno: ${newCode}`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project, schemaIndex],
+  );
+
   const onDeleteClassificationSystemEntry = (id: string) => {
     if (!project) return;
-    const nextEntries = (project.classificationSystemEntries ?? []).filter((e) => e.id !== id);
-    const next: Project = {
+    const entries = project.classificationSystemEntries ?? [];
+    const deletedEntry = entries.find((e) => e.id === id);
+    const nextEntries = entries.filter((e) => e.id !== id);
+
+    if (nextEntries.length === 0) {
+      clearProject();
+      return;
+    }
+
+    let next: Project = {
       ...project,
       classificationSystemEntries: nextEntries,
       updatedAt: new Date().toISOString(),
     };
+
+    if (deletedEntry?.isPrimary) {
+      const newPrimary = nextEntries[0];
+      next = {
+        ...next,
+        classificationSystemEntries: nextEntries.map((e) =>
+          e.id === newPrimary.id ? { ...e, isPrimary: true } : { ...e, isPrimary: false }
+        ),
+      };
+      next.classification = {
+        nodes: newPrimary.nodes,
+        sourceName: newPrimary.sourceName ?? newPrimary.name,
+        hash: newPrimary.hash,
+      };
+      setClassification(next.classification);
+    }
+
     updateProjectWithHistory(next);
   };
 
@@ -682,7 +1080,7 @@ const AppInner: React.FC = () => {
             disabled={!project}
             title="Klikněte pro úpravu údajů projektu"
           >
-            {project?.name || "Načítám..."}
+            {project?.name || "Nový projekt"}
             <svg 
               className="w-4 h-4 text-slate-400 group-hover:text-indigo-500" 
               fill="none" 
@@ -723,9 +1121,10 @@ const AppInner: React.FC = () => {
           </button>
           <button
             className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50"
-            onClick={() => void loadDefaultClassification()}
+            onClick={clearProject}
+            title="Vyčistit projekt a začít znovu"
           >
-            Reset
+            Vyčistit
           </button>
           <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50">
             <input
@@ -805,7 +1204,7 @@ const AppInner: React.FC = () => {
             selectedCode={selectedCode}
             onSelectLeaf={onSelectLeaf}
             onUploadFile={onUploadClassification}
-            onResetDefault={() => void loadDefaultClassification()}
+            onResetDefault={clearProject}
             phases={project?.phases ?? []}
             onAddPhase={onAddPhase}
             onUpdatePhase={onUpdatePhase}
@@ -820,6 +1219,8 @@ const AppInner: React.FC = () => {
             onAddClassificationSystemEntry={onAddClassificationSystemEntry}
             onUpdateClassificationSystemEntry={onUpdateClassificationSystemEntry}
             onDeleteClassificationSystemEntry={onDeleteClassificationSystemEntry}
+            schemaIndex={schemaIndex}
+            onAddIfcClassificationSystem={onAddIfcClassificationSystem}
           />
         </div>
         
@@ -852,6 +1253,7 @@ const AppInner: React.FC = () => {
               codeLists={project?.codeLists ?? []}
               classificationSystemEntries={project?.classificationSystemEntries ?? []}
               onSaveEnumAsCodeList={onSaveEnumAsCodeList}
+              onAddToIfcHierarchy={onAddToIfcHierarchy}
             />
           )}
         </div>

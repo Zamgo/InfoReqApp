@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import type { ClassificationSystemEntry } from "../../project/types";
 import type { ClassificationNode } from "../../classification/types";
+import type { SchemaIndex } from "../../schema/types";
 import { collectLeaves } from "../../classification/parser";
 // Vzorové soubory jsou v public/ – stahují se přímo (hlavičky dle vašich souborů)
 const BASE = typeof import.meta !== "undefined" && import.meta.env?.BASE_URL ? import.meta.env.BASE_URL : "/";
@@ -8,6 +9,8 @@ const SAMPLE_CLASSIFICATION_URL = `${BASE}Vzorový_KS.xlsx`;
 const SAMPLE_MAPPING_URL = `${BASE}Vzorový_KS_mapování.xlsx`;
 import { makeId } from "../../utils/id";
 import { ClassificationEditor } from "./ClassificationEditor";
+import { IfcEntitySelectorDialog } from "./IfcEntitySelectorDialog";
+import { MappingEditorDialog } from "./MappingEditorDialog";
 
 /** Add empty mapped value for systemId to every node */
 function addMappedValueToNodes(nodes: ClassificationNode[], systemId: string): ClassificationNode[] {
@@ -38,6 +41,9 @@ interface Props {
   onDelete: (id: string) => void;
   onUploadFile: (file: File) => Promise<void>;
   onResetDefault: () => void;
+  schemaIndex?: SchemaIndex | null;
+  /** Volitelně callback (entry) => void – po přidání IFC systému se zavolá s novým záznamem (např. pro otevření editoru). */
+  onAddIfcClassificationSystem?: (onAdded?: (entry: ClassificationSystemEntry) => void) => void;
 }
 
 export const ClassificationSystemsManager: React.FC<Props> = ({
@@ -47,14 +53,16 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
   onDelete,
   onUploadFile,
   onResetDefault,
+  schemaIndex,
+  onAddIfcClassificationSystem,
 }) => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editingSystem, setEditingSystem] = useState<ClassificationSystemEntry | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [showMapDialog, setShowMapDialog] = useState(false);
-  const [mapTargetId, setMapTargetId] = useState<string>("");
-  const [mapSourceId, setMapSourceId] = useState<string>("");
   const [showSampleDropdown, setShowSampleDropdown] = useState(false);
+  const [showIfcSelectorDialog, setShowIfcSelectorDialog] = useState(false);
+  const [showNewSystemMenu, setShowNewSystemMenu] = useState(false);
 
   const sortEntries = (list: ClassificationSystemEntry[]) =>
     [...list].sort((a, b) => {
@@ -63,14 +71,24 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
       return (a.name || "").localeCompare(b.name || "");
     });
 
-  const pureSystems = useMemo(
-    () => sortEntries(systems.filter((s) => !isMappedEntry(s))),
-    [systems],
-  );
+  const ifcSystem = useMemo(() => systems.find((s) => s.isIfcSystem), [systems]);
+  const primarySystem = useMemo(() => systems.find((s) => s.isPrimary), [systems]);
+  const systemsWithoutIfc = useMemo(() => systems.filter((s) => !s.isIfcSystem), [systems]);
+  /** Jedna tabulka – všechny systémy (IFC + čisté + namapované), seřazené */
+  const allSystemsSorted = useMemo(() => sortEntries(systems), [systems]);
   const mappedSystems = useMemo(
-    () => sortEntries(systems.filter((s) => isMappedEntry(s))),
-    [systems],
+    () => sortEntries(systemsWithoutIfc.filter((s) => isMappedEntry(s))),
+    [systemsWithoutIfc],
   );
+  /** Systémy s uzly – vhodné jako cíl mapování */
+  const systemsWithNodes = useMemo(
+    () => allSystemsSorted.filter((s) => s.nodes && collectLeaves(s.nodes).length > 0),
+    [allSystemsSorted],
+  );
+
+  /** Efektivní typ třídění (pro stará data bez systemKind) */
+  const effectiveSystemKind = (e: ClassificationSystemEntry): "ifc" | "authoring" | "classification" =>
+    e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification");
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -112,6 +130,24 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
     });
   };
 
+  const handleDeleteSystem = (sys: ClassificationSystemEntry) => {
+    const name = sys.name || "tento klasifikační systém";
+    if (systems.length === 1) {
+      if (!window.confirm(`Odstraněním posledního klasifikačního systému (${name}) zrušíte projekt. Chcete pokračovat?`)) {
+        return;
+      }
+    } else if (sys.isPrimary) {
+      if (!window.confirm(`Odstranit primární systém „${name}"? Jako primární bude automaticky nastaven jiný dostupný systém.`)) {
+        return;
+      }
+    } else {
+      if (!window.confirm(`Opravdu chcete odstranit klasifikační systém „${name}"?`)) {
+        return;
+      }
+    }
+    onDelete(sys.id);
+  };
+
   const handleSaveEdit = (updatedSystem: ClassificationSystemEntry) => {
     if (isCreatingNew) {
       onAdd(updatedSystem);
@@ -123,6 +159,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
         mappedSystemIds: updatedSystem.mappedSystemIds,
         authoringToolSystemIds: updatedSystem.authoringToolSystemIds,
         isPure: updatedSystem.isPure,
+        ...(updatedSystem.systemKind != null ? { systemKind: updatedSystem.systemKind } : {}),
       });
     }
     setEditingSystem(null);
@@ -133,6 +170,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
       id: makeId(),
       name: "Nový klasifikační systém",
       nodes: [],
+      systemKind: "classification",
     };
     setEditingSystem(newSystem);
     setIsCreatingNew(true);
@@ -143,27 +181,15 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
     setIsCreatingNew(false);
   };
 
-  const availableMapSources = useMemo(
+  /** Systémy, které lze připojit k primárnímu (mapování jen na primární) */
+  const availableMapSourcesForPrimary = useMemo(
     () => {
-      if (!mapTargetId) return [];
-      const target = systems.find((s) => s.id === mapTargetId);
-      const existing = target?.mappedSystemIds ?? [];
-      return systems.filter((s) => s.id !== mapTargetId && !existing.includes(s.id));
+      if (!primarySystem) return [];
+      const existing = primarySystem.mappedSystemIds ?? [];
+      return systems.filter((s) => s.id !== primarySystem.id && !existing.includes(s.id));
     },
-    [systems, mapTargetId],
+    [systems, primarySystem],
   );
-
-  const handleConfirmMap = () => {
-    if (!mapTargetId || !mapSourceId) return;
-    const target = systems.find((s) => s.id === mapTargetId);
-    if (!target?.nodes) return;
-    const nextMappedIds = [...(target.mappedSystemIds ?? []), mapSourceId];
-    const nextNodes = addMappedValueToNodes(target.nodes, mapSourceId);
-    onUpdate(mapTargetId, { mappedSystemIds: nextMappedIds, nodes: nextNodes });
-    setShowMapDialog(false);
-    setMapTargetId("");
-    setMapSourceId("");
-  };
 
   const handleDownloadSample = (variant: "classification" | "mapping") => {
     const url = variant === "classification" ? SAMPLE_CLASSIFICATION_URL : SAMPLE_MAPPING_URL;
@@ -181,17 +207,17 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       <div className="flex-shrink-0">
-        <div className="text-sm font-semibold text-slate-800">Klasifikační systémy a mapování</div>
+        <div className="text-sm font-semibold text-slate-800">Třídění a mapování prvků</div>
         <div className="text-xs text-slate-500">
-          Klasifikační systémy (kód, popis, úroveň) a namapované klasifikační systémy (např. IFC entita, Kategorie RVT). Hierarchie se zakládá na namapovaných.
+          Třídící systémy (IFC, autorský nástroj, klasifikační systém). Pouze klasifikační systémy se zobrazují v požadavcích na klasifikaci.
         </div>
       </div>
 
-      {/* Klasifikační systémy – samostatná karta */}
+      {/* Třídící systémy – jedna tabulka (IFC + čisté + namapované) */}
       <div className="flex-shrink-0 rounded-lg border-2 border-slate-200 bg-slate-50/50 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-100 px-3 py-2">
           <span className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-            Klasifikační systémy
+            Třídící systémy
           </span>
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative">
@@ -238,167 +264,117 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
             <button
               className="rounded border border-slate-300 bg-white px-2.5 py-1 text-sm hover:bg-slate-50"
               onClick={onResetDefault}
+              title="Vyčistit projekt a začít znovu"
             >
-              Načíst výchozí
+              Vyčistit projekt
             </button>
-            <button
-              className="rounded bg-slate-600 px-2.5 py-1 text-sm font-semibold text-white hover:bg-slate-500"
-              onClick={handleCreateNewWithEditor}
-            >
-              + Nový systém
-            </button>
+            <div className="relative">
+              <button
+                type="button"
+                className="rounded bg-slate-600 px-2.5 py-1 text-sm font-semibold text-white hover:bg-slate-500"
+                onClick={() => setShowNewSystemMenu((v) => !v)}
+                title="Přidat nový třídící systém"
+              >
+                + Nový systém
+              </button>
+              {showNewSystemMenu && (
+                <>
+                  <div className="absolute right-0 top-full z-20 mt-1 min-w-[280px] rounded border border-slate-200 bg-white py-1 shadow-lg">
+                    {schemaIndex != null && onAddIfcClassificationSystem && !ifcSystem && (
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
+                        onClick={() => {
+                          setShowNewSystemMenu(false);
+                          onAddIfcClassificationSystem(() => {
+                            setShowIfcSelectorDialog(true);
+                          });
+                        }}
+                        title="Založit projekt na IFC entitách; otevře výběr IFC tříd a typů"
+                      >
+                        <span className="font-medium">Začít s tříděním dle IFC entit</span>
+                        <span className="block text-xs text-slate-500">Výběr IFC tříd a PredefinedType</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="w-full px-3 py-2 text-left text-sm hover:bg-slate-100"
+                      onClick={() => {
+                        setShowNewSystemMenu(false);
+                        handleCreateNewWithEditor();
+                      }}
+                      title="Prázdný klasifikační systém; otevře dialog úprav"
+                    >
+                      <span className="font-medium">Začít čistý klasifikační systém</span>
+                      <span className="block text-xs text-slate-500">Prázdná hierarchie, vyplníte nebo importujete</span>
+                    </button>
+                  </div>
+                  <div
+                    className="fixed inset-0 z-10"
+                    aria-hidden
+                    onClick={() => setShowNewSystemMenu(false)}
+                  />
+                </>
+              )}
+            </div>
           </div>
         </div>
-        <div className="max-h-48 overflow-auto">
-          {pureSystems.length > 0 ? (
+        <div className="max-h-64 overflow-auto">
+          {allSystemsSorted.length > 0 ? (
             <table className="min-w-full text-sm">
               <thead className="sticky top-0 bg-slate-100 text-left text-xs uppercase text-slate-500">
                 <tr>
+                  <th className="px-3 py-2">Třídění</th>
                   <th className="px-3 py-2">Název</th>
                   <th className="px-3 py-2">Položky</th>
                   <th className="px-3 py-2 text-right">Akce</th>
                 </tr>
               </thead>
               <tbody>
-                {pureSystems.map((sys) => renderSystemRow(sys))}
+                {allSystemsSorted.map((sys) => renderSystemRow(sys))}
               </tbody>
             </table>
           ) : (
             <div className="px-3 py-4 text-sm text-slate-500">
-              Žádné klasifikační systémy. Stáhněte vzorový soubor, vyplňte data a importujte TXT nebo XLSX.
+              Žádné třídící systémy. Stáhněte vzorový soubor, importujte TXT/XLSX nebo přidejte systém (IFC / čistý).
             </div>
           )}
         </div>
       </div>
 
-      {/* Namapované klasifikační systémy – samostatná karta, mapování jen zde */}
-      <div className="min-h-0 flex-1 rounded-lg border-2 border-indigo-200 bg-indigo-50/30 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-200 bg-indigo-100/80 px-3 py-2">
-          <span className="text-sm font-semibold uppercase tracking-wide text-indigo-800">
-            Namapované klasifikační systémy
-          </span>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              className="rounded border border-indigo-400 bg-indigo-600 px-2.5 py-1 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={() => {
-                setMapTargetId(mappedSystems[0]?.id ?? "");
-                setMapSourceId("");
-                setShowMapDialog(true);
-              }}
-              disabled={mappedSystems.length === 0}
-              title="Připojit další klasifikační systém k namapovanému systému"
-            >
-              Mapovat
-            </button>
-            <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-indigo-300 bg-white px-2.5 py-1 text-sm text-indigo-700 hover:bg-indigo-50">
-              <input type="file" accept=".txt,.xlsx" onChange={handleFileChange} className="hidden" />
-              <span>Importovat TXT / XLSX</span>
-            </label>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto">
-          {mappedSystems.length > 0 ? (
-            <table className="min-w-full text-sm">
-              <thead className="sticky top-0 bg-indigo-50 text-left text-xs uppercase text-indigo-700">
-                <tr>
-                  <th className="px-3 py-2">Název</th>
-                  <th className="px-3 py-2">Položky</th>
-                  <th className="px-3 py-2 text-right">Akce</th>
-                </tr>
-              </thead>
-              <tbody>
-                {mappedSystems.map((sys) => renderSystemRow(sys))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="px-3 py-4 text-sm text-slate-500">
-              Žádné namapované klasifikační systémy. Načtěte výchozí klasifikaci výše, pak zde tlačítkem „Mapovat“ připojte např. Kategorie RVT.
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Mapovat – dialog pro připojení systému k namapovanému */}
-      {showMapDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-lg bg-white p-4 shadow-xl">
-            <h3 className="mb-3 text-lg font-semibold text-slate-800">Mapovat</h3>
-            <p className="mb-3 text-xs text-slate-500">
-              Vyberte namapovaný systém, na který chcete připojit další klasifikační systém (sloupec).
-            </p>
-            <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">
-                  Systém, na který připojit mapování
-                </label>
-                <select
-                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                  value={mapTargetId}
-                  onChange={(e) => {
-                    setMapTargetId(e.target.value);
-                    setMapSourceId("");
-                  }}
-                >
-                  <option value="">— Vyberte —</option>
-                  {mappedSystems.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                      {s.isPrimary ? " (primární)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-slate-600">
-                  Systém k připojení
-                </label>
-                <select
-                  className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
-                  value={mapSourceId}
-                  onChange={(e) => setMapSourceId(e.target.value)}
-                  disabled={!mapTargetId || availableMapSources.length === 0}
-                >
-                  <option value="">— Vyberte —</option>
-                  {availableMapSources.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-                {mapTargetId && availableMapSources.length === 0 && (
-                  <p className="mt-1 text-xs text-amber-600">
-                    Žádný další systém k připojení (všechny už jsou namapované).
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
-                onClick={() => {
-                  setShowMapDialog(false);
-                  setMapTargetId("");
-                  setMapSourceId("");
-                }}
-              >
-                Zrušit
-              </button>
-              <button
-                type="button"
-                className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                onClick={handleConfirmMap}
-                disabled={!mapTargetId || !mapSourceId}
-              >
-                Potvrdit
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Dialog úpravy mapování – tabulka namapovaných entit + možnost připojit další systém */}
+      {showMapDialog && primarySystem && (
+        <MappingEditorDialog
+          primarySystem={primarySystem}
+          allSystems={systems}
+          onUpdateNodes={(nodes) => onUpdate(primarySystem.id, { nodes })}
+          onClose={() => setShowMapDialog(false)}
+          onAddMappedSystem={(systemId) => {
+            if (!primarySystem.nodes) return;
+            const nextMappedIds = [...(primarySystem.mappedSystemIds ?? []), systemId];
+            const nextNodes = addMappedValueToNodes(primarySystem.nodes, systemId);
+            onUpdate(primarySystem.id, { mappedSystemIds: nextMappedIds, nodes: nextNodes });
+          }}
+          availableToAdd={availableMapSourcesForPrimary}
+          onOpenIfcSelector={primarySystem.isIfcSystem ? () => setShowIfcSelectorDialog(true) : undefined}
+          schemaIndex={schemaIndex}
+        />
       )}
 
-      {/* Classification Editor Modal */}
+      {/* Dialog výběru IFC tříd a typů – jen pro IFC systém (nový i dodatečné úpravy) */}
+      {showIfcSelectorDialog && schemaIndex && ifcSystem && (
+        <IfcEntitySelectorDialog
+          schemaIndex={schemaIndex}
+          currentNodes={ifcSystem.nodes ?? []}
+          onSave={(nodes) => {
+            onUpdate(ifcSystem.id, { nodes });
+            setShowIfcSelectorDialog(false);
+          }}
+          onClose={() => setShowIfcSelectorDialog(false)}
+        />
+      )}
+
+      {/* Classification Editor Modal – tabulka s úpravou systému, mapováním, přidáním řádků a úrovněmi (pro primární IFC i ne-IFC) */}
       {editingSystem && (
         <ClassificationEditor
           system={editingSystem}
@@ -406,6 +382,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
           onSave={handleSaveEdit}
           onClose={handleCloseEditor}
           hideMapButton={!isMappedEntry(editingSystem)}
+          schemaIndex={schemaIndex}
         />
       )}
     </div>
@@ -414,9 +391,29 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
   function renderSystemRow(sys: ClassificationSystemEntry) {
               const isExpanded = expanded.has(sys.id);
               const leafCount = sys.nodes ? collectLeaves(sys.nodes).length : 0;
+              const kind = effectiveSystemKind(sys);
+              const isIfc = sys.isIfcSystem === true;
               return (
                 <React.Fragment key={sys.id}>
                   <tr className={`border-t border-slate-200 ${sys.isPrimary ? "bg-indigo-50/50" : ""}`}>
+                    <td className="px-3 py-2 align-top">
+                      {isIfc ? (
+                        <span className="text-xs font-medium text-slate-700">IFC</span>
+                      ) : (
+                        <select
+                          className="w-full min-w-[140px] rounded border border-slate-300 px-2 py-1 text-xs"
+                          value={kind}
+                          onChange={(e) => {
+                            const v = e.target.value as "authoring" | "classification";
+                            if (v === "authoring" || v === "classification") onUpdate(sys.id, { systemKind: v });
+                          }}
+                          title={kind === "classification" ? "Zobrazí se v požadavcích na klasifikaci" : "Pouze pro třídění (autorský nástroj)"}
+                        >
+                          <option value="classification">Klasifikační systém</option>
+                          <option value="authoring">Autorský nástroj</option>
+                        </select>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
                         <button
@@ -440,6 +437,11 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                               Zdroj: {sys.sourceName}
                             </span>
                           )}
+                          {sys.isPrimary && (sys.mappedSystemIds?.length ?? 0) > 0 && (
+                            <span className="mt-0.5 text-[11px] text-indigo-600">
+                              Mapování: {(sys.mappedSystemIds ?? []).map((id) => systems.find((s) => s.id === id)?.name ?? id).join(", ")}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -447,42 +449,52 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                       {leafCount > 0 ? `${leafCount} položek` : "—"}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button
-                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
-                          onClick={() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] })}
-                          title="Upravit klasifikaci"
-                        >
-                          Upravit
-                        </button>
+                      <div className="flex items-center justify-end gap-1 flex-wrap">
+                        {sys.isPrimary ? (
+                          <button
+                            type="button"
+                            className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                            onClick={() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] })}
+                            disabled={!sys.nodes || collectLeaves(sys.nodes).length === 0}
+                            title="Upravit systém a mapování"
+                          >
+                            Upravit nebo mapovat
+                          </button>
+                        ) : (
+                          <button
+                            className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                            onClick={() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] })}
+                            title="Upravit klasifikaci"
+                          >
+                            Upravit
+                          </button>
+                        )}
                         {sys.isPrimary ? (
                           <span className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700">
-                            ✓ Nastaveno jako primární
+                            ✓ Primární
                           </span>
                         ) : (
-                          <>
-                            <button
-                              className="rounded border border-indigo-300 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50"
-                              onClick={() => handleSetPrimary(sys.id)}
-                              title="Nastavit jako primární"
-                            >
-                              Nastavit primární
-                            </button>
-                            <button
-                              className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-                              onClick={() => onDelete(sys.id)}
-                              title="Smazat"
-                            >
-                              Smazat
-                            </button>
-                          </>
+                          <button
+                            className="rounded border border-indigo-300 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50"
+                            onClick={() => handleSetPrimary(sys.id)}
+                            title="Nastavit jako primární"
+                          >
+                            Nastavit primární
+                          </button>
                         )}
+                        <button
+                          className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                          onClick={() => handleDeleteSystem(sys)}
+                          title="Odstranit systém"
+                        >
+                          Odstranit
+                        </button>
                       </div>
                     </td>
                   </tr>
                   {isExpanded && (
                     <tr className="border-t border-slate-200 bg-slate-50/40">
-                      <td className="px-3 py-2" colSpan={3}>
+                      <td className="px-3 py-2" colSpan={4}>
                         <div className="grid grid-cols-1 gap-2">
                           <div className="grid grid-cols-2 gap-2">
                             <div>

@@ -64,6 +64,8 @@ interface Props {
   codeLists: CodeList[];
   classificationSystemEntries: ClassificationSystemEntry[];
   onSaveEnumAsCodeList: (opts: { objectCode: string; propertyId: string; name: string; values: string[]; link: boolean }) => void;
+  /** Přidat vybranou entitu/PredefinedType do IFC hierarchie projektu (když není v hierarchii) */
+  onAddToIfcHierarchy?: (entityName: string, predefinedType?: string) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -1154,7 +1156,7 @@ const generateHumanReadable = (
   return { applicability, requirements };
 };
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, onSaveEnumAsCodeList }) => {
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, onSaveEnumAsCodeList, onAddToIfcHierarchy }) => {
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [idsSubTab, setIdsSubTab] = useState<IdsSubTabKey>("readable");
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null); // null = "Vše"
@@ -1179,6 +1181,45 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     const ensureUserDefined = values.includes("USERDEFINED") ? values : [...values, "USERDEFINED"];
     return ensureUserDefined.length ? ensureUserDefined : ["USERDEFINED"];
   }, [selectedEntity]);
+
+  // Třídění dle IFC entit (isIfcSystem) se v sekci Klasifikace nezobrazuje – entita a typ jsou v Identifikačních údajích
+  const primaryEntry = useMemo(
+    () => classificationSystemEntries.find((e) => e.isPrimary),
+    [classificationSystemEntries],
+  );
+  const isIfcPrimary = primaryEntry?.isIfcSystem === true;
+  const classificationsWithoutIfc = useMemo(
+    () =>
+      object.requirements.classifications.filter((cls) => {
+        const entry = classificationSystemEntries.find((e) => e.id === cls.systemEntryId);
+        return !entry?.isIfcSystem;
+      }),
+    [object.requirements.classifications, classificationSystemEntries],
+  );
+  /** Pouze systémy typu „Klasifikační systém“ – zobrazují se v požadavcích na klasifikaci (ne IFC, ne autorský nástroj). */
+  const classificationSystemEntriesForRequirements = useMemo(() => {
+    return classificationSystemEntries.filter((e) => {
+      const kind = e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification");
+      return kind === "classification";
+    });
+  }, [classificationSystemEntries]);
+
+  /** Kódy listů v IFC hierarchii (entita nebo entity::predefinedType) – pro kontrolu, zda je výběr v hierarchii */
+  const ifcHierarchyCodes = useMemo(() => {
+    if (!primaryEntry?.isIfcSystem || !primaryEntry.nodes) return new Set<string>();
+    return new Set(collectLeaves(primaryEntry.nodes).map((n) => n.code));
+  }, [primaryEntry]);
+
+  const currentEntityCode = useMemo(() => {
+    if (!object.ifcEntity) return null;
+    if (object.predefinedType.mode === "ENUM" && object.predefinedType.value) {
+      return `${object.ifcEntity}::${object.predefinedType.value}`;
+    }
+    const entityHasPredefinedTypes = (schema?.entities[object.ifcEntity]?.predefinedTypeValues?.length ?? 0) > 0;
+    return entityHasPredefinedTypes ? `${object.ifcEntity}::NOTDEFINED` : object.ifcEntity;
+  }, [object.ifcEntity, object.predefinedType, schema]);
+
+  const isCurrentSelectionInHierarchy = currentEntityCode != null && ifcHierarchyCodes.has(currentEntityCode);
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [customGroupNames, setCustomGroupNames] = useState<Record<string, string>>({});
@@ -1795,8 +1836,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const selectAllClassifications = () => {
-    // Nevybírat chráněné klasifikace (readOnly)
-    const selectableIds = object.requirements.classifications
+    // Nevybírat chráněné klasifikace (readOnly); pouze zobrazené (bez IFC primárního)
+    const selectableIds = classificationsWithoutIfc
       .filter((c) => !c.readOnly)
       .map((c) => c.id);
     setSelectedClassifications(new Set(selectableIds));
@@ -2030,11 +2071,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Název objektu */}
+      {/* Název objektu: při primárním IFC = Entita.PredefinedType; při klasifikačním systému = název z klasifikace */}
       <div className="border-b border-indigo-200 bg-gradient-to-r from-indigo-50 to-white px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="h-8 w-1 rounded-full bg-indigo-500"></div>
-          <div className="text-xl font-bold text-slate-800">{node.description || node.code}</div>
+          <div className="text-xl font-bold text-slate-800">
+            {isIfcPrimary && object.ifcEntity
+              ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
+              : (node.description || node.code)}
+          </div>
         </div>
       </div>
 
@@ -2044,31 +2089,23 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Identifikační údaje</div>
           <div className="h-px flex-1 bg-slate-200"></div>
         </div>
-        {(node.ifcEntity != null && node.ifcEntity !== "" && object.ifcEntity !== node.ifcEntity) && (
-          <div className="mb-2 flex items-center justify-between gap-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs text-amber-800">
-            <span>V hierarchii / klasifikačním systému je pro tento objekt uvedena entita <strong>{node.ifcEntity}</strong>. Údaje lze odvodit z klasifikace.</span>
+        {isIfcPrimary && object.ifcEntity && !isCurrentSelectionInHierarchy && onAddToIfcHierarchy && (
+          <div className="mb-2 flex items-center justify-between gap-2 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800">
+            <span>Vybraná entita <strong>{object.ifcEntity}</strong>
+              {object.predefinedType.mode === "ENUM" && object.predefinedType.value ? (
+                <> a typ <strong>{object.predefinedType.value}</strong></>
+              ) : null}
+              {" "}není v hierarchii projektu. Můžete ji přidat do hierarchie.
+            </span>
             <button
               type="button"
-              className="flex-shrink-0 rounded border border-amber-300 bg-amber-100 px-2 py-1 text-xs font-medium text-amber-900 hover:bg-amber-200"
+              className="flex-shrink-0 rounded border border-indigo-300 bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-200"
               onClick={() => {
-                const phaseIds = phases.map((p) => p.id);
-                const primaryEntry = classificationSystemEntries.find((e) => e.isPrimary);
-                const authoringIds = (primaryEntry?.authoringToolSystemIds?.length
-                  ? primaryEntry.authoringToolSystemIds
-                  : primaryEntry?.mappedSystemIds) ?? [];
-                const authoringFromNode = authoringIds
-                  .map((systemEntryId) => ({ systemEntryId, code: node.mappedValues?.[systemEntryId] ?? "" }))
-                  .filter((ac) => ac.code);
-                updateObject({
-                  ifcEntity: node.ifcEntity ?? "",
-                  predefinedType: node.predefinedType ? { mode: "ENUM", value: node.predefinedType } : { mode: "NONE" },
-                  ifcEntityPhases: phaseIds,
-                  predefinedTypePhases: phaseIds,
-                  authoringClassifications: authoringFromNode.length > 0 ? authoringFromNode : undefined,
-                });
+                const pt = object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : undefined;
+                onAddToIfcHierarchy(object.ifcEntity ?? "", pt);
               }}
             >
-              Použít z hierarchie
+              Přidat do hierarchie
             </button>
           </div>
         )}
@@ -2152,9 +2189,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             const authoringSystemIds = (primaryEntry?.authoringToolSystemIds?.length
               ? primaryEntry.authoringToolSystemIds
               : primaryEntry?.mappedSystemIds) ?? [];
+            const effectiveKind = (e: ClassificationSystemEntry) =>
+              e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification");
             const authoringEntries = authoringSystemIds
               .map((id) => classificationSystemEntries.find((e) => e.id === id))
-              .filter((e): e is ClassificationSystemEntry => !!e);
+              .filter((e): e is ClassificationSystemEntry => !!e && effectiveKind(e) === "authoring");
             const getAuthoringCode = (systemEntryId: string) => {
               const fromObject = (object.authoringClassifications ?? []).find((a) => a.systemEntryId === systemEntryId)?.code ?? "";
               if (fromObject) return fromObject;
@@ -2209,6 +2248,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
 
         <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+          {!isIfcPrimary && (
           <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
@@ -2220,9 +2260,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 />
               </div>
             </div>
-            {object.requirements.classifications.length > 0 ? (
+            {classificationsWithoutIfc.length > 0 ? (
               <div className="space-y-2">
-                {object.requirements.classifications.map((cls, idx) => {
+                {classificationsWithoutIfc.map((cls, idx) => {
                   // Look up system name from entries first, fall back to stored value
                   const displaySystemName = cls.systemEntryId 
                     ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name 
@@ -2250,6 +2290,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               Upravit klasifikace →
             </button>
           </div>
+          )}
 
           {/* Karty v použitelnosti – stejná mřížka jako Klasifikace */}
           {/* Atributy v použitelnosti – kompaktní zobrazení */}
@@ -4720,7 +4761,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addClassification}>
                   Přidat klasifikaci
                 </button>
-                {object.requirements.classifications.some((c) => !c.readOnly) && (
+                {classificationsWithoutIfc.some((c) => !c.readOnly) && (
                   <>
                     <div className="h-4 w-px bg-slate-300" />
                     <button
@@ -4740,7 +4781,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </>
                 )}
               </div>
-              {object.requirements.classifications.length === 0 ? (
+              {classificationsWithoutIfc.length === 0 ? (
                 <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
                   Žádné klasifikace. Přidejte klasifikaci.
                 </div>
@@ -4774,7 +4815,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </tr>
                   </thead>
                   <tbody>
-                    {object.requirements.classifications.map((cls) => (
+                    {classificationsWithoutIfc.map((cls) => (
                       <tr key={cls.id} className="border-t border-slate-200">
                         <td className="px-2 py-2">
                           <input
@@ -4811,7 +4852,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             value={cls.systemEntryId ?? ""}
                             onChange={(e) => {
                               const selectedEntryId = e.target.value;
-                              const selectedEntry = classificationSystemEntries.find((s) => s.id === selectedEntryId);
+                              const selectedEntry = classificationSystemEntriesForRequirements.find((s) => s.id === selectedEntryId);
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) =>
                                   c.id === cls.id
@@ -4827,7 +4868,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             disabled={cls.readOnly}
                           >
                             <option value="">— Vyberte systém —</option>
-                            {classificationSystemEntries.map((entry) => (
+                            {classificationSystemEntriesForRequirements.map((entry) => (
                               <option key={entry.id} value={entry.id}>
                                 {entry.name}
                               </option>

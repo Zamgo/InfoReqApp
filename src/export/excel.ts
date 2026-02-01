@@ -319,9 +319,11 @@ const createObjectsSheet = (
   const authoringSystemIds = (primaryEntry?.authoringToolSystemIds?.length
     ? primaryEntry.authoringToolSystemIds
     : primaryEntry?.mappedSystemIds) ?? [];
+  const effectiveKind = (e: ClassificationSystemEntry) =>
+    e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification");
   const authoringEntries = authoringSystemIds
     .map((id) => classificationSystemEntries.find((e) => e.id === id))
-    .filter((e): e is ClassificationSystemEntry => !!e);
+    .filter((e): e is ClassificationSystemEntry => !!e && effectiveKind(e) === "authoring");
 
   const headers = [
     "code",
