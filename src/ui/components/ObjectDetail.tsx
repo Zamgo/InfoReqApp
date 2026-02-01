@@ -8,6 +8,7 @@ import type { ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, P
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
 import { TranslatedLabel } from "./TranslatedLabel";
+import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition } from "../../translation/translators/BsddTranslator";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable";
@@ -55,6 +56,69 @@ const PhaseSelector: React.FC<{ phases: Phase[]; value?: string[]; onChange: (id
   );
 };
 
+/** Dialog pro úpravu Popis, Poznámka, Příklady (tužka). */
+const PropertyRowEditDialog: React.FC<{
+  prop: PropertyRequirement;
+  onSave: (patch: { popis?: string; note?: string; priklady?: string }) => void;
+  onClose: () => void;
+}> = ({ prop, onSave, onClose }) => {
+  const [popis, setPopis] = useState(prop.popis ?? "");
+  const [note, setNote] = useState(prop.note ?? "");
+  const [priklady, setPriklady] = useState(prop.priklady ?? "");
+  const handleSave = () => {
+    onSave({ popis: popis || undefined, note: note || undefined, priklady: priklady || undefined });
+  };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-auto rounded-lg bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <h3 className="mb-3 text-lg font-semibold text-slate-800">
+          Popis, poznámka, příklady {prop.propertyName ? `– ${prop.propertyName}` : ""}
+        </h3>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Popis</label>
+            <textarea
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm min-h-[80px]"
+              value={popis}
+              onChange={(e) => setPopis(e.target.value)}
+              placeholder="Popis"
+              rows={4}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Poznámka</label>
+            <textarea
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm min-h-[60px]"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Poznámka"
+              rows={3}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Příklady</label>
+            <textarea
+              className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm min-h-[60px]"
+              value={priklady}
+              onChange={(e) => setPriklady(e.target.value)}
+              placeholder="Příklady"
+              rows={3}
+            />
+          </div>
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <button type="button" className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50" onClick={onClose}>
+            Zrušit
+          </button>
+          <button type="button" className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500" onClick={handleSave}>
+            Uložit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface Props {
   node: ClassificationNode;
   object: ProjectObject;
@@ -90,6 +154,9 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
   "IFCRELVOIDSELEMENT",
   "IFCRELFILLSELEMENT",
 ];
+
+/** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, Datový typ, Omezení, Hodnota, Jednotka, Popis, Poznámka, Příklady, Fáze, Použitelnost, Akce */
+const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 220, 160, 140, 100, 50, 110];
 
 // Czech help text for relation types (displayed in modal)
 const RELATION_TYPES_HELP_TEXT = `Vztah IFCRELAGGREGATES popisuje, jak lze více menších dílčích objektů agregovat do jednoho většího objektu. Například několik podlaží budovy tvoří jednu budovu. Jiným příkladem je deska, kterou tvoří nosníky, podlahové desky a spoje. Nebo sestava, kterou tvoří konzoly, sloupky (mullions) a ocelové plechy.
@@ -1256,6 +1323,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [selectedRelations, setSelectedRelations] = useState<Set<string>>(new Set());
   const [selectedMaterials, setSelectedMaterials] = useState<Set<string>>(new Set());
   const [selectedClassifications, setSelectedClassifications] = useState<Set<string>>(new Set());
+  /** Klíč skupiny, pro kterou se právě načítají popisy z bSDD (zobrazí se loading na tlačítku) */
+  const [fillingDescriptionsGroupKey, setFillingDescriptionsGroupKey] = useState<string | null>(null);
+  /** Dialog pro úpravu řádku vlastnosti (tužka) – zobrazí celý Popis, Poznámka, Příklady */
+  const [propertyRowEditDialog, setPropertyRowEditDialog] = useState<{ prop: PropertyRequirement; groupKey: string } | null>(null);
+  /** Šířky sloupců tabulky vlastností (index → px); prázdné = auto */
+  const [propertyTableColWidths, setPropertyTableColWidths] = useState<Record<number, number>>({});
+  /** Index sloupce, který se právě roztahuje (resize handle) */
+  const [resizingCol, setResizingCol] = useState<number | null>(null);
+  const resizingStartX = useRef(0);
+  const resizingStartW = useRef(0);
   // Ref pro uložení aktuálních hodnot selectedGroups a selectedProperties pro mazání
   const selectedGroupsRef = useRef<Set<string>>(new Set());
   const selectedPropertiesRef = useRef<Set<string>>(new Set());
@@ -1268,6 +1345,23 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   useEffect(() => {
     selectedPropertiesRef.current = selectedProperties;
   }, [selectedProperties]);
+
+  // Roztahování sloupců tabulky vlastností
+  useEffect(() => {
+    if (resizingCol === null) return;
+    const onMove = (e: MouseEvent) => {
+      const delta = e.clientX - resizingStartX.current;
+      const newW = Math.max(40, resizingStartW.current + delta);
+      setPropertyTableColWidths((prev) => ({ ...prev, [resizingCol]: newW }));
+    };
+    const onUp = () => setResizingCol(null);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [resizingCol]);
 
   // Ref pro uložení onChange callbacku, aby se nemusel přidávat do závislostí
   const onChangeRef = useRef(onChange);
@@ -1485,7 +1579,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         constraint: "FILLED",
         value: "",
         unit: "",
+        popis: "",
         note: "",
+        priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
       });
@@ -1563,6 +1659,43 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       });
     });
   };
+
+  /** Načte z bSDD Definition pro všechny vlastnosti v Pset/Qto a propíše je do sloupce Popis. */
+  const fillDescriptionsFromBsdd = useCallback(
+    async (groupKeyValue: string) => {
+      const group = propertyGroups.find((g) => g.key === groupKeyValue);
+      if (!group?.psetName || group.source === "CUSTOM" || group.psetName.startsWith("_NEW_")) return;
+      setFillingDescriptionsGroupKey(groupKeyValue);
+      try {
+        let definitions: Record<string, string> = await fetchPsetOrQtoPropertyDefinitions(group.psetName);
+        if (!definitions || typeof definitions !== "object") definitions = {};
+        const updates = new Map<string, string>();
+        for (const prop of group.properties) {
+          const pn = (prop.propertyName ?? "").trim();
+          if (!pn) continue;
+          let def = definitions[pn] ?? definitions[prop.propertyName ?? ""];
+          if (def == null || typeof def !== "string") {
+            const single = await fetchSinglePropertyDefinition(pn);
+            if (single) def = single;
+          }
+          if (def != null && typeof def === "string") updates.set(prop.id, def);
+        }
+        if (updates.size === 0) return;
+        updateRequirements((reqs) => {
+          reqs.properties = reqs.properties.map((p) => {
+            const popis = p.id ? updates.get(p.id) : undefined;
+            if (popis === undefined) return p;
+            return { ...p, popis };
+          });
+        });
+      } catch (err) {
+        console.warn("[ObjectDetail] fillDescriptionsFromBsdd:", err);
+      } finally {
+        setFillingDescriptionsGroupKey(null);
+      }
+    },
+    [propertyGroups, updateRequirements]
+  );
 
   const addAllFromSchema = (groupKeyValue: string) => {
     const group = propertyGroups.find((g) => g.key === groupKeyValue);
@@ -1898,7 +2031,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         targetType: "", // legacy field for backwards compatibility
         minCardinality: 0,
         maxCardinality: 1,
+        popis: "",
         note: "",
+        priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
       });
@@ -1916,6 +2051,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         readOnly: false,
         occurrence: "required",
         description: "",
+        note: "",
+        priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
       });
@@ -1934,7 +2071,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         value: "",
         required: false, // legacy field for backwards compatibility
         materialType: undefined, // legacy field for backwards compatibility
+        popis: "",
         note: "",
+        priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
       });
@@ -2150,6 +2289,45 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </svg>
               </button>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* Popisová textová pole k objektu – pouze pro Excel export, ne do IDS */}
+      <div className="min-w-0 border-b border-slate-200 bg-white px-4 py-3">
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="min-w-0">
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Popis</label>
+            <textarea
+              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              placeholder="Popis objektu"
+              value={object.popis ?? ""}
+              onChange={(e) => updateObject({ popis: e.target.value || undefined })}
+              disabled={isLocked}
+              rows={3}
+            />
+          </div>
+          <div className="min-w-0">
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Poznámka</label>
+            <textarea
+              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              placeholder="Poznámka k objektu"
+              value={object.poznamka ?? ""}
+              onChange={(e) => updateObject({ poznamka: e.target.value || undefined })}
+              disabled={isLocked}
+              rows={3}
+            />
+          </div>
+          <div className="min-w-0">
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Příklady</label>
+            <textarea
+              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              placeholder="Příklady"
+              value={object.priklady ?? ""}
+              onChange={(e) => updateObject({ priklady: e.target.value || undefined })}
+              disabled={isLocked}
+              rows={3}
+            />
           </div>
         </div>
       </div>
@@ -2673,7 +2851,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         </div>
                       </th>
                       <th className="px-2 py-2">Hodnota</th>
+                      <th className="px-2 py-2">Popis</th>
                       <th className="px-2 py-2">Poznámka</th>
+                      <th className="px-2 py-2">Příklady</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -2995,13 +3175,31 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             })()}
                           </td>
                           
+                          {/* POPIS */}
+                          <td className="px-2 py-2">
+                            <input 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                              value={attr.popis ?? ""} 
+                              onChange={(e) => updateAttributeField(attr.id, { popis: e.target.value })}
+                              placeholder="Popis" 
+                            />
+                          </td>
                           {/* POZNÁMKA */}
                           <td className="px-2 py-2">
                             <input 
                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
                               value={attr.note ?? ""} 
                               onChange={(e) => updateAttributeField(attr.id, { note: e.target.value })}
-                              placeholder="Všeobecný popis" 
+                              placeholder="Poznámka" 
+                            />
+                          </td>
+                          {/* PŘÍKLADY */}
+                          <td className="px-2 py-2">
+                            <input 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                              value={attr.priklady ?? ""} 
+                              onChange={(e) => updateAttributeField(attr.id, { priklady: e.target.value })}
+                              placeholder="Příklady" 
                             />
                           </td>
                           
@@ -3276,40 +3474,81 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           </div>
                         )}
                         {group.properties.length > 0 && (
-                          <table className="min-w-full text-sm">
+                          <table className="min-w-full text-sm table-fixed" style={{ tableLayout: "fixed" }}>
+                            <colgroup>
+                              {DEFAULT_PROPERTY_COL_WIDTHS.map((defW, i) => (
+                                <col key={i} style={{ width: propertyTableColWidths[i] ?? defW }} />
+                              ))}
+                            </colgroup>
                             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                               <tr>
-                                <th className="w-8 px-2 py-2"></th>
-                                <th className="px-2 py-2">Výskyt</th>
-                                <th className="px-2 py-2">Vlastnost</th>
-                                <th className="px-2 py-2">Datový typ</th>
-                                <th className="px-2 py-2">
-                                  <div className="flex items-center gap-1">
-                                    <span>Omezení</span>
-                                    <DocLink 
-                                      href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md"
-                                      label="Restrictions"
-                                      type="ids"
-                                    />
-                                  </div>
-                                </th>
-                                <th className="px-2 py-2">Hodnota</th>
-                                <th className="px-2 py-2">Jednotka</th>
-                                <th className="px-2 py-2">Poznámka</th>
-                                <th className="px-2 py-2">Fáze</th>
-                                <th className="px-2 py-2 text-center">
-                                  <div className="flex items-center justify-center gap-1">
-                                    <span>Použitelnost</span>
-                                    <button
-                                      type="button"
-                                      className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
-                                      title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
-                                    >
-                                      ?
-                                    </button>
-                                  </div>
-                                </th>
-                                <th className="px-2 py-2 text-right">Akce</th>
+                                {[
+                                  <th key="0" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1" />
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[0] ?? DEFAULT_PROPERTY_COL_WIDTHS[0]; }} aria-hidden />
+                                  </th>,
+                                  <th key="1" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Výskyt</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[1] ?? DEFAULT_PROPERTY_COL_WIDTHS[1]; }} aria-hidden />
+                                  </th>,
+                                  <th key="2" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Vlastnost</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[2] ?? DEFAULT_PROPERTY_COL_WIDTHS[2]; }} aria-hidden />
+                                  </th>,
+                                  <th key="3" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Datový typ</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(3); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[3] ?? DEFAULT_PROPERTY_COL_WIDTHS[3]; }} aria-hidden />
+                                  </th>,
+                                  <th key="4" className="px-2 py-2 relative select-none">
+                                    <div className="flex items-center gap-1 pr-1">
+                                      <span>Omezení</span>
+                                      <DocLink href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" label="Restrictions" type="ids" />
+                                    </div>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(4); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[4] ?? DEFAULT_PROPERTY_COL_WIDTHS[4]; }} aria-hidden />
+                                  </th>,
+                                  <th key="5" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Hodnota</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(5); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[5] ?? DEFAULT_PROPERTY_COL_WIDTHS[5]; }} aria-hidden />
+                                  </th>,
+                                  <th key="6" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Jednotka</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(6); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[6] ?? DEFAULT_PROPERTY_COL_WIDTHS[6]; }} aria-hidden />
+                                  </th>,
+                                  <th key="7" className="px-2 py-2 relative select-none">
+                                    <div className="flex items-center gap-1 pr-1">
+                                      <span>Popis</span>
+                                      {(group.source === "PSET" || group.source === "QTO") && group.psetName && !isTempGroup && (
+                                        <button type="button" className="flex items-center justify-center w-6 h-6 rounded border border-slate-300 bg-slate-50 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed" title="Propíš z bSDD Definition do sloupce Popis u všech vlastností v této skupině" onClick={() => fillDescriptionsFromBsdd(group.key)} disabled={fillingDescriptionsGroupKey === group.key}>
+                                          {fillingDescriptionsGroupKey === group.key ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" /> : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="m6 9 6 6 6-6" /></svg>}
+                                        </button>
+                                      )}
+                                    </div>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(7); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
+                                  </th>,
+                                  <th key="8" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Poznámka</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(8); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
+                                  </th>,
+                                  <th key="9" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Příklady</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(9); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[9] ?? DEFAULT_PROPERTY_COL_WIDTHS[9]; }} aria-hidden />
+                                  </th>,
+                                  <th key="10" className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Fáze</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(10); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[10] ?? DEFAULT_PROPERTY_COL_WIDTHS[10]; }} aria-hidden />
+                                  </th>,
+                                  <th key="11" className="px-2 py-2 text-center relative select-none">
+                                    <div className="flex items-center justify-center gap-1 pr-1">
+                                      <span>Použitelnost</span>
+                                      <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                                    </div>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(11); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[11] ?? DEFAULT_PROPERTY_COL_WIDTHS[11]; }} aria-hidden />
+                                  </th>,
+                                  <th key="12" className="px-2 py-2 text-right relative select-none">
+                                    <span className="block pr-1">Akce</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(12); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[12] ?? DEFAULT_PROPERTY_COL_WIDTHS[12]; }} aria-hidden />
+                                  </th>,
+                                ]}
                               </tr>
                             </thead>
                             <tbody>
@@ -3965,11 +4204,40 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     })()}
                                   </td>
                                   <td className="px-2 py-2">
+                                    <div className="flex items-center gap-1">
+                                      <input 
+                                        className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-sm" 
+                                        value={prop.popis ?? ""} 
+                                        onChange={(e) => updatePropertyField(prop.id, { popis: e.target.value })}
+                                        placeholder="Popis" 
+                                      />
+                                      <button
+                                        type="button"
+                                        className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded border border-slate-300 bg-slate-50 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300"
+                                        title="Otevřít Popis, Poznámka, Příklady v dialogu"
+                                        onClick={() => setPropertyRowEditDialog({ prop: { ...prop }, groupKey: group.key })}
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                                          <path d="m15 5 4 4" />
+                                        </svg>
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td className="px-2 py-2">
                                     <input 
                                       className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
                                       value={prop.note ?? ""} 
                                       onChange={(e) => updatePropertyField(prop.id, { note: e.target.value })}
-                                      placeholder="Všeobecný popis" 
+                                      placeholder="Poznámka" 
+                                    />
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <input 
+                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                                      value={prop.priklady ?? ""} 
+                                      onChange={(e) => updatePropertyField(prop.id, { priklady: e.target.value })}
+                                      placeholder="Příklady" 
                                     />
                                   </td>
                                   <td className="px-2 py-2">
@@ -4000,6 +4268,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 );
                 })}
               </div>
+              )}
+
+              {propertyRowEditDialog && (
+                <PropertyRowEditDialog
+                  prop={propertyRowEditDialog.prop}
+                  onSave={(patch) => {
+                    updatePropertyField(propertyRowEditDialog.prop.id, patch);
+                    setPropertyRowEditDialog(null);
+                  }}
+                  onClose={() => setPropertyRowEditDialog(null)}
+                />
               )}
             </div>
           )}
@@ -4142,7 +4421,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Součást entity</th>
                       <th className="px-2 py-2">PredefinedType</th>
                       <th className="px-2 py-2">Vztah</th>
+                      <th className="px-2 py-2">Popis</th>
                       <th className="px-2 py-2">Poznámka</th>
+                      <th className="px-2 py-2">Příklady</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -4258,6 +4539,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               </button>
                             </div>
                           </td>
+                          {/* POPIS */}
+                          <td className="px-2 py-2">
+                            <input 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                              value={rel.popis ?? ""} 
+                              onChange={(e) => updateRelationField(rel.id, { popis: e.target.value })} 
+                              placeholder="Popis" 
+                            />
+                          </td>
                           {/* POZNÁMKA */}
                           <td className="px-2 py-2">
                             <input 
@@ -4265,6 +4555,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               value={rel.note ?? ""} 
                               onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} 
                               placeholder="Poznámka k relaci" 
+                            />
+                          </td>
+                          {/* PŘÍKLADY */}
+                          <td className="px-2 py-2">
+                            <input 
+                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                              value={rel.priklady ?? ""} 
+                              onChange={(e) => updateRelationField(rel.id, { priklady: e.target.value })} 
+                              placeholder="Příklady" 
                             />
                           </td>
                           {/* FÁZE */}
@@ -4345,7 +4644,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Omezení</th>
                       <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">URI</th>
+                      <th className="px-2 py-2">Popis</th>
                       <th className="px-2 py-2">Poznámka</th>
+                      <th className="px-2 py-2">Příklady</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -4809,6 +5110,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             placeholder="URI materiálu"
                           />
                         </td>
+                        {/* POPIS */}
+                        <td className="px-2 py-2">
+                          <input
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={mat.popis ?? ""}
+                            onChange={(e) => updateMaterialField(mat.id, { popis: e.target.value })}
+                            placeholder="Popis"
+                          />
+                        </td>
                         {/* POZNÁMKA */}
                         <td className="px-2 py-2">
                           <input
@@ -4816,6 +5126,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             value={mat.note ?? ""}
                             onChange={(e) => updateMaterialField(mat.id, { note: e.target.value })}
                             placeholder="Poznámka k materiálu"
+                          />
+                        </td>
+                        {/* PŘÍKLADY */}
+                        <td className="px-2 py-2">
+                          <input
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={mat.priklady ?? ""}
+                            onChange={(e) => updateMaterialField(mat.id, { priklady: e.target.value })}
+                            placeholder="Příklady"
                           />
                         </td>
                         {/* FÁZE */}
@@ -4896,6 +5215,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <th className="px-2 py-2">Hodnota</th>
                       <th className="px-2 py-2">URI</th>
                       <th className="px-2 py-2">Popis</th>
+                      <th className="px-2 py-2">Poznámka</th>
+                      <th className="px-2 py-2">Příklady</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -5039,6 +5360,32 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             }
                             disabled={cls.readOnly}
                             placeholder="Popis"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.note ?? ""}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, note: e.target.value || undefined } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                            placeholder="Poznámka"
+                          />
+                        </td>
+                        <td className="px-2 py-2">
+                          <input
+                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                            value={cls.priklady ?? ""}
+                            onChange={(e) =>
+                              updateRequirements((reqs) => {
+                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, priklady: e.target.value || undefined } : c));
+                              })
+                            }
+                            disabled={cls.readOnly}
+                            placeholder="Příklady"
                           />
                         </td>
                         <td className="px-2 py-2">

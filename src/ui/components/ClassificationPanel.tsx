@@ -295,19 +295,23 @@ const TreeItem: React.FC<{
   expandTrigger: number;
   /** V pohledu klasifikace: text badge IFC třída.PredefinedType (např. IfcAirTerminal.NOTDEFINED) */
   getIfcBadgeLabel?: (node: ClassificationNode) => string | undefined;
-  /** Objekty projektu – u listů zobrazíme object.description (název z applicability) místo node.description */
+  /** Objekty projektu – u listů zobrazíme object.description (název z applicability) pouze při primárním IFC */
   objects?: Record<string, ProjectObject>;
-}> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel, objects }) => {
+  /** Při primárním „Třídění dle IFC“ se název bere z IFC/object; jinak vždy z node (klasifikace) */
+  isIfcPrimary?: boolean;
+}> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel, objects, isIfcPrimary }) => {
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
   const isSelected = selectedCode === node.code;
-  // IFC strom: 1. úroveň = entita (IfcAirTerminal), 2. úroveň = Entity.PredefinedType na jeden řádek (IfcAirTerminal.DIFFUSER nebo IfcCovering.NOTDEFINED)
+  // Při primární klasifikaci (ne IFC) vždy název z node; při Třídění dle IFC z IFC entity nebo object.description
   const displayLabel =
-    isLeaf && node.ifcEntity
-      ? `${node.ifcEntity}.${node.predefinedType ?? "NOTDEFINED"}`
-      : isLeaf && objects?.[node.code]?.description
-        ? objects[node.code].description
-        : (node.description || node.code);
+    !isIfcPrimary && isLeaf
+      ? (node.description || node.code)
+      : isLeaf && node.ifcEntity
+        ? `${node.ifcEntity}.${node.predefinedType ?? "NOTDEFINED"}`
+        : isLeaf && objects?.[node.code]?.description
+          ? objects[node.code].description
+          : (node.description || node.code);
 
   // Badge nezobrazovat u NOTDEFINED – jen u konkrétních predefined typů
   const ifcBadgeLabel =
@@ -371,6 +375,7 @@ const TreeItem: React.FC<{
             expandTrigger={expandTrigger}
             getIfcBadgeLabel={getIfcBadgeLabel}
             objects={objects}
+            isIfcPrimary={isIfcPrimary}
           />
         ))}
     </div>
@@ -657,6 +662,7 @@ export const ClassificationPanel: React.FC<Props> = ({
                       expandTrigger={expandTrigger}
                       getIfcBadgeLabel={getIfcBadgeLabel}
                       objects={objects}
+                      isIfcPrimary={primarySystem?.isIfcSystem === true}
                     />
                   ))}
                   {viewMode === "classification" && filteredOrphanCodes.length > 0 && (

@@ -328,6 +328,9 @@ const createObjectsSheet = (
   const headers = [
     "code",
     "description",
+    "popis",
+    "poznamka",
+    "priklady",
     "ifcEntity",
     "predefinedTypeMode",
     "predefinedTypeValue",
@@ -344,6 +347,9 @@ const createObjectsSheet = (
     const row = sheet.addRow([
       obj.code,
       obj.description,
+      obj.popis || "",
+      obj.poznamka || "",
+      obj.priklady || "",
       obj.ifcEntity,
       obj.predefinedType.mode,
       obj.predefinedType.value || "",
@@ -352,7 +358,7 @@ const createObjectsSheet = (
     styleDataRow(row, index % 2 === 1);
   });
 
-  const widths = [15, 40, 20, 18, 20, ...authoringEntries.map(() => 25)];
+  const widths = [15, 40, 30, 30, 30, 20, 18, 20, ...authoringEntries.map(() => 25)];
   finalizeSheet(sheet, widths);
 };
 
@@ -385,7 +391,9 @@ const createAttributesSheet = (
     "unit",
     "phases",
     "codeListId",
+    "popis",
     "note",
+    "priklady",
   ];
   const headerRow = sheet.addRow(headers);
   styleHeaderRow(headerRow);
@@ -405,14 +413,16 @@ const createAttributesSheet = (
         attr.unit || "",
         formatPhases(attr.phases),
         getCodeListId(attr.extensions),
+        attr.popis || "",
         attr.note || "",
+        attr.priklady || "",
       ]);
       styleDataRow(row, rowIndex % 2 === 1);
       rowIndex++;
     });
   });
 
-  finalizeSheet(sheet, [36, 15, 20, 15, 12, 12, 30, 30, 10, 20, 36, 40]);
+  finalizeSheet(sheet, [36, 15, 20, 15, 12, 12, 30, 30, 10, 20, 36, 30, 40, 30]);
 };
 
 /**
@@ -438,7 +448,9 @@ const createPropertiesSheet = (
     "unit",
     "phases",
     "codeListId",
+    "popis",
     "note",
+    "priklady",
   ];
   const headerRow = sheet.addRow(headers);
   styleHeaderRow(headerRow);
@@ -460,14 +472,16 @@ const createPropertiesSheet = (
         prop.unit || "",
         formatPhases(prop.phases),
         getCodeListId(prop.extensions),
+        prop.popis || "",
         prop.note || "",
+        prop.priklady || "",
       ]);
       styleDataRow(row, rowIndex % 2 === 1);
       rowIndex++;
     });
   });
 
-  finalizeSheet(sheet, [36, 15, 10, 30, 25, 15, 12, 12, 30, 30, 10, 20, 36, 40]);
+  finalizeSheet(sheet, [36, 15, 10, 30, 25, 15, 12, 12, 30, 30, 10, 20, 36, 30, 40, 30]);
 };
 
 /**
@@ -489,7 +503,9 @@ const createRelationsSheet = (
     "minCardinality",
     "maxCardinality",
     "phases",
+    "popis",
     "note",
+    "priklady",
   ];
   const headerRow = sheet.addRow(headers);
   styleHeaderRow(headerRow);
@@ -507,14 +523,16 @@ const createRelationsSheet = (
         rel.minCardinality ?? "",
         rel.maxCardinality ?? "",
         formatPhases(rel.phases),
+        rel.popis || "",
         rel.note || "",
+        rel.priklady || "",
       ]);
       styleDataRow(row, rowIndex % 2 === 1);
       rowIndex++;
     });
   });
 
-  finalizeSheet(sheet, [36, 15, 30, 20, 20, 12, 12, 12, 20, 40]);
+  finalizeSheet(sheet, [36, 15, 30, 20, 20, 12, 12, 12, 20, 30, 40, 30]);
 };
 
 /**
@@ -536,6 +554,9 @@ const createClassificationRequirementsSheet = (
     "name",
     "uri",
     "constraint",
+    "description",
+    "note",
+    "priklady",
     "isApplicability",
     "phases",
   ];
@@ -555,6 +576,9 @@ const createClassificationRequirementsSheet = (
         cls.name,
         cls.uri || "",
         cls.constraint || "",
+        cls.description || "",
+        cls.note || "",
+        cls.priklady || "",
         formatBoolean(cls.isApplicability),
         formatPhases(cls.phases),
       ]);
@@ -563,7 +587,7 @@ const createClassificationRequirementsSheet = (
     });
   });
 
-  finalizeSheet(sheet, [36, 15, 36, 25, 20, 20, 30, 40, 12, 15, 20]);
+  finalizeSheet(sheet, [36, 15, 36, 25, 20, 20, 30, 40, 12, 30, 40, 30, 15, 20]);
 };
 
 /**
@@ -586,7 +610,9 @@ const createMaterialsSheet = (
     "value",
     "phases",
     "codeListId",
+    "popis",
     "note",
+    "priklady",
   ];
   const headerRow = sheet.addRow(headers);
   styleHeaderRow(headerRow);
@@ -605,14 +631,16 @@ const createMaterialsSheet = (
         mat.value || "",
         formatPhases(mat.phases),
         getCodeListId(mat.extensions),
+        mat.popis || "",
         mat.note || "",
+        mat.priklady || "",
       ]);
       styleDataRow(row, rowIndex % 2 === 1);
       rowIndex++;
     });
   });
 
-  finalizeSheet(sheet, [36, 15, 12, 15, 25, 40, 12, 30, 20, 36, 40]);
+  finalizeSheet(sheet, [36, 15, 12, 15, 25, 40, 12, 30, 20, 36, 30, 40, 30]);
 };
 
 /**

@@ -524,6 +524,9 @@ const AppInner: React.FC = () => {
   const onUpdateObject = (obj: ProjectObject) => {
     if (!project) return;
     if (obj.locked) return;
+    const primaryEntry = (project.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    const primaryIsIfc = primaryEntry?.isIfcSystem === true;
+
     const prevObj = project.objects[obj.code];
     const ifcChanged =
       prevObj &&
@@ -537,7 +540,8 @@ const AppInner: React.FC = () => {
         : obj.code;
 
     let next: Project;
-    if (ifcChanged && newCode !== obj.code && schemaIndex) {
+    // Při primární „Klasifikaci“ měnit code a description podle IFC entity nesmíme – název zůstane z klasifikace
+    if (primaryIsIfc && ifcChanged && newCode !== obj.code && schemaIndex) {
       // Změna entity/typu → přepočítat code, přeřadit objekt pod nový klíč a aktualizovat IFC strom vlevo
       const nextObjects = { ...project.objects };
       delete nextObjects[obj.code];

@@ -29,7 +29,11 @@ export interface AttributeRequirement extends RequirementBase {
   value?: string;
   allowedValues?: string[];
   unit?: string;
+  /** Popis požadavku (před poznámkou) */
+  popis?: string;
   note?: string;
+  /** Příklady (za poznámkou) */
+  priklady?: string;
   /** If true, this attribute is used in applicability section (not requirements) */
   isApplicability?: boolean;
 }
@@ -46,7 +50,11 @@ export interface PropertyRequirement extends RequirementBase {
   /** Allowed values for ENUM constraint (e.g. from IDS restriction) */
   allowedValues?: string[];
   unit?: string;
+  /** Popis požadavku (před poznámkou) */
+  popis?: string;
   note?: string;
+  /** Příklady (za poznámkou) */
+  priklady?: string;
   /** If true, this property is used in applicability section (not requirements) */
   isApplicability?: boolean;
 }
@@ -69,7 +77,11 @@ export interface RelationRequirement extends RequirementBase {
   entityPredefinedType?: string;
   minCardinality?: number;
   maxCardinality?: number;
+  /** Popis požadavku (před poznámkou) */
+  popis?: string;
   note?: string;
+  /** Příklady (za poznámkou) */
+  priklady?: string;
   /** If true, this relation (partOf) is used in applicability section (not requirements) */
   isApplicability?: boolean;
 }
@@ -90,6 +102,10 @@ export interface ClassificationRequirement extends RequirementBase {
   sort?: string;
   readOnly?: boolean;
   code?: string;
+  /** Poznámka k požadavku (za sloupcem Popis/description) */
+  note?: string;
+  /** Příklady (za poznámkou) */
+  priklady?: string;
   /** Constraint type for classification value */
   constraint?: "FILLED" | "ENUM" | "PATTERN";
   /** Occurrence: required / prohibited / optional. Primární klasifikace je vždy required. */
@@ -115,7 +131,11 @@ export interface MaterialRequirement extends RequirementBase {
   required: boolean;
   /** @deprecated Use category instead */
   materialType?: "SINGLE" | "LAYER" | "PROFILE" | "CONSTITUENT";
+  /** Popis požadavku (před poznámkou) */
+  popis?: string;
   note?: string;
+  /** Příklady (za poznámkou) */
+  priklady?: string;
   /** If true, this material is used in applicability section (not requirements) */
   isApplicability?: boolean;
 }
@@ -139,6 +159,12 @@ export interface ProjectObject {
   description: string;
   /** Zamčený objekt – nelze upravovat ani mazat */
   locked?: boolean;
+  /** Popis objektu – pouze pro Excel export, ne do IDS */
+  popis?: string;
+  /** Poznámka k objektu – pouze pro Excel export, ne do IDS */
+  poznamka?: string;
+  /** Příklady k objektu – pouze pro Excel export, ne do IDS */
+  priklady?: string;
   ifcEntity: string;
   predefinedType: PredefinedTypeSelection;
   /** Phases for which the IfcEntity requirement applies. At least one required. */
