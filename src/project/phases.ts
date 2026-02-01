@@ -1,13 +1,17 @@
 import type { Phase, Project, RequirementBase } from "./types";
 
-export const DEFAULT_PHASES: Phase[] = [
-  { id: "DPZ", code: "DPZ", name: "Dokumentace povolení záměru" },
-  { id: "DPS", code: "DPS", name: "Dokumentace provádění stavby" },
-  { id: "DPSP", code: "DPSP", name: "Dokumentace skutečného provedení stavby" },
-];
+/** Jedna výchozí fáze při prázdném projektu – uživatel ji může přejmenovat a přidat další v levém panelu Fáze. */
+export const DEFAULT_SINGLE_PHASE: Phase = {
+  id: "phase-1",
+  code: "Fáze1",
+  name: "Fáze1",
+};
+
+/** Vrátí výchozí seznam fází (jedna fáze „Fáze1“) pro nový nebo vyčištěný projekt. */
+export const getDefaultPhases = (): Phase[] => [DEFAULT_SINGLE_PHASE];
 
 export const ensurePhaseList = (phases?: Phase[]): Phase[] => {
-  if (!phases || phases.length === 0) return DEFAULT_PHASES;
+  if (!phases || phases.length === 0) return getDefaultPhases();
   const seen = new Set<string>();
   const result: Phase[] = [];
   phases.forEach((p) => {
@@ -20,10 +24,6 @@ export const ensurePhaseList = (phases?: Phase[]): Phase[] => {
       name: p.name || p.code || p.id,
       description: p.description,
     });
-  });
-  // always append any missing defaults to preserve UX
-  DEFAULT_PHASES.forEach((p) => {
-    if (!seen.has(p.id)) result.push(p);
   });
   return result;
 };

@@ -89,15 +89,30 @@ export function buildClassificationFromSchemaFiltered(
     const children: ClassificationNode[] = [];
 
     if (predefinedTypes.length === 0) {
-      if (!selectedCodes.has(entityName)) continue;
-      children.push({
-        code: entityName,
-        description: entityName,
-        level: 2,
-        ifcEntity: entityName,
-        predefinedType: undefined,
-        children: [],
-      });
+      const entityCodes = [...selectedCodes].filter((c) => c === entityName || c.startsWith(entityName + "::"));
+      if (entityCodes.length === 0) continue;
+      for (const code of entityCodes) {
+        if (code === entityName) {
+          children.push({
+            code: entityName,
+            description: entityName,
+            level: 2,
+            ifcEntity: entityName,
+            predefinedType: undefined,
+            children: [],
+          });
+        } else {
+          const ptVal = code.slice(entityName.length + 2);
+          children.push({
+            code,
+            description: ptVal,
+            level: 2,
+            ifcEntity: entityName,
+            predefinedType: ptVal,
+            children: [],
+          });
+        }
+      }
     } else {
       if (selectedCodes.has(`${entityName}::NOTDEFINED`)) {
         children.push({
@@ -118,6 +133,32 @@ export function buildClassificationFromSchemaFiltered(
           level: 2,
           ifcEntity: entityName,
           predefinedType: pt,
+          children: [],
+        });
+      }
+      // IDS import: entita bez predefined type má v selectedCodes jen "IfcDoor" – přidáme list s kódem entity, aby se zobrazila v hierarchii
+      if (children.length === 0 && selectedCodes.has(entityName)) {
+        children.push({
+          code: entityName,
+          description: entityName,
+          level: 2,
+          ifcEntity: entityName,
+          predefinedType: undefined,
+          children: [],
+        });
+      }
+      // Kódy z objektů (např. z IDS) mohou mít jinou velikost písmen než schema – přidáme list pro každý selectedCode entityName::*
+      for (const code of selectedCodes) {
+        if (code === entityName) continue;
+        if (!code.startsWith(entityName + "::")) continue;
+        if (children.some((c) => c.code === code)) continue;
+        const ptVal = code.slice(entityName.length + 2);
+        children.push({
+          code,
+          description: ptVal,
+          level: 2,
+          ifcEntity: entityName,
+          predefinedType: ptVal,
           children: [],
         });
       }

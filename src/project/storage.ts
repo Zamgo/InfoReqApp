@@ -1,7 +1,7 @@
 import type { ClassificationData, ClassificationSystem } from "../classification/types";
 import { makeId } from "../utils/id";
 import type { Project, ProjectObject } from "./types";
-import { DEFAULT_PHASES, ensureProjectPhases } from "./phases";
+import { ensureProjectPhases, getDefaultPhases } from "./phases";
 
 const STORAGE_KEY = "inforeqapp:project";
 
@@ -35,7 +35,7 @@ export const createEmptyProject = (classification: ClassificationData): Project 
     classification,
     classifications: [primary],
     primaryClassificationId: primary.id,
-    phases: DEFAULT_PHASES,
+    phases: getDefaultPhases(),
     objects: {},
     codeLists: [],
     classificationSystemEntries: [],

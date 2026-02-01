@@ -65,7 +65,12 @@ interface Props {
   classificationSystemEntries: ClassificationSystemEntry[];
   onSaveEnumAsCodeList: (opts: { objectCode: string; propertyId: string; name: string; values: string[]; link: boolean }) => void;
   /** Přidat vybranou entitu/PredefinedType do IFC hierarchie projektu (když není v hierarchii) */
-  onAddToIfcHierarchy?: (entityName: string, predefinedType?: string) => void;
+  /** Přidá objekt (podle object.code) do IFC hierarchie – bez duplikátu, zůstane stejný objekt. */
+  onAddToIfcHierarchy?: (objectCode: string) => void;
+  /** Odstranit objekt z hierarchie, klasifikace a mapování */
+  onDeleteObject?: (code: string) => void;
+  /** Zamknout/odemknout objekt (zamčený nelze upravovat ani mazat) */
+  onToggleLock?: (obj: ProjectObject) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -490,21 +495,36 @@ const generateConstraintXml = (
   }
   
   if (c === "RANGE") {
-    // Parse range value like ">=10 AND <=100" or "10-100"
-    const parts = val.split(/\s*(?:AND|,|;)\s*/i);
     let xml = `${indent}<ids:value>\n${indent}  <xs:restriction base="xs:double">`;
-    parts.forEach((part) => {
-      const trimmed = part.trim();
-      if (trimmed.startsWith(">=")) {
-        xml += `\n${indent}    <xs:minInclusive value="${escapeXml(trimmed.slice(2).trim())}" />`;
-      } else if (trimmed.startsWith(">")) {
-        xml += `\n${indent}    <xs:minExclusive value="${escapeXml(trimmed.slice(1).trim())}" />`;
-      } else if (trimmed.startsWith("<=")) {
-        xml += `\n${indent}    <xs:maxInclusive value="${escapeXml(trimmed.slice(2).trim())}" />`;
-      } else if (trimmed.startsWith("<")) {
-        xml += `\n${indent}    <xs:maxExclusive value="${escapeXml(trimmed.slice(1).trim())}" />`;
+    const rangeParts = val.split("|").map((p) => p.trim()).filter(Boolean);
+    rangeParts.forEach((part) => {
+      if (part.startsWith("min:")) {
+        const rest = part.slice(4);
+        const [num, kind] = rest.split(":");
+        const v = (num ?? "").trim();
+        if (v) xml += `\n${indent}    <xs:min${(kind ?? "").trim() === "exclusive" ? "Exclusive" : "Inclusive"} value="${escapeXml(v)}" />`;
+      } else if (part.startsWith("max:")) {
+        const rest = part.slice(4);
+        const [num, kind] = rest.split(":");
+        const v = (num ?? "").trim();
+        if (v) xml += `\n${indent}    <xs:max${(kind ?? "").trim() === "exclusive" ? "Exclusive" : "Inclusive"} value="${escapeXml(v)}" />`;
       }
     });
+    if (rangeParts.length === 0) {
+      const parts = val.split(/\s*(?:AND|,|;)\s*/i);
+      parts.forEach((part) => {
+        const trimmed = part.trim();
+        if (trimmed.startsWith(">=")) {
+          xml += `\n${indent}    <xs:minInclusive value="${escapeXml(trimmed.slice(2).trim())}" />`;
+        } else if (trimmed.startsWith(">")) {
+          xml += `\n${indent}    <xs:minExclusive value="${escapeXml(trimmed.slice(1).trim())}" />`;
+        } else if (trimmed.startsWith("<=")) {
+          xml += `\n${indent}    <xs:maxInclusive value="${escapeXml(trimmed.slice(2).trim())}" />`;
+        } else if (trimmed.startsWith("<")) {
+          xml += `\n${indent}    <xs:maxExclusive value="${escapeXml(trimmed.slice(1).trim())}" />`;
+        }
+      });
+    }
     xml += `\n${indent}  </xs:restriction>\n${indent}</ids:value>`;
     return xml;
   }
@@ -682,8 +702,13 @@ const generateIdsXml = (
   xml += `
         </ids:entity>`;
   
-  // Add applicability classifications (isApplicability = true OR readOnly = true for primary classification)
-  const applicabilityClassifications = filteredObj.requirements.classifications.filter((cls) => cls.isApplicability || cls.readOnly);
+  // Add applicability classifications (isApplicability = true OR readOnly) – IFC systém není klasifikace v IDS, vychází jen z entity/predefinedType
+  const applicabilityClassifications = filteredObj.requirements.classifications.filter((cls) => {
+    if (!cls.isApplicability && !cls.readOnly) return false;
+    const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
+    if (entry?.isIfcSystem) return false;
+    return true;
+  });
   applicabilityClassifications.forEach((cls) => {
     // Look up system name from entries first, fall back to stored value
     const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
@@ -896,8 +921,13 @@ const generateIdsXml = (
   });
   
   // Classifications - system is required, value comes BEFORE system according to XSD sequence
-  // Only include non-applicability classifications in requirements (exclude readOnly primary classifications)
-  const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => !cls.isApplicability && !cls.readOnly);
+  // IFC systém není klasifikace v IDS (vychází z entity/predefinedType), vynecháme ho
+  const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => {
+    if (cls.isApplicability || cls.readOnly) return false;
+    const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
+    if (entry?.isIfcSystem) return false;
+    return true;
+  });
   requirementClassifications.forEach((cls) => {
     if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(cls.occurrence ?? "required", occurrenceFilter)) return;
     // Look up system name from entries first, fall back to stored value
@@ -1110,12 +1140,12 @@ const generateHumanReadable = (
     }
   });
   
-  // Classifications - split by applicability
+  // Classifications - split by applicability; IFC systém není klasifikace v IDS (vše vyplývá z entity/predefinedType)
   filteredObj.requirements.classifications.forEach((cls) => {
     if (!cls.system && !cls.value && !cls.name && !cls.systemEntryId) return;
-    // Look up system name from entries first, fall back to stored value
-    const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
-    const systemName = entryName || cls.system || cls.name;
+    const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
+    if (entry?.isIfcSystem) return;
+    const systemName = entry?.name || cls.system || cls.name;
     
     if (cls.isApplicability || cls.readOnly) {
       // Add to applicability section (primary classifications are always applicability) – zobrazovat vždy bez ohledu na filtr výskytu
@@ -1156,7 +1186,8 @@ const generateHumanReadable = (
   return { applicability, requirements };
 };
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, onSaveEnumAsCodeList, onAddToIfcHierarchy }) => {
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, onSaveEnumAsCodeList, onAddToIfcHierarchy, onDeleteObject, onToggleLock }) => {
+  const isLocked = object.locked === true;
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [idsSubTab, setIdsSubTab] = useState<IdsSubTabKey>("readable");
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null); // null = "Vše"
@@ -1210,16 +1241,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     return new Set(collectLeaves(primaryEntry.nodes).map((n) => n.code));
   }, [primaryEntry]);
 
-  const currentEntityCode = useMemo(() => {
-    if (!object.ifcEntity) return null;
-    if (object.predefinedType.mode === "ENUM" && object.predefinedType.value) {
-      return `${object.ifcEntity}::${object.predefinedType.value}`;
-    }
-    const entityHasPredefinedTypes = (schema?.entities[object.ifcEntity]?.predefinedTypeValues?.length ?? 0) > 0;
-    return entityHasPredefinedTypes ? `${object.ifcEntity}::NOTDEFINED` : object.ifcEntity;
-  }, [object.ifcEntity, object.predefinedType, schema]);
-
-  const isCurrentSelectionInHierarchy = currentEntityCode != null && ifcHierarchyCodes.has(currentEntityCode);
+  /** Je vybraný objekt už v IFC hierarchii? Kontrola podle object.code (stejný klíč jako ve stromu). */
+  const isCurrentSelectionInHierarchy = useMemo(
+    () => !!object.code && ifcHierarchyCodes.has(object.code),
+    [object.code, ifcHierarchyCodes],
+  );
 
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [customGroupNames, setCustomGroupNames] = useState<Record<string, string>>({});
@@ -1394,7 +1420,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       .map((g) => ({ key: g.key, source: g.source, name: g.psetName as string }));
   }, [propertyGroups, selectedEntity, selectedPredefinedValue, allowedPsets, allowedQtos]);
 
-  const updateObject = (partial: Partial<ProjectObject>) => onChange({ ...object, ...partial });
+  const updateObject = (partial: Partial<ProjectObject>) => {
+    if (isLocked) return;
+    onChange({ ...object, ...partial });
+  };
 
   const updateRequirements = useCallback((updater: (requirements: ProjectObject["requirements"]) => void) => {
     const next = {
@@ -2073,12 +2102,54 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     <div className="flex h-full flex-col overflow-hidden">
       {/* Název objektu: při primárním IFC = Entita.PredefinedType; při klasifikačním systému = název z klasifikace */}
       <div className="border-b border-indigo-200 bg-gradient-to-r from-indigo-50 to-white px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="h-8 w-1 rounded-full bg-indigo-500"></div>
-          <div className="text-xl font-bold text-slate-800">
-            {isIfcPrimary && object.ifcEntity
-              ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
-              : (node.description || node.code)}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="h-8 w-1 flex-shrink-0 rounded-full bg-indigo-500"></div>
+            <div className="min-w-0 truncate text-xl font-bold text-slate-800">
+              {isIfcPrimary && object.ifcEntity
+                ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
+                : (node.description || node.code)}
+            </div>
+            {isLocked && (
+              <span className="flex-shrink-0 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                Zamčeno
+              </span>
+            )}
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-1">
+            {onToggleLock && (
+              <button
+                type="button"
+                onClick={() => onToggleLock(object)}
+                className={`rounded p-2 transition-colors ${
+                  isLocked
+                    ? "bg-amber-200/80 text-amber-800 hover:bg-amber-300/80"
+                    : "text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                }`}
+                title={isLocked ? "Odemknout objekt" : "Zamknout objekt (nelze upravovat ani mazat)"}
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  {isLocked ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  ) : (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                  )}
+                </svg>
+              </button>
+            )}
+            {onDeleteObject && (
+              <button
+                type="button"
+                onClick={() => onDeleteObject(object.code)}
+                disabled={isLocked}
+                className="rounded p-2 text-slate-500 hover:bg-red-100 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                title={isLocked ? "Zamčený objekt nelze odstranit" : "Odstranit objekt"}
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -2089,7 +2160,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Identifikační údaje</div>
           <div className="h-px flex-1 bg-slate-200"></div>
         </div>
-        {isIfcPrimary && object.ifcEntity && !isCurrentSelectionInHierarchy && onAddToIfcHierarchy && (
+        {isIfcPrimary && object.ifcEntity && !isCurrentSelectionInHierarchy && onAddToIfcHierarchy && !isLocked && (
           <div className="mb-2 flex items-center justify-between gap-2 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800">
             <span>Vybraná entita <strong>{object.ifcEntity}</strong>
               {object.predefinedType.mode === "ENUM" && object.predefinedType.value ? (
@@ -2100,10 +2171,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             <button
               type="button"
               className="flex-shrink-0 rounded border border-indigo-300 bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-200"
-              onClick={() => {
-                const pt = object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : undefined;
-                onAddToIfcHierarchy(object.ifcEntity ?? "", pt);
-              }}
+              onClick={() => onAddToIfcHierarchy(object.code)}
             >
               Přidat do hierarchie
             </button>
@@ -3653,7 +3721,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         const parseRangeValue = (val: string) => {
                                           if (!val) return { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
                                           
-                                          const parts = val.split("|");
+                                          const parts = val.split("|").map((p) => p.trim()).filter(Boolean);
                                           let result = { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
                                           
                                           parts.forEach(part => {
@@ -3661,16 +3729,31 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                               const minPart = part.replace("min:", "");
                                               const [minVal, inclusive] = minPart.split(":");
                                               result.hasMin = true;
-                                              result.min = minVal;
-                                              result.minInclusive = inclusive !== "exclusive";
+                                              result.min = (minVal ?? "").trim();
+                                              result.minInclusive = (inclusive ?? "").trim() !== "exclusive";
                                             } else if (part.startsWith("max:")) {
                                               const maxPart = part.replace("max:", "");
                                               const [maxVal, inclusive] = maxPart.split(":");
                                               result.hasMax = true;
-                                              result.max = maxVal;
-                                              result.maxInclusive = inclusive !== "exclusive";
+                                              result.max = (maxVal ?? "").trim();
+                                              result.maxInclusive = (inclusive ?? "").trim() !== "exclusive";
                                             }
                                           });
+                                          
+                                          if (!result.hasMin && !result.hasMax && parts.length > 0) {
+                                            if (parts.length === 1) {
+                                              result.hasMin = true;
+                                              result.min = parts[0];
+                                              result.minInclusive = true;
+                                            } else {
+                                              result.hasMin = true;
+                                              result.min = parts[0];
+                                              result.hasMax = true;
+                                              result.max = parts[1];
+                                              result.minInclusive = true;
+                                              result.maxInclusive = true;
+                                            }
+                                          }
                                           
                                           return result;
                                         };
@@ -4597,7 +4680,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               const parseRangeValue = (val: string) => {
                                 if (!val) return { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
                                 
-                                const parts = val.split("|");
+                                const parts = val.split("|").map((p) => p.trim()).filter(Boolean);
                                 let result = { hasMin: false, min: "", minInclusive: true, hasMax: false, max: "", maxInclusive: true };
                                 
                                 parts.forEach(part => {
@@ -4605,16 +4688,31 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     const minPart = part.replace("min:", "");
                                     const [minVal, inclusive] = minPart.split(":");
                                     result.hasMin = true;
-                                    result.min = minVal;
-                                    result.minInclusive = inclusive !== "exclusive";
+                                    result.min = (minVal ?? "").trim();
+                                    result.minInclusive = (inclusive ?? "").trim() !== "exclusive";
                                   } else if (part.startsWith("max:")) {
                                     const maxPart = part.replace("max:", "");
                                     const [maxVal, inclusive] = maxPart.split(":");
                                     result.hasMax = true;
-                                    result.max = maxVal;
-                                    result.maxInclusive = inclusive !== "exclusive";
+                                    result.max = (maxVal ?? "").trim();
+                                    result.maxInclusive = (inclusive ?? "").trim() !== "exclusive";
                                   }
                                 });
+                                
+                                if (!result.hasMin && !result.hasMax && parts.length > 0) {
+                                  if (parts.length === 1) {
+                                    result.hasMin = true;
+                                    result.min = parts[0];
+                                    result.minInclusive = true;
+                                  } else {
+                                    result.hasMin = true;
+                                    result.min = parts[0];
+                                    result.hasMax = true;
+                                    result.max = parts[1];
+                                    result.minInclusive = true;
+                                    result.maxInclusive = true;
+                                  }
+                                }
                                 
                                 return result;
                               };

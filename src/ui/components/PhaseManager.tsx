@@ -165,10 +165,10 @@ export const PhaseManager: React.FC<Props> = ({
                         Upravit
                       </button>
                       <button
-                        className="rounded border border-red-300 px-2 py-1 text-red-600 hover:bg-red-50"
+                        className="rounded border border-red-300 px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed"
                         onClick={() => onDeletePhase(phase.id)}
-                        disabled={editingPhase !== null}
-                        title="Smazat fázi"
+                        disabled={editingPhase !== null || phases.length <= 1}
+                        title={phases.length <= 1 ? "Musí zůstat alespoň jedna fáze" : "Smazat fázi"}
                       >
                         Smazat
                       </button>

@@ -6,13 +6,14 @@ import { SettingsDialog } from "./ui/components/SettingsDialog";
 import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
-import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, updateLeafMappedValue } from "./classification/parser";
+import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, updateLeafMappedValue, removeNodeByCode } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import {
   buildClassificationFromSchema,
   buildClassificationFromSchemaFiltered,
   collectSelectedCodesFromClassificationNodes,
   buildPureNodesWithIfcMapping,
+  toIfcCode,
 } from "./classification/ifcTree";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
@@ -26,6 +27,7 @@ import {
   loadProjectFromStorage,
   saveProjectToStorage,
 } from "./project/storage";
+import { parseIdsXml, mergeIdsIntoProject } from "./import/ids";
 import { ensurePhaseList, ensureProjectPhases, removePhaseFromProject } from "./project/phases";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues } from "./project/enumeration";
 import { exportExcelFile } from "./export/excel";
@@ -67,10 +69,14 @@ const AppInner: React.FC = () => {
   const [status, setStatus] = useState<string>("");
   const [isProjectDetailsOpen, setIsProjectDetailsOpen] = useState<boolean>(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
+  const [isImportMenuOpen, setIsImportMenuOpen] = useState<boolean>(false);
   const [isIDSExportOpen, setIsIDSExportOpen] = useState<boolean>(false);
   const [isExcelExportOpen, setIsExcelExportOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const importMenuRef = useRef<HTMLDivElement>(null);
+  const importJsonInputRef = useRef<HTMLInputElement>(null);
+  const importIdsInputRef = useRef<HTMLInputElement>(null);
   
   // Resizable panel state
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -227,13 +233,15 @@ const AppInner: React.FC = () => {
   }, [classification, selectedCode]);
 
   useEffect(() => {
-    if (!project || !selectedCode || !classification) {
+    if (!project || !selectedCode) {
       setSelectedObject(null);
       return;
     }
-    const node = findNodeByCode(classification.nodes, selectedCode);
+    const node = classification ? findNodeByCode(classification.nodes, selectedCode) : undefined;
     if (!node) {
-      setSelectedObject(null);
+      // Objekt mimo hierarchii – zobrazit stejný objekt (project.objects[selectedCode]), ne duplikovat
+      const orphanObject = project.objects[selectedCode];
+      setSelectedObject(orphanObject ?? null);
       return;
     }
     if (!project.objects[node.code]) {
@@ -515,41 +523,68 @@ const AppInner: React.FC = () => {
 
   const onUpdateObject = (obj: ProjectObject) => {
     if (!project) return;
+    if (obj.locked) return;
     const prevObj = project.objects[obj.code];
     const ifcChanged =
       prevObj &&
       (prevObj.ifcEntity !== obj.ifcEntity ||
         JSON.stringify(prevObj.predefinedType) !== JSON.stringify(obj.predefinedType));
 
-    let next: Project = {
+    const ptVal = obj.predefinedType.mode === "ENUM" && obj.predefinedType.value ? obj.predefinedType.value : undefined;
+    const newCode =
+      schemaIndex && obj.ifcEntity
+        ? toIfcCode(schemaIndex, obj.ifcEntity, ptVal)
+        : obj.code;
+
+    let next: Project;
+    if (ifcChanged && newCode !== obj.code && schemaIndex) {
+      // Změna entity/typu → přepočítat code, přeřadit objekt pod nový klíč a aktualizovat IFC strom vlevo
+      const nextObjects = { ...project.objects };
+      delete nextObjects[obj.code];
+      const updatedObj: ProjectObject = {
+        ...obj,
+        code: newCode,
+        description: formatIfcDescriptionFromCode(newCode),
+      };
+      nextObjects[newCode] = updatedObj;
+
+      const ifcEntry = (project.classificationSystemEntries ?? []).find((e) => e.isIfcSystem);
+      let nextEntries = project.classificationSystemEntries ?? [];
+      let nextClassification = project.classification;
+      if (ifcEntry?.nodes) {
+        const currentCodes = new Set(collectLeaves(ifcEntry.nodes).map((n) => n.code));
+        currentCodes.delete(obj.code);
+        currentCodes.add(newCode);
+        const data = buildClassificationFromSchemaFiltered(schemaIndex, currentCodes);
+        nextEntries = nextEntries.map((e) =>
+          e.id === ifcEntry.id ? { ...e, nodes: data.nodes, hash: data.hash } : e
+        );
+        if (ifcEntry.isPrimary) {
+          nextClassification = { nodes: data.nodes, sourceName: data.sourceName, hash: data.hash };
+          setClassification(nextClassification);
+        }
+      }
+
+      next = {
+        ...project,
+        objects: nextObjects,
+        classificationSystemEntries: nextEntries,
+        classification: nextClassification,
+        updatedAt: new Date().toISOString(),
+      };
+      updateProjectWithHistory(next);
+      if (selectedCode === obj.code) {
+        setSelectedCode(newCode);
+        setSelectedObject(updatedObj);
+      }
+      return;
+    }
+
+    next = {
       ...project,
       objects: { ...project.objects, [obj.code]: obj },
       updatedAt: new Date().toISOString(),
     };
-
-    if (ifcChanged) {
-      const primary = (project.classificationSystemEntries ?? []).find((e) => e.isPrimary);
-      const ifcSystemId = primary?.mappedSystemIds?.find((sid) =>
-        (project.classificationSystemEntries ?? []).some((e) => e.id === sid && e.isIfcSystem)
-      );
-      if (primary?.nodes && ifcSystemId && window.confirm("Chcete tuto změnu (IFC entita / PredefinedType) promítnout do mapování klasifikace?")) {
-        const ptVal = obj.predefinedType.mode === "ENUM" && obj.predefinedType.value ? obj.predefinedType.value : undefined;
-        const hasTypes = (schemaIndex?.entities[obj.ifcEntity]?.predefinedTypeValues?.length ?? 0) > 0;
-        const mappedValue =
-          obj.ifcEntity && (ptVal ? `${obj.ifcEntity}::${ptVal}` : hasTypes ? `${obj.ifcEntity}::NOTDEFINED` : obj.ifcEntity);
-        const newNodes = updateLeafMappedValue(primary.nodes, obj.code, ifcSystemId, mappedValue);
-        const nextEntries = (next.classificationSystemEntries ?? []).map((e) =>
-          e.id === primary.id ? { ...e, nodes: newNodes } : e
-        );
-        next = {
-          ...next,
-          classificationSystemEntries: nextEntries,
-          classification: next.classification?.nodes === primary.nodes ? { ...next.classification, nodes: newNodes } : next.classification,
-        };
-        setClassification((c) => (c && c.nodes === primary.nodes ? { ...c, nodes: newNodes } : c));
-      }
-    }
-
     updateProjectWithHistory(next);
     if (selectedObject && selectedObject.code === obj.code) {
       setSelectedObject(obj);
@@ -572,6 +607,31 @@ const AppInner: React.FC = () => {
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Import se nezdařil");
     }
+  };
+
+  const onImportIds = async (file: File) => {
+    setIsImportMenuOpen(false);
+    try {
+      const xmlString = await file.text();
+      const parsed = parseIdsXml(xmlString);
+      const merged = mergeIdsIntoProject(parsed, project, schemaIndex ?? null);
+      historyRef.current = [JSON.parse(JSON.stringify(merged))];
+      historyIndexRef.current = 0;
+      setProject(merged);
+      // Nová reference, aby se hierarchie a strom jistě překreslily
+      const classificationToSet = merged.classification
+        ? { ...merged.classification, nodes: merged.classification.nodes ?? [] }
+        : null;
+      setClassification(classificationToSet);
+      const leaves = collectLeaves(merged.classification?.nodes ?? []);
+      const firstCode = leaves[0]?.code;
+      if (firstCode) setSelectedCode(firstCode);
+      saveProjectToStorage(merged);
+      setStatus(project ? "IDS sloučen do projektu (přidány nové entity)" : "IDS importován, projekt vytvořen");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Import IDS se nezdařil");
+    }
+    if (importIdsInputRef.current) importIdsInputRef.current.value = "";
   };
 
   const onExportProject = () => {
@@ -839,7 +899,7 @@ const AppInner: React.FC = () => {
           ...e,
           isPrimary: false,
         }));
-        nextEntries.unshift(ifcEntry);
+        nextEntries.unshift({ ...ifcEntry, isPrimary: true });
         const next: Project = {
           ...project,
           classification: ifcData,
@@ -856,27 +916,34 @@ const AppInner: React.FC = () => {
     [schemaIndex, project]
   );
 
+  /** Formát popisu objektu dle IFC třídění: „IfcEntity.PredefinedType“ nebo „IfcEntity“. */
+  const formatIfcDescriptionFromCode = useCallback((code: string): string => {
+    if (!code.includes("::")) return code;
+    const [entity, predefinedType] = code.split("::");
+    return predefinedType ? `${entity ?? ""}.${predefinedType}` : (entity ?? code);
+  }, []);
+
+  /** Přidá existující objekt (podle jeho code) do IFC hierarchie – žádný duplikát, stejný objekt; popis sjednotí na formát IFC. */
   const onAddToIfcHierarchy = useCallback(
-    (entityName: string, predefinedType?: string) => {
+    (objectCode: string) => {
       if (!project || !schemaIndex) return;
       const ifcEntry = (project.classificationSystemEntries ?? []).find((e) => e.isIfcSystem);
       if (!ifcEntry?.nodes) return;
       const currentCodes = new Set(collectLeaves(ifcEntry.nodes).map((n) => n.code));
-      const entity = schemaIndex.entities[entityName];
-      const hasPredefinedTypes = (entity?.predefinedTypeValues?.length ?? 0) > 0;
-      const newCode = predefinedType
-        ? `${entityName}::${predefinedType}`
-        : hasPredefinedTypes
-          ? `${entityName}::NOTDEFINED`
-          : entityName;
-      currentCodes.add(newCode);
+      currentCodes.add(objectCode);
       const data = buildClassificationFromSchemaFiltered(schemaIndex, currentCodes);
       const nextEntries = (project.classificationSystemEntries ?? []).map((e) =>
         e.id === ifcEntry.id ? { ...e, nodes: data.nodes, hash: data.hash } : e
       );
+      const nextObjects = { ...project.objects };
+      const obj = nextObjects[objectCode];
+      if (obj) {
+        nextObjects[objectCode] = { ...obj, description: formatIfcDescriptionFromCode(objectCode) };
+      }
       const next: Project = {
         ...project,
         classificationSystemEntries: nextEntries,
+        objects: nextObjects,
         updatedAt: new Date().toISOString(),
       };
       if (ifcEntry.isPrimary) {
@@ -884,10 +951,10 @@ const AppInner: React.FC = () => {
         setClassification(next.classification);
       }
       updateProjectWithHistory(next);
-      setStatus(`Do hierarchie přidáno: ${newCode}`);
+      setStatus(`Do hierarchie přidáno: ${objectCode}`);
       setTimeout(() => setStatus(""), 3000);
     },
-    [project, schemaIndex],
+    [project, schemaIndex, formatIfcDescriptionFromCode],
   );
 
   const onDeleteClassificationSystemEntry = (id: string) => {
@@ -916,7 +983,7 @@ const AppInner: React.FC = () => {
         ),
       };
       next.classification = {
-        nodes: newPrimary.nodes,
+        nodes: newPrimary.nodes ?? [],
         sourceName: newPrimary.sourceName ?? newPrimary.name,
         hash: newPrimary.hash,
       };
@@ -963,6 +1030,64 @@ const AppInner: React.FC = () => {
     saveProjectToStorage(newProject);
   };
 
+  const onDeleteObject = useCallback(
+    (code: string) => {
+      if (!project) return;
+      const obj = project.objects[code];
+      if (obj?.locked) return;
+      const name = obj?.description || obj?.code || code;
+      if (!window.confirm(`Opravdu chcete odstranit objekt „${name}"? Bude odstraněn z hierarchie, klasifikace i mapování.`)) return;
+      const primary = (project.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+      const primaryNodes = primary?.nodes ?? [];
+      const newNodes = removeNodeByCode(primaryNodes, code);
+      let next: Project = {
+        ...project,
+        objects: { ...project.objects },
+        updatedAt: new Date().toISOString(),
+      };
+      delete next.objects[code];
+      if (primary && primaryNodes.length > 0) {
+        next = {
+          ...next,
+          classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
+            e.id === primary.id ? { ...e, nodes: newNodes } : e
+          ),
+          // Vždy aktualizovat zobrazenou klasifikaci podle nového stromu primárního systému,
+          // aby levý panel (strom) odpovídal smazání – ne jen při shodě referencí (project.classification?.nodes === primary.nodes).
+          classification: project.classification
+            ? { ...project.classification, nodes: newNodes }
+            : project.classification,
+        };
+      }
+      updateProjectWithHistory(next);
+      setClassification(next.classification ?? null);
+      if (selectedCode === code) {
+        const leaves = collectLeaves(newNodes);
+        setSelectedCode(leaves[0]?.code);
+        setSelectedObject(null);
+      }
+      setStatus(`Objekt „${name}" byl odstraněn`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project, selectedCode],
+  );
+
+  const onToggleLockObject = useCallback(
+    (obj: ProjectObject) => {
+      if (!project) return;
+      const next = {
+        ...project,
+        objects: { ...project.objects, [obj.code]: { ...obj, locked: !obj.locked } },
+        updatedAt: new Date().toISOString(),
+      };
+      updateProjectWithHistory(next);
+      if (selectedObject?.code === obj.code) {
+        setSelectedObject({ ...obj, locked: !obj.locked });
+      }
+    },
+    [project, selectedObject],
+  );
+
   const canUndo = () => {
     return historyIndexRef.current > 0;
   };
@@ -977,6 +1102,7 @@ const AppInner: React.FC = () => {
     historyIndexRef.current--;
     const previousProject = historyRef.current[historyIndexRef.current];
     setProject(previousProject);
+    setClassification(previousProject.classification ?? null);
     saveProjectToStorage(previousProject);
     isUndoRedoRef.current = false;
   }, []);
@@ -987,20 +1113,20 @@ const AppInner: React.FC = () => {
     historyIndexRef.current++;
     const nextProject = historyRef.current[historyIndexRef.current];
     setProject(nextProject);
+    setClassification(nextProject.classification ?? null);
     saveProjectToStorage(nextProject);
     isUndoRedoRef.current = false;
   }, []);
 
-  // Initialize history when project is first loaded from storage
+  // Initialize history when project is first loaded (from storage or after clear + new classification)
   useEffect(() => {
     if (project && !isUndoRedoRef.current) {
-      // Only initialize if history is empty (first load)
       if (historyRef.current.length === 0) {
         historyRef.current = [JSON.parse(JSON.stringify(project))];
         historyIndexRef.current = 0;
       }
     }
-  }, []);
+  }, [project]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -1018,11 +1144,14 @@ const AppInner: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleUndo, handleRedo]);
 
-  // Close export menu when clicking outside
+  // Close export/import menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: globalThis.MouseEvent) => {
       if (exportMenuRef.current && !exportMenuRef.current.contains(event.target as Node)) {
         setIsExportMenuOpen(false);
+      }
+      if (importMenuRef.current && !importMenuRef.current.contains(event.target as Node)) {
+        setIsImportMenuOpen(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -1126,19 +1255,64 @@ const AppInner: React.FC = () => {
           >
             Vyčistit
           </button>
-          <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50">
-            <input
-              type="file"
-              accept="application/json"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) void onImportProject(file);
-              }}
-            />
-            Import JSON
-          </label>
-          
+          {/* Import dropdown */}
+          <div className="relative" ref={importMenuRef}>
+            <button
+              className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50 flex items-center gap-1"
+              onClick={() => setIsImportMenuOpen(!isImportMenuOpen)}
+            >
+              Import
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {isImportMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 w-48 rounded-md border border-slate-200 bg-white shadow-lg z-50">
+                <div className="py-1">
+                  <label className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                    <input
+                      ref={importJsonInputRef}
+                      type="file"
+                      accept="application/json"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void onImportProject(file);
+                        setIsImportMenuOpen(false);
+                      }}
+                    />
+                    <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    JSON
+                  </label>
+                  <label className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                    <input
+                      ref={importIdsInputRef}
+                      type="file"
+                      accept=".ids,application/xml,text/xml"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void onImportIds(file);
+                      }}
+                    />
+                    <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    IDS
+                  </label>
+                  <div className="flex items-center gap-2 px-4 py-2 text-sm text-slate-400 cursor-not-allowed" title="Připraveno k budoucímu doplnění">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Excel (připraveno)
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Export dropdown */}
           <div className="relative" ref={exportMenuRef}>
             <button
@@ -1243,9 +1417,9 @@ const AppInner: React.FC = () => {
           {!selectedNode && (
             <div className="p-4 text-sm text-slate-600">Vyberte objekt ve stromu.</div>
           )}
-          {selectedNode && selectedObject && (
+          {selectedObject && (
             <ObjectDetail
-              node={selectedNode}
+              node={selectedNode ?? { code: selectedObject.code, description: selectedObject.description, level: 2, children: [] }}
               object={selectedObject}
               schema={schemaIndex}
               onChange={onUpdateObject}
@@ -1254,6 +1428,8 @@ const AppInner: React.FC = () => {
               classificationSystemEntries={project?.classificationSystemEntries ?? []}
               onSaveEnumAsCodeList={onSaveEnumAsCodeList}
               onAddToIfcHierarchy={onAddToIfcHierarchy}
+              onDeleteObject={onDeleteObject}
+              onToggleLock={onToggleLockObject}
             />
           )}
         </div>

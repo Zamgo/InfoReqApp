@@ -43,6 +43,8 @@ export interface PropertyRequirement extends RequirementBase {
   occurrence?: "required" | "prohibited" | "optional";
   constraint?: "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH";
   value?: string;
+  /** Allowed values for ENUM constraint (e.g. from IDS restriction) */
+  allowedValues?: string[];
   unit?: string;
   note?: string;
   /** If true, this property is used in applicability section (not requirements) */
@@ -135,6 +137,8 @@ export interface AuthoringClassification {
 export interface ProjectObject {
   code: string;
   description: string;
+  /** Zamčený objekt – nelze upravovat ani mazat */
+  locked?: boolean;
   ifcEntity: string;
   predefinedType: PredefinedTypeSelection;
   /** Phases for which the IfcEntity requirement applies. At least one required. */

@@ -162,6 +162,24 @@ export const flattenNodesToRows = (nodes: ClassificationNode[]): ClassificationN
   return result;
 };
 
+/** Odstraní list (uzel bez dětí) se zadaným code ze stromu; vrací nový strom (imutabilně). Prázdné větve se odstraňují. */
+export const removeNodeByCode = (
+  nodes: ClassificationNode[],
+  code: string,
+): ClassificationNode[] => {
+  return nodes
+    .map((node) => {
+      if (node.children.length > 0) {
+        const filtered = removeNodeByCode(node.children, code);
+        if (filtered.length === 0) return null;
+        return { ...node, children: filtered };
+      }
+      if (node.code === code) return null;
+      return node;
+    })
+    .filter(Boolean) as ClassificationNode[];
+};
+
 /** Aktualizuje mappedValues u uzlu se zadaným code (listu i vnitřního); vrací nový strom (imutabilně). */
 export const updateLeafMappedValue = (
   nodes: ClassificationNode[],

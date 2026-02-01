@@ -73,19 +73,8 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
 
   const ifcSystem = useMemo(() => systems.find((s) => s.isIfcSystem), [systems]);
   const primarySystem = useMemo(() => systems.find((s) => s.isPrimary), [systems]);
-  const systemsWithoutIfc = useMemo(() => systems.filter((s) => !s.isIfcSystem), [systems]);
   /** Jedna tabulka – všechny systémy (IFC + čisté + namapované), seřazené */
   const allSystemsSorted = useMemo(() => sortEntries(systems), [systems]);
-  const mappedSystems = useMemo(
-    () => sortEntries(systemsWithoutIfc.filter((s) => isMappedEntry(s))),
-    [systemsWithoutIfc],
-  );
-  /** Systémy s uzly – vhodné jako cíl mapování */
-  const systemsWithNodes = useMemo(
-    () => allSystemsSorted.filter((s) => s.nodes && collectLeaves(s.nodes).length > 0),
-    [allSystemsSorted],
-  );
-
   /** Efektivní typ třídění (pro stará data bez systemKind) */
   const effectiveSystemKind = (e: ClassificationSystemEntry): "ifc" | "authoring" | "classification" =>
     e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification");

@@ -340,7 +340,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
                         ];
                       }
                       if (entry.isIfcSystem) {
-                        const [entityPart, typePart] = value.includes("::") ? value.split("::") : [value, ""];
+                        const [, typePart] = value.includes("::") ? value.split("::") : [value, ""];
                         return [
                           <td key={`${entry.id}-entity`} className="border border-slate-200 px-1 py-1">
                             <input

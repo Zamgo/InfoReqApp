@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
+import ExcelJS from "exceljs";
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
 import { collectLeaves } from "../../classification/parser";
@@ -9,6 +10,122 @@ interface Props {
   currentNodes: ClassificationNode[];
   onSave: (nodes: ClassificationNode[]) => void;
   onClose: () => void;
+}
+
+/** Parsed položka z vloženého textu nebo souboru */
+interface ParsedIfcItem {
+  raw: string;
+  entity: string;
+  predefinedType?: string;
+  code: string;
+  valid: boolean;
+  error?: string;
+}
+
+/** Parsuje řádek textu na entity + predefinedType. Formáty: "IfcWall", "IfcWall::SOLIDWALL", "IfcWall\tSOLIDWALL" */
+function parseLine(line: string): { entity: string; predefinedType?: string } | null {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes("::")) {
+    const [entity, pt] = trimmed.split("::").map((s) => s.trim());
+    if (entity) return { entity, predefinedType: pt || undefined };
+  }
+  if (trimmed.includes("\t")) {
+    const [entity, pt] = trimmed.split("\t").map((s) => s.trim());
+    if (entity) return { entity, predefinedType: pt || undefined };
+  }
+  return { entity: trimmed, predefinedType: undefined };
+}
+
+/** Validuje položku proti IFC schématu a vrátí kód pro výběr */
+function validateAndGetCode(
+  schemaIndex: SchemaIndex,
+  entity: string,
+  predefinedType?: string,
+): { code: string; valid: boolean; error?: string } {
+  const ent = schemaIndex.entities[entity];
+  if (!ent) {
+    return { code: "", valid: false, error: `Entita "${entity}" není v IFC schématu` };
+  }
+  const types = ent.predefinedTypeValues ?? [];
+  if (types.length === 0) {
+    if (predefinedType) {
+      return { code: "", valid: false, error: `"${entity}" nemá PredefinedType` };
+    }
+    return { code: entity, valid: true };
+  }
+  if (!predefinedType) {
+    return { code: `${entity}::NOTDEFINED`, valid: true };
+  }
+  if (predefinedType === "NOTDEFINED" || predefinedType.toUpperCase() === "NOTDEFINED") {
+    return { code: `${entity}::NOTDEFINED`, valid: true };
+  }
+  if (types.includes(predefinedType)) {
+    return { code: `${entity}::${predefinedType}`, valid: true };
+  }
+  return {
+    code: "",
+    valid: false,
+    error: `PredefinedType "${predefinedType}" není platný pro "${entity}" (platné: ${types.slice(0, 5).join(", ")}${types.length > 5 ? ", ..." : ""})`,
+  };
+}
+
+/** Parsuje text na seznam položek s validací */
+function parseAndValidate(schemaIndex: SchemaIndex, text: string): ParsedIfcItem[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const result: ParsedIfcItem[] = [];
+  const seen = new Set<string>();
+  for (const line of lines) {
+    const parsed = parseLine(line);
+    if (!parsed) continue;
+    const { code, valid, error } = validateAndGetCode(
+      schemaIndex,
+      parsed.entity,
+      parsed.predefinedType,
+    );
+    if (code && seen.has(code)) continue;
+    if (code) seen.add(code);
+    result.push({
+      raw: line.trim(),
+      entity: parsed.entity,
+      predefinedType: parsed.predefinedType,
+      code: code || `${parsed.entity}${parsed.predefinedType ? `::${parsed.predefinedType}` : ""}`,
+      valid,
+      error,
+    });
+  }
+  return result;
+}
+
+/** Načte XLSX nebo TXT soubor – 1. sloupec IFC Entita, 2. sloupec IFC PredefinedType */
+async function parseIfcFile(file: File): Promise<string> {
+  const name = (file.name || "").toLowerCase();
+  if (name.endsWith(".xlsx")) {
+    const buf = await file.arrayBuffer();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf);
+    const ws = wb.worksheets[0];
+    if (!ws) throw new Error("Soubor neobsahuje žádný list.");
+    const lines: string[] = [];
+    let startRow = 1;
+    const firstRow = ws.getRow(1);
+    const c1 = (firstRow.getCell(1).value?.toString() ?? "").trim().toLowerCase();
+    if (c1 === "ifc entita" || c1 === "ifcentita" || c1 === "entity") startRow = 2;
+    for (let r = startRow; r <= ws.rowCount; r++) {
+      const row = ws.getRow(r);
+      const entity = (row.getCell(1).value?.toString() ?? "").trim();
+      const predefined = (row.getCell(2).value?.toString() ?? "").trim();
+      if (!entity) continue;
+      if (predefined) {
+        lines.push(`${entity}\t${predefined}`);
+      } else {
+        lines.push(entity);
+      }
+    }
+    return lines.join("\n");
+  }
+  const text = await file.text();
+  return text;
 }
 
 export const IfcEntitySelectorDialog: React.FC<Props> = ({
@@ -30,6 +147,11 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(initialSelected);
   const [search, setSearch] = useState("");
   const [expandedEntities, setExpandedEntities] = useState<Set<string>>(new Set(entityNames.slice(0, 20)));
+  const [pasteText, setPasteText] = useState("");
+  const [parsedItems, setParsedItems] = useState<ParsedIfcItem[] | null>(null);
+  const [showPasteSection, setShowPasteSection] = useState(false);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const toggleCode = useCallback((code: string, checked: boolean) => {
     setSelectedCodes((prev) => {
@@ -106,6 +228,53 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
     });
   }, []);
 
+  const handlePasteOrImport = useCallback(() => {
+    setParseError(null);
+    const items = parseAndValidate(schemaIndex, pasteText);
+    setParsedItems(items);
+  }, [schemaIndex, pasteText]);
+
+  const handleFileChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      setParseError(null);
+      try {
+        const text = await parseIfcFile(file);
+        setPasteText(text);
+        const items = parseAndValidate(schemaIndex, text);
+        setParsedItems(items);
+        setShowPasteSection(true);
+      } catch (err) {
+        setParseError(err instanceof Error ? err.message : "Chyba při načítání souboru");
+      }
+    },
+    [schemaIndex],
+  );
+
+  const applyParsedSelection = useCallback(() => {
+    if (!parsedItems) return;
+    const validCodes = parsedItems.filter((p) => p.valid).map((p) => p.code);
+    if (validCodes.length === 0) return;
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      validCodes.forEach((c) => next.add(c));
+      return next;
+    });
+    setParsedItems(null);
+    setPasteText("");
+  }, [parsedItems]);
+
+  const clearPasteSection = useCallback(() => {
+    setPasteText("");
+    setParsedItems(null);
+    setParseError(null);
+  }, []);
+
+  const hasInvalidParsed = parsedItems != null && parsedItems.some((p) => !p.valid);
+  const canApplyParsed = parsedItems != null && parsedItems.some((p) => p.valid) && !hasInvalidParsed;
+
   const handleSave = useCallback(() => {
     const data = buildClassificationFromSchemaFiltered(schemaIndex, selectedCodes);
     onSave(data.nodes);
@@ -153,6 +322,110 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
           </span>
         </div>
 
+        <div className="flex-shrink-0 border-b border-slate-200 px-4 py-2">
+          <button
+            type="button"
+            className="text-sm font-medium text-slate-700 hover:text-slate-900"
+            onClick={() => setShowPasteSection((v) => !v)}
+          >
+            {showPasteSection ? "▼" : "▶"} Vložit ze schránky (Ctrl+V) nebo souboru
+          </button>
+          {showPasteSection && (
+            <div className="mt-2 space-y-2">
+              <div className="flex gap-2">
+                <textarea
+                  placeholder="Vložte seznam IFC entit (Ctrl+V, jeden na řádek):&#10;IfcWall&#10;IfcWall::SOLIDWALL&#10;nebo: IfcEntity[TAB]PredefinedType"
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  onPaste={(e) => {
+                    const pasted = e.clipboardData?.getData("text") ?? "";
+                    if (pasted) {
+                      e.preventDefault();
+                      const newText = pasteText + (pasteText && !pasteText.endsWith("\n") ? "\n" : "") + pasted;
+                      setPasteText(newText);
+                      setParsedItems(parseAndValidate(schemaIndex, newText));
+                      setShowPasteSection(true);
+                    }
+                  }}
+                  className="min-h-[80px] flex-1 rounded border border-slate-300 px-2 py-1.5 text-sm font-mono"
+                  rows={3}
+                />
+                <div className="flex flex-col gap-1">
+                  <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm hover:bg-slate-50">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".txt,.xlsx"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                    <span>XLSX / TXT</span>
+                  </label>
+                  <button
+                    type="button"
+                    className="rounded border border-slate-300 px-2 py-1 text-sm hover:bg-slate-50"
+                    onClick={handlePasteOrImport}
+                  >
+                    Parsovat
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">
+                1. sloupec: IFC Entita, 2. sloupec: IFC PredefinedType. Formáty: řádek „IfcWall“, „IfcWall::SOLIDWALL“ nebo tabulátor „IfcWall\tSOLIDWALL“.
+              </p>
+              {parseError && (
+                <p className="text-sm text-red-600">{parseError}</p>
+              )}
+              {parsedItems != null && parsedItems.length > 0 && (
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-slate-600">
+                      Parsováno: {parsedItems.filter((p) => p.valid).length} platných
+                      {hasInvalidParsed && (
+                        <span className="ml-1 text-red-600">
+                          , {parsedItems.filter((p) => !p.valid).length} neplatných (nesedí s IFC schématem)
+                        </span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={applyParsedSelection}
+                      disabled={!canApplyParsed}
+                      title={hasInvalidParsed ? "Nejdříve opravte nebo odstraňte neplatné položky" : undefined}
+                    >
+                      Aplikovat výběr
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
+                      onClick={clearPasteSection}
+                    >
+                      Zrušit
+                    </button>
+                  </div>
+                  <div className="max-h-32 overflow-auto rounded border border-slate-200 bg-slate-50/50 p-1.5">
+                    {parsedItems.map((item, i) => (
+                      <div
+                        key={i}
+                        className={`rounded px-2 py-0.5 text-xs font-mono ${
+                          item.valid ? "text-slate-700" : "bg-red-200/80 text-red-900"
+                        }`}
+                        title={item.error}
+                      >
+                        {item.raw}
+                        {item.error && (
+                          <span className="ml-1 text-red-600">— {item.error}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <div className="min-h-0 flex-1 overflow-auto px-4 py-2">
           <ul className="space-y-0.5 text-sm">
             {filteredEntityNames.map((entityName) => {
@@ -181,6 +454,9 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
                     <label className="flex flex-1 cursor-pointer items-center gap-2 py-1">
                       <input
                         type="checkbox"
+                        ref={(el) => {
+                          if (el) el.indeterminate = hasTypes && partial && !full;
+                        }}
                         className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                         checked={hasTypes ? full : selectedCodes.has(entityName)}
                         onChange={(e) => toggleEntity(entityName, e.target.checked)}
@@ -232,6 +508,11 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
         </div>
 
         <div className="flex flex-shrink-0 justify-end gap-2 border-t border-slate-200 px-4 py-3">
+          {hasInvalidParsed && (
+            <span className="mr-auto self-center text-xs text-red-600">
+              Opravte nebo odstraňte neplatné položky ve vloženém seznamu
+            </span>
+          )}
           <button
             type="button"
             className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
@@ -241,8 +522,10 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
           </button>
           <button
             type="button"
-            className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500"
+            className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleSave}
+            disabled={hasInvalidParsed}
+            title={hasInvalidParsed ? "Nejdříve opravte nebo zrušte neplatné položky ve vloženém seznamu" : undefined}
           >
             Uložit hierarchii
           </button>

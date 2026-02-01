@@ -295,15 +295,27 @@ const TreeItem: React.FC<{
   expandTrigger: number;
   /** V pohledu klasifikace: text badge IFC třída.PredefinedType (např. IfcAirTerminal.NOTDEFINED) */
   getIfcBadgeLabel?: (node: ClassificationNode) => string | undefined;
-}> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel }) => {
+  /** Objekty projektu – u listů zobrazíme object.description (název z applicability) místo node.description */
+  objects?: Record<string, ProjectObject>;
+}> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel, objects }) => {
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
   const isSelected = selectedCode === node.code;
+  // IFC strom: 1. úroveň = entita (IfcAirTerminal), 2. úroveň = Entity.PredefinedType na jeden řádek (IfcAirTerminal.DIFFUSER nebo IfcCovering.NOTDEFINED)
+  const displayLabel =
+    isLeaf && node.ifcEntity
+      ? `${node.ifcEntity}.${node.predefinedType ?? "NOTDEFINED"}`
+      : isLeaf && objects?.[node.code]?.description
+        ? objects[node.code].description
+        : (node.description || node.code);
 
+  // Badge nezobrazovat u NOTDEFINED – jen u konkrétních predefined typů
   const ifcBadgeLabel =
     isLeaf &&
-    (getIfcBadgeLabel?.(node) ??
-      (node.ifcEntity ? `${node.ifcEntity}.${node.predefinedType || "NOTDEFINED"}` : undefined));
+    node.ifcEntity &&
+    node.predefinedType &&
+    node.predefinedType !== "NOTDEFINED" &&
+    (getIfcBadgeLabel?.(node) ?? `${node.ifcEntity}.${node.predefinedType}`);
 
   useEffect(() => {
     if (expandLevel !== null) {
@@ -334,9 +346,9 @@ const TreeItem: React.FC<{
           >
             <div className="flex flex-col">
               <span className={`text-sm ${isLeaf ? "font-semibold" : "font-medium"}`}>
-                {(node.description || node.code).replace(/::/g, ".")}
+                {(displayLabel || node.code).replace(/::/g, ".")}
               </span>
-              {node.code !== (node.description || node.code) && (
+              {!(isLeaf && node.ifcEntity) && node.code !== (displayLabel || node.code) && (
                 <span className="text-[11px] text-slate-500">{node.code.replace(/::/g, ".")}</span>
               )}
             </div>
@@ -358,6 +370,7 @@ const TreeItem: React.FC<{
             expandLevel={expandLevel}
             expandTrigger={expandTrigger}
             getIfcBadgeLabel={getIfcBadgeLabel}
+            objects={objects}
           />
         ))}
     </div>
@@ -445,9 +458,13 @@ export const ClassificationPanel: React.FC<Props> = ({
   }, [classification, primarySystem, classificationSystemEntries]);
 
   // Strom podle vybraného pohledu (jedno dělení = jeden strom)
+  // Při pohledu „klasifikace“ bereme strom z primárního záznamu projektu, aby po „Přidat do hierarchie“ entita hned zmizela ze seznamu mimo hierarchii
   const baseNodes = useMemo(() => {
-    if (!classification) return [];
-    const nodes = classification.nodes;
+    const nodes =
+      viewMode === "classification"
+        ? (primarySystem?.nodes ?? classification?.nodes ?? [])
+        : (classification?.nodes ?? []);
+    if (!nodes.length && !classification) return [];
     if (viewMode === "classification") return nodes;
     if (viewMode === "ifc") return buildIfcTree(nodes);
     if (viewMode === "predefinedType") return buildPredefinedTypeTree(nodes);
@@ -474,14 +491,33 @@ export const ClassificationPanel: React.FC<Props> = ({
       return isIfcSystem ? buildMappedIfcSystemTree(nodes, systemEntryId) : buildMappedSystemTree(nodes, systemEntryId);
     }
     return nodes;
-  }, [classification, viewMode, objects, classificationSystemEntries]);
+  }, [classification, viewMode, objects, classificationSystemEntries, primarySystem]);
 
   const filteredNodes = useMemo(() => {
     if (!baseNodes.length) return [];
     return filterTree(baseNodes, search);
   }, [baseNodes, search]);
 
-  // V pohledu „klasifikace“: badge IFC třída.PredefinedType (z uzlu nebo z mappedValues u pure systému)
+  // Objekty mimo hierarchii (existují v projektu, ale nejsou listem ve stromu) – zobrazíme je zvlášť se zvýrazněním
+  const codesInTree = useMemo(
+    () => new Set(collectLeaves(baseNodes).map((n) => n.code)),
+    [baseNodes],
+  );
+  const orphanObjectCodes = useMemo(
+    () => Object.keys(objects).filter((code) => !codesInTree.has(code)),
+    [objects, codesInTree],
+  );
+  const filteredOrphanCodes = useMemo(() => {
+    if (!search.trim() || orphanObjectCodes.length === 0) return orphanObjectCodes;
+    const q = search.trim().toLowerCase();
+    return orphanObjectCodes.filter((code) => {
+      const obj = objects[code];
+      const desc = (obj?.description ?? code).toLowerCase();
+      return desc.includes(q) || code.toLowerCase().includes(q);
+    });
+  }, [orphanObjectCodes, objects, search]);
+
+  // V pohledu „klasifikace“: badge IFC třída.PredefinedType (z uzlu nebo z mappedValues u pure systému) – u položek mimo hierarchii se badge nezobrazuje
   const getIfcBadgeLabel = useMemo((): ((node: ClassificationNode) => string | undefined) | undefined => {
     if (viewMode !== "classification") return undefined;
     const ifcSystemId = primarySystem?.mappedSystemIds?.find((sid) =>
@@ -609,18 +645,55 @@ export const ClassificationPanel: React.FC<Props> = ({
               </div>
             )}
             {classification &&
-              (filteredNodes.length ? (
-                filteredNodes.map((node) => (
-                  <TreeItem
-                    key={node.code}
-                    node={node}
-                    selectedCode={selectedCode}
-                    onSelectLeaf={onSelectLeaf}
-                    expandLevel={expandLevel}
-                    expandTrigger={expandTrigger}
-                    getIfcBadgeLabel={getIfcBadgeLabel}
-                  />
-                ))
+              (filteredNodes.length > 0 || filteredOrphanCodes.length > 0 ? (
+                <>
+                  {filteredNodes.map((node) => (
+                    <TreeItem
+                      key={node.code}
+                      node={node}
+                      selectedCode={selectedCode}
+                      onSelectLeaf={onSelectLeaf}
+                      expandLevel={expandLevel}
+                      expandTrigger={expandTrigger}
+                      getIfcBadgeLabel={getIfcBadgeLabel}
+                      objects={objects}
+                    />
+                  ))}
+                  {viewMode === "classification" && filteredOrphanCodes.length > 0 && (
+                    <div className="mt-3 border-t border-amber-200 pt-2">
+                      <div className="mb-1.5 px-2 text-[11px] font-medium uppercase text-amber-700">
+                        Entity mimo hierarchii
+                      </div>
+                      {filteredOrphanCodes.map((code) => {
+                        const obj = objects[code];
+                        const desc = obj?.description ?? code;
+                        const isSelected = selectedCode === code;
+                        const label =
+                          code.includes("::")
+                            ? code.replace("::", ".")
+                            : (desc || code);
+                        return (
+                          <div
+                            key={code}
+                            className={`flex cursor-pointer items-center rounded px-2 py-1.5 pl-5 hover:bg-amber-100 ${
+                              isSelected ? "bg-amber-200 text-amber-900" : "bg-amber-50 text-amber-900"
+                            }`}
+                            onClick={() =>
+                              onSelectLeaf({
+                                code,
+                                description: desc,
+                                level: 2,
+                                children: [],
+                              })
+                            }
+                          >
+                            <span className="text-sm font-semibold">{label}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="text-sm text-slate-500">
                   Žádný výsledek

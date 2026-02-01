@@ -434,6 +434,7 @@ const createPropertiesSheet = (
     "occurrence",
     "constraint",
     "value",
+    "allowedValues",
     "unit",
     "phases",
     "codeListId",
@@ -455,6 +456,7 @@ const createPropertiesSheet = (
         prop.occurrence || "required",
         prop.constraint || "",
         prop.value || "",
+        (prop.allowedValues || []).join(";"),
         prop.unit || "",
         formatPhases(prop.phases),
         getCodeListId(prop.extensions),
@@ -465,7 +467,7 @@ const createPropertiesSheet = (
     });
   });
 
-  finalizeSheet(sheet, [36, 15, 10, 30, 25, 15, 12, 12, 30, 10, 20, 36, 40]);
+  finalizeSheet(sheet, [36, 15, 10, 30, 25, 15, 12, 12, 30, 30, 10, 20, 36, 40]);
 };
 
 /**
