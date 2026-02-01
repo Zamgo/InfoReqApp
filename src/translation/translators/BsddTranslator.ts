@@ -176,21 +176,24 @@ export async function translateBsdd(
       break;
     }
     case "property": {
-      if (psetName) {
+      // Preferovat přímý Property API – vrací správný překlad (např. NetVolume → Čistý objem).
+      // Kontext Pset/Qto může v bSDD vracet chybná data u některých sad.
+      const propUri = getPropertyUri(officialName);
+      if (propUri) {
+        prom = fetchProperty(propUri).then((r) => {
+          if (r.translated) return r;
+          // Fallback na Pset/Qto kontext, pokud přímý překlad není k dispozici
+          if (psetName) {
+            const psetUri = getPsetOrQtoUri(psetName);
+            if (psetUri) return fetchPropertyFromPsetOrQto(psetUri, officialName);
+          }
+          return r;
+        });
+      } else if (psetName) {
         const psetUri = getPsetOrQtoUri(psetName);
-        if (psetUri) {
-          prom = fetchPropertyFromPsetOrQto(psetUri, officialName);
-        } else {
-          const propUri = getPropertyUri(officialName);
-          prom = propUri ? fetchProperty(propUri) : Promise.resolve({ translated: null, source: "bsdd" as const });
-        }
+        prom = psetUri ? fetchPropertyFromPsetOrQto(psetUri, officialName) : Promise.resolve({ translated: null, source: "bsdd" as const });
       } else {
-        const propUri = getPropertyUri(officialName);
-        if (!propUri) {
-          prom = Promise.resolve({ translated: null, source: null });
-        } else {
-          prom = fetchProperty(propUri);
-        }
+        prom = Promise.resolve({ translated: null, source: null });
       }
       break;
     }

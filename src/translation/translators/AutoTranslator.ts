@@ -1,8 +1,10 @@
 /**
- * Automatický překlad IFC názvů do češtiny - jednorázově v rámci aplikace.
- * Heuristiky + inline slovník pro běžné termíny.
+ * Automatický překlad IFC názvů do češtiny.
+ * 1. Lokální slovník (entita, predefinedType, property)
+ * 2. Externí MT služba MyMemory API pro chybějící položky
  */
 import type { TranslatableItemType, TranslationResult } from "../types";
+import { preprocessForMt, translateViaApi } from "./MtApiTranslator";
 
 /** Běžné IFC entity → čeština */
 const ENTITY_MAP: Record<string, string> = {
@@ -90,6 +92,7 @@ const PREDEFINED_TYPE_MAP: Record<string, string> = {
 const PROPERTY_MAP: Record<string, string> = {
   IsExternal: "Je venkovní",
   LoadBearing: "Nosnost",
+  NetVolume: "Čistý objem",
   FireRating: "Požární odolnost",
   AcousticRating: "Akustická hodnota",
   Reference: "Reference",
@@ -141,6 +144,15 @@ function normalizeKey(s: string): string {
   return s.replace(/^Ifc|^Pset_|^Qto_/, "").replace(/_/g, "");
 }
 
+/** Cílový jazyk pro MT API (cs, sk, …) */
+const MT_TARGET_LANG = "cs";
+
+async function translateViaMt(type: TranslatableItemType, officialName: string): Promise<string | null> {
+  const preprocessed = preprocessForMt(officialName, type);
+  if (!preprocessed) return null;
+  return translateViaApi(preprocessed, MT_TARGET_LANG);
+}
+
 export async function translateAuto(
   type: TranslatableItemType,
   officialName: string,
@@ -154,6 +166,7 @@ export async function translateAuto(
   switch (type) {
     case "entity":
       result = ENTITY_MAP[key] ?? ENTITY_MAP[normalizeKey(key)];
+      if (!result) result = await translateViaMt("entity", key);
       if (!result) {
         const withoutIfc = key.replace(/^Ifc/, "");
         result = camelCaseToCzech(withoutIfc);
@@ -162,6 +175,7 @@ export async function translateAuto(
     case "predefinedType": {
       const upper = key.toUpperCase();
       result = PREDEFINED_TYPE_MAP[key] ?? PREDEFINED_TYPE_MAP[upper];
+      if (!result) result = await translateViaMt("predefinedType", key);
       if (!result) {
         result = camelCaseToCzech(key.replace(/_/g, " "));
         if (result === key && upper === key) {
@@ -172,13 +186,15 @@ export async function translateAuto(
     }
     case "pset":
     case "qto":
-      result = camelCaseToCzech(key.replace(/^Pset_|^Qto_/, "").replace(/_/g, " "));
+      result = await translateViaMt(type, key);
+      if (!result) result = camelCaseToCzech(key.replace(/^Pset_|^Qto_/, "").replace(/_/g, " "));
       break;
     case "property":
-      result = PROPERTY_MAP[key] ?? camelCaseToCzech(key);
+      result = PROPERTY_MAP[key] ?? (await translateViaMt("property", key));
+      if (!result) result = camelCaseToCzech(key);
       break;
     default:
-      result = camelCaseToCzech(key);
+      result = await translateViaMt(type, key) ?? camelCaseToCzech(key);
   }
 
   return { translated: result || null, source: "auto" };

@@ -3252,19 +3252,28 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       />
                                     ) : (
                                       <div className="flex flex-col gap-0.5">
-                                        <select
-                                          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                          value={prop.propertyName}
-                                          onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
-                                          disabled={!group.psetName}
-                                        >
-                                          <option value="">— vybrat —</option>
-                                          {propertyOptions(prop.id).map((pdef) => (
-                                            <option key={pdef.name} value={pdef.name}>
-                                              {pdef.name}
-                                            </option>
-                                          ))}
-                                        </select>
+                                        <div className="flex items-center gap-2">
+                                          {prop.propertyName && (
+                                            <DocLink
+                                              href={`https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/property/${prop.propertyName}.htm`}
+                                              label={prop.propertyName}
+                                              type="ifc"
+                                            />
+                                          )}
+                                          <select
+                                            className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+                                            value={prop.propertyName}
+                                            onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
+                                            disabled={!group.psetName}
+                                          >
+                                            <option value="">— vybrat —</option>
+                                            {propertyOptions(prop.id).map((pdef) => (
+                                              <option key={pdef.name} value={pdef.name}>
+                                                {pdef.name}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
                                         {prop.propertyName && (
                                           <span className="text-xs text-slate-500">
                                             <TranslatedLabel

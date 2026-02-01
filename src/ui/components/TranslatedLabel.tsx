@@ -49,7 +49,16 @@ export const TranslatedLabel: React.FC<Props> = ({
 
   const { translated, source } = result;
   const bsddUrl = getBsddUrl(type, officialName, context);
-  const normalizeForComparison = (s: string) => s.trim().toLowerCase().replace(/_/g, " ");
+  /** Normalizace pro srovnání: camelCase→slova, podtržítka→mezery, lowercase. bSDD vrací anglické názvy jako fallback. */
+  const normalizeForComparison = (s: string) => {
+    const withSpaces = s
+      .replace(/_/g, " ")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+      .trim()
+      .toLowerCase();
+    return withSpaces.replace(/\s+/g, " ");
+  };
   const isSameAsOfficial =
     translated != null && normalizeForComparison(translated) === normalizeForComparison(officialName);
   const isDerivedFromEntity =
