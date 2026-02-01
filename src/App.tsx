@@ -361,6 +361,16 @@ const AppInner: React.FC = () => {
     updateProjectWithHistory(next);
   };
 
+  const onImportCodeLists = (lists: CodeList[]) => {
+    if (!project || lists.length === 0) return;
+    const next: Project = {
+      ...project,
+      codeLists: [...(project.codeLists ?? []), ...lists],
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
   const onUpdateCodeList = (id: string, updates: Partial<CodeList>) => {
     if (!project) return;
     const existing = (project.codeLists ?? []).find((c) => c.id === id);
@@ -787,6 +797,7 @@ const AppInner: React.FC = () => {
             onDeletePhase={onDeletePhase}
             codeLists={project?.codeLists ?? []}
             onAddCodeList={onAddCodeList}
+            onImportCodeLists={onImportCodeLists}
             onUpdateCodeList={onUpdateCodeList}
             onDeleteCodeList={onDeleteCodeList}
             codeListUsage={codeListUsage}

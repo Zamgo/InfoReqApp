@@ -169,6 +169,7 @@ interface Props {
   onDeletePhase: (id: string) => void;
   codeLists: CodeList[];
   onAddCodeList: (list: CodeList) => void;
+  onImportCodeLists?: (lists: CodeList[]) => void;
   onUpdateCodeList: (id: string, updates: Partial<CodeList>) => void;
   onDeleteCodeList: (id: string) => void;
   codeListUsage?: Record<
@@ -266,6 +267,7 @@ export const ClassificationPanel: React.FC<Props> = ({
   onDeletePhase,
   codeLists,
   onAddCodeList,
+  onImportCodeLists,
   onUpdateCodeList,
   onDeleteCodeList,
   codeListUsage,
@@ -513,6 +515,7 @@ export const ClassificationPanel: React.FC<Props> = ({
             codeLists={codeLists}
             usage={codeListUsage}
             onAdd={onAddCodeList}
+            onImport={onImportCodeLists}
             onUpdate={onUpdateCodeList}
             onDelete={onDeleteCodeList}
           />

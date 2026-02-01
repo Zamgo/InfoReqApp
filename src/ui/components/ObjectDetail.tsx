@@ -123,13 +123,6 @@ const ATTRIBUTE_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "LENGTH", label: "Délka" },
 ];
 
-// Režimy pro sloupec Kategorie materiálu
-const MATERIAL_CATEGORY_MODE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "NONE", label: "Není definováno" },
-  { value: "SIMPLE", label: "Jednoduchá hodnota" },
-  { value: "ENUM", label: "Výčet" },
-];
-
 // Omezení pro materiály - stejná jako u ostatních karet
 const MATERIAL_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "FILLED", label: "Žádné" },
@@ -1172,7 +1165,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
   const [enumDraftByAttrId, setEnumDraftByAttrId] = useState<Record<string, string>>({});
   const [enumDraftByMatId, setEnumDraftByMatId] = useState<Record<string, string>>({});
-  const [categoryDraftByMatId, setCategoryDraftByMatId] = useState<Record<string, string>>({});
   const [showRelationHelpModal, setShowRelationHelpModal] = useState(false);
 
   const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
@@ -2200,7 +2192,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
 
         <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
-          <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+          <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
             <div className="mb-2 flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
                 Klasifikace
@@ -4153,10 +4145,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     <tr>
                       <th className="w-8 px-2 py-2"></th>
                       <th className="px-2 py-2">Výskyt</th>
-                      <th className="px-2 py-2">Kategorie</th>
-                      <th className="px-2 py-2">URI</th>
                       <th className="px-2 py-2">Omezení</th>
                       <th className="px-2 py-2">Hodnota</th>
+                      <th className="px-2 py-2">URI</th>
+                      <th className="px-2 py-2">Poznámka</th>
                       <th className="px-2 py-2">Fáze</th>
                       <th className="px-2 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
@@ -4203,196 +4195,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <option value="prohibited">Zakázáno (prohibited)</option>
                             <option value="optional">Možné (optional)</option>
                           </select>
-                        </td>
-                        {/* KATEGORIE - s režimem (Není definováno / Jednoduchá hodnota / Výčet) */}
-                        <td className="px-2 py-2">
-                          {(() => {
-                            const categoryMode = mat.categoryMode ?? "NONE";
-                            const linkedCategoryCodeListId = (mat.extensions?.["categoryCodeListId"] as string | undefined) ?? undefined;
-                            const linkedCategoryCodeList = linkedCategoryCodeListId ? codeLists.find((c) => c.id === linkedCategoryCodeListId) : undefined;
-
-                            return (
-                              <div className="flex flex-col gap-1">
-                                {/* Výběr režimu */}
-                                <select
-                                  className="w-full rounded border border-slate-300 px-2 py-1 text-xs"
-                                  value={categoryMode}
-                                  onChange={(e) => updateMaterialField(mat.id, { categoryMode: e.target.value as any, category: "" })}
-                                >
-                                  {MATERIAL_CATEGORY_MODE_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>
-                                      {opt.label}
-                                    </option>
-                                  ))}
-                                </select>
-
-                                {/* Obsah podle režimu */}
-                                {categoryMode === "NONE" && (
-                                  <span className="text-slate-400 text-xs">—</span>
-                                )}
-
-                                {categoryMode === "SIMPLE" && (
-                                  <input
-                                    type="text"
-                                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                    value={mat.category ?? ""}
-                                    onChange={(e) => updateMaterialField(mat.id, { category: e.target.value })}
-                                    placeholder="Zadejte hodnotu..."
-                                  />
-                                )}
-
-                                {categoryMode === "ENUM" && (() => {
-                                  const values = linkedCategoryCodeList ? (linkedCategoryCodeList.values ?? []) : parseEnumValues(mat.category ?? "");
-                                  const displayValues = values.slice(0, 12);
-                                  const remaining = values.length - displayValues.length;
-
-                                  const detachFromCodeList = () => {
-                                    const nextExtensions = { ...(mat.extensions ?? {}) } as Record<string, unknown>;
-                                    delete (nextExtensions as any)["categoryCodeListId"];
-                                    updateMaterialField(mat.id, { extensions: nextExtensions });
-                                  };
-
-                                  const linkToCodeList = (id: string) => {
-                                    const list = codeLists.find((c) => c.id === id);
-                                    if (!list) return;
-                                    const nextExtensions = { ...(mat.extensions ?? {}) } as Record<string, unknown>;
-                                    nextExtensions["categoryCodeListId"] = list.id;
-                                    updateMaterialField(mat.id, { extensions: nextExtensions, category: formatEnumValues(list.values ?? []) });
-                                  };
-
-                                  return (
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-1">
-                                        <select
-                                          className="rounded border border-slate-300 px-2 py-1 text-xs"
-                                          value={linkedCategoryCodeListId ? `codelist:${linkedCategoryCodeListId}` : "inline"}
-                                          onChange={(e) => {
-                                            const v = e.target.value;
-                                            if (v === "inline") {
-                                              detachFromCodeList();
-                                              return;
-                                            }
-                                            if (v.startsWith("codelist:")) {
-                                              linkToCodeList(v.replace("codelist:", ""));
-                                            }
-                                          }}
-                                        >
-                                          <option value="inline">Vlastní</option>
-                                          {codeLists.length > 0 && <option disabled>— Číselníky —</option>}
-                                          {codeLists.map((cl) => (
-                                            <option key={cl.id} value={`codelist:${cl.id}`}>
-                                              {cl.name}
-                                            </option>
-                                          ))}
-                                        </select>
-                                        {linkedCategoryCodeListId && (
-                                          <button
-                                            className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50"
-                                            onClick={detachFromCodeList}
-                                            title="Odpojit od číselníku"
-                                          >
-                                            Odpojit
-                                          </button>
-                                        )}
-                                      </div>
-
-                                      {!linkedCategoryCodeListId ? (
-                                        <div className="flex items-center gap-1">
-                                          <input
-                                            type="text"
-                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                            placeholder="Napiš hodnotu a stiskni Enter"
-                                            value={categoryDraftByMatId[mat.id] ?? ""}
-                                            onChange={(e) =>
-                                              setCategoryDraftByMatId((prev) => ({ ...prev, [mat.id]: e.target.value }))
-                                            }
-                                            onKeyDown={(e) => {
-                                              if (e.key !== "Enter") return;
-                                              e.preventDefault();
-                                              const raw = (categoryDraftByMatId[mat.id] ?? "").trim();
-                                              if (!raw) return;
-                                              const nextValues = Array.from(new Set([...values, raw]));
-                                              updateMaterialField(mat.id, { category: formatEnumValues(nextValues) });
-                                              setCategoryDraftByMatId((prev) => ({ ...prev, [mat.id]: "" }));
-                                            }}
-                                          />
-                                          <button
-                                            className={`flex items-center rounded border px-2 py-1 text-[11px] ${
-                                              values.length === 0
-                                                ? "border-slate-200 text-slate-400 cursor-not-allowed"
-                                                : "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:border-emerald-400"
-                                            }`}
-                                            disabled={values.length === 0}
-                                            title="Uložit jako číselník a přiřadit"
-                                            onClick={() => {
-                                              setEnumSaveDialog({
-                                                propertyId: `cat-${mat.id}`,
-                                                name: "Kategorie materiálu",
-                                                values,
-                                                type: "property",
-                                              });
-                                            }}
-                                          >
-                                            <svg
-                                              aria-hidden
-                                              xmlns="http://www.w3.org/2000/svg"
-                                              viewBox="0 0 24 24"
-                                              fill="currentColor"
-                                              className="h-4 w-4"
-                                            >
-                                              <path d="M6 2h11l3 3v17H4V4a2 2 0 0 1 2-2Zm12 8V6.5L16.5 5H6v5h12ZM6 20h12v-8H6v8Zm2-6h8v4H8v-4Z" />
-                                            </svg>
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <div className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600">
-                                          Používá číselník: <span className="font-semibold text-slate-800">{linkedCategoryCodeList?.name ?? linkedCategoryCodeListId}</span>
-                                        </div>
-                                      )}
-
-                                      <div className="flex flex-wrap gap-1">
-                                        {displayValues.map((v) => (
-                                          <span key={v} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700" title={v}>
-                                            <span>{v}</span>
-                                            {!linkedCategoryCodeListId && (
-                                              <button
-                                                className="text-slate-400 hover:text-slate-700"
-                                                title="Odebrat hodnotu"
-                                                onClick={() => {
-                                                  const nextValues = values.filter((x) => x !== v);
-                                                  updateMaterialField(mat.id, { category: formatEnumValues(nextValues) });
-                                                }}
-                                              >
-                                                ×
-                                              </button>
-                                            )}
-                                          </span>
-                                        ))}
-                                        {remaining > 0 && (
-                                          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">
-                                            +{remaining}
-                                          </span>
-                                        )}
-                                        {values.length === 0 && (
-                                          <span className="text-[11px] text-slate-400">Žádné hodnoty.</span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
-                              </div>
-                            );
-                          })()}
-                        </td>
-                        {/* URI */}
-                        <td className="px-2 py-2">
-                          <input
-                            type="text"
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.uri ?? ""}
-                            onChange={(e) => updateMaterialField(mat.id, { uri: e.target.value })}
-                            placeholder="URI materiálu"
-                          />
                         </td>
                         {/* OMEZENÍ */}
                         <td className="px-2 py-2">
@@ -4784,6 +4586,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               />
                             );
                           })()}
+                        </td>
+                        {/* URI */}
+                        <td className="px-2 py-2">
+                          <input
+                            type="text"
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={mat.uri ?? ""}
+                            onChange={(e) => updateMaterialField(mat.id, { uri: e.target.value })}
+                            placeholder="URI materiálu"
+                          />
+                        </td>
+                        {/* POZNÁMKA */}
+                        <td className="px-2 py-2">
+                          <input
+                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                            value={mat.note ?? ""}
+                            onChange={(e) => updateMaterialField(mat.id, { note: e.target.value })}
+                            placeholder="Poznámka k materiálu"
+                          />
                         </td>
                         {/* FÁZE */}
                         <td className="px-2 py-2">

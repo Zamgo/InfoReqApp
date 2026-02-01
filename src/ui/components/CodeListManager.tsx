@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import type { CodeList } from "../../project/types";
 import { makeId } from "../../utils/id";
 import { formatEnumValues, parseEnumValues } from "../../project/enumeration";
+import { createSampleCodeListsXlsx, parseCodeListsFromFile } from "../../import/codeLists";
 
 interface Props {
   codeLists: CodeList[];
@@ -14,15 +15,50 @@ interface Props {
     }>
   >;
   onAdd: (list: CodeList) => void;
+  onImport?: (lists: CodeList[]) => void;
   onUpdate: (id: string, updates: Partial<CodeList>) => void;
   onDelete: (id: string) => void;
 }
 
-export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onUpdate, onDelete }) => {
+export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onImport, onUpdate, onDelete }) => {
   const [name, setName] = useState("");
   const [valuesText, setValuesText] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [usageExpanded, setUsageExpanded] = useState<Set<string>>(new Set());
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const handleImportFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    setImportError(null);
+    if (!file) return;
+    try {
+      const lists = await parseCodeListsFromFile(file);
+      if (lists.length === 0) {
+        setImportError("Soubor neobsahuje žádné číselníky.");
+        return;
+      }
+      if (onImport) {
+        onImport(lists);
+      } else {
+        for (const list of lists) {
+          onAdd(list);
+        }
+      }
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Chyba při importu.");
+    }
+  };
+
+  const handleDownloadSample = async () => {
+    const blob = await createSampleCodeListsXlsx();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "Vzor_číselníky.xlsx";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const sorted = useMemo(
     () => [...codeLists].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
@@ -62,6 +98,28 @@ export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onUp
         <div className="text-sm font-semibold text-slate-800">Číselníky</div>
         <div className="text-xs text-slate-500">
           Správa předvolených výčtů (IDS: Enumeration). Změny se promítnou do vlastností navázaných na číselník.
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="inline-flex cursor-pointer items-center gap-1 rounded border border-slate-300 bg-white px-2.5 py-1 text-sm hover:bg-slate-50">
+            <input
+              type="file"
+              accept=".txt,.tsv,.csv,.xlsx"
+              onChange={handleImportFile}
+              className="hidden"
+            />
+            Importovat TXT / XLSX
+          </label>
+          <button
+            type="button"
+            className="rounded border border-slate-300 bg-white px-2.5 py-1 text-sm hover:bg-slate-50"
+            onClick={handleDownloadSample}
+            title="Stáhne vzorový XLSX – každý sloupec = číselník, první řádek = názvy, ostatní = hodnoty"
+          >
+            Stáhnout vzorový soubor
+          </button>
+          {importError && (
+            <span className="text-sm text-red-600">{importError}</span>
+          )}
         </div>
       </div>
 
