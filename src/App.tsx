@@ -2,6 +2,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEve
 import { ClassificationPanel } from "./ui/components/ClassificationPanel";
 import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { ProjectDetailsDialog } from "./ui/components/ProjectDetailsDialog";
+import { SettingsDialog } from "./ui/components/SettingsDialog";
+import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
 import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode } from "./classification/parser";
@@ -62,6 +64,7 @@ const AppInner: React.FC = () => {
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
   const [isIDSExportOpen, setIsIDSExportOpen] = useState<boolean>(false);
   const [isExcelExportOpen, setIsExcelExportOpen] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   
   // Resizable panel state
@@ -668,6 +671,7 @@ const AppInner: React.FC = () => {
   }, [panelWidth]);
 
   return (
+    <TranslationProvider project={project}>
     <div className="flex h-screen flex-col bg-slate-100">
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
         <div>
@@ -690,6 +694,17 @@ const AppInner: React.FC = () => {
           </button>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            className="rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+            onClick={() => setIsSettingsOpen(true)}
+            disabled={!project}
+            title="Nastavení"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </button>
           <button
             className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleUndo}
@@ -871,7 +886,16 @@ const AppInner: React.FC = () => {
           onExport={(selection) => void handleExcelExport(selection)}
         />
       )}
+
+      {/* Settings Dialog */}
+      <SettingsDialog
+        project={project}
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSave={onUpdateProjectDetails}
+      />
     </div>
+    </TranslationProvider>
   );
 };
 

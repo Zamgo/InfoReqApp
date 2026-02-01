@@ -7,6 +7,7 @@ import { makeId } from "../../utils/id";
 import type { ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
+import { TranslatedLabel } from "./TranslatedLabel";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable";
@@ -2073,16 +2074,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         )}
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-2 flex items-center gap-1.5">
-              <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
-                Entita
-                <DocLink 
-                  href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/entity-facet.md"
-                  label="Entity Facet"
-                  type="ids"
-                />
-                <DocLink href={getIfcDocUrl(object.ifcEntity)} label={object.ifcEntity ?? ""} type="ifc" />
-              </div>
+            <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+              Entita
+              <DocLink 
+                href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/entity-facet.md"
+                label="Entity Facet"
+                type="ids"
+              />
+              <DocLink href={getIfcDocUrl(object.ifcEntity)} label="IFC" type="ifc" />
             </div>
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -2095,6 +2094,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </option>
                   ))}
                 </select>
+                {object.ifcEntity && (
+                  <span className="text-sm text-slate-500">
+                    <span className="mx-1 text-slate-300">—</span>
+                    <TranslatedLabel type="entity" officialName={object.ifcEntity} inline translationOnly />
+                  </span>
+                )}
                 <span className="text-xs text-slate-600 shrink-0">Fáze</span>
                 <PhaseSelector
                   phases={phases}
@@ -2119,6 +2124,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     value={object.predefinedType.value ?? ""}
                     onChange={(e) => updateObject({ predefinedType: { mode: "USERDEFINED", value: e.target.value } })}
                   />
+                )}
+                {object.predefinedType.mode === "ENUM" && object.predefinedType.value && (
+                  <span className="text-sm text-slate-500">
+                    <span className="mx-1 text-slate-300">—</span>
+                    <TranslatedLabel
+                      type="predefinedType"
+                      officialName={object.predefinedType.value}
+                      context={{ entity: object.ifcEntity }}
+                      inline
+                      translationOnly
+                    />
+                  </span>
                 )}
                 <span className="text-xs text-slate-600 shrink-0">Fáze</span>
                 <PhaseSelector
@@ -2307,14 +2324,36 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     .filter((p) => p.isApplicability && (p.psetName || p.propertyName))
                     .map((prop) => {
                       const propPhases = prop.phases ?? phases.map(p => p.id);
+                      const showTranslation = (prop.source === "PSET" || prop.source === "QTO") && (prop.psetName || prop.propertyName);
                       return (
                         <div key={prop.id} className="rounded px-2 py-1.5 text-xs bg-white border border-slate-200">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold text-slate-800">{prop.propertyName || "—"}</span>
+                            {showTranslation && prop.propertyName ? (
+                              <TranslatedLabel
+                                type="property"
+                                officialName={prop.propertyName}
+                                context={{ psetName: prop.psetName }}
+                                inline
+                              />
+                            ) : (
+                              <span className="font-semibold text-slate-800">{prop.propertyName || "—"}</span>
+                            )}
                           </div>
-                          <div className="mt-0.5 text-slate-500">
-                            {prop.psetName && <span>{prop.psetName}</span>}
-                            {prop.value && <span className="ml-1">• {prop.value}</span>}
+                          <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 text-slate-500">
+                            {prop.psetName
+                              ? showTranslation
+                                ? (
+                                  <span>
+                                    <TranslatedLabel
+                                      type={prop.source === "QTO" ? "qto" : "pset"}
+                                      officialName={prop.psetName}
+                                      inline
+                                    />
+                                  </span>
+                                )
+                                : <span>{prop.psetName}</span>
+                              : null}
+                            {prop.value && <span>• {prop.value}</span>}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1">
                             <span className="text-[10px] text-slate-500">Fáze:</span>
@@ -3059,6 +3098,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           </div>
                         ) : (
                           <div className="flex items-center gap-2">
+                            {docHref && (
+                              <DocLink href={docHref} label={(displayPsetName || group.psetName) ?? "IFC"} type="ifc" />
+                            )}
                             <select
                               className={`rounded border px-2 py-1 text-sm ${
                                 isInvalidGroup ? "border-red-400 bg-red-50 text-red-900" : "border-slate-300"
@@ -3083,7 +3125,16 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 </option>
                               ))}
                             </select>
-                            <DocLink href={docHref} label={group.psetName ?? ""} />
+                            {displayPsetName && (group.source === "PSET" || group.source === "QTO") ? (
+                              <TranslatedLabel
+                                type={group.source === "QTO" ? "qto" : "pset"}
+                                officialName={displayPsetName}
+                                inline
+                                translationOnly
+                              />
+                            ) : displayPsetName ? (
+                              <DocLink href={docHref} label={group.psetName ?? ""} />
+                            ) : null}
                             {isInvalidGroup && (
                               <div className="text-xs text-red-700">
                                 Skupina nepatří k aktuálnímu PredefinedType{" "}
@@ -3200,19 +3251,32 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         placeholder="Vlastnost"
                                       />
                                     ) : (
-                                      <select
-                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                        value={prop.propertyName}
-                                        onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
-                                        disabled={!group.psetName}
-                                      >
-                                        <option value="">— vybrat —</option>
-                                        {propertyOptions(prop.id).map((pdef) => (
-                                          <option key={pdef.name} value={pdef.name}>
-                                            {pdef.name}
-                                          </option>
-                                        ))}
-                                      </select>
+                                      <div className="flex flex-col gap-0.5">
+                                        <select
+                                          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                          value={prop.propertyName}
+                                          onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
+                                          disabled={!group.psetName}
+                                        >
+                                          <option value="">— vybrat —</option>
+                                          {propertyOptions(prop.id).map((pdef) => (
+                                            <option key={pdef.name} value={pdef.name}>
+                                              {pdef.name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        {prop.propertyName && (
+                                          <span className="text-xs text-slate-500">
+                                            <TranslatedLabel
+                                              type="property"
+                                              officialName={prop.propertyName}
+                                              context={{ psetName: group.psetName }}
+                                              inline
+                                              translationOnly
+                                            />
+                                          </span>
+                                        )}
+                                      </div>
                                     )}
                                   </td>
                                   <td className="px-2 py-2">

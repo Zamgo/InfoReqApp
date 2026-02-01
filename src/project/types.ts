@@ -185,11 +185,16 @@ export interface ClassificationSystemEntry {
   isPure?: boolean;
 }
 
+/** Režim překladů IFC názvů: vypnuto, automatický, bSDD */
+export type TranslationMode = "OFF" | "AUTO" | "BSDD";
+
 export interface Project {
   projectId: string;
   name: string;
   /** Author of the project */
   author?: string;
+  /** Režim překladů IFC názvů pro zobrazení uživateli */
+  translationMode?: TranslationMode;
   /** Project description */
   description?: string;
   createdAt: string;
