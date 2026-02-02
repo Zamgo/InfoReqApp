@@ -90,23 +90,43 @@ export async function translateViaApi(
   const cached = memoryCache.get(cacheKey);
   if (cached) return cached.translated;
 
-  try {
-    const params = new URLSearchParams({
-      q: textToTranslate,
-      langpair: `en|${normalizedTarget}`,
-    });
-    const url = `${MYMEMORY_BASE}?${params.toString()}`;
+  const params = new URLSearchParams({
+    q: textToTranslate,
+    langpair: `en|${normalizedTarget}`,
+  });
+  const apiUrl = `${MYMEMORY_BASE}?${params.toString()}`;
+
+  const tryFetch = async (url: string): Promise<string | null> => {
     const res = await fetch(url);
     if (!res.ok) return null;
     const json = (await res.json()) as { responseData?: { translatedText?: string }; responseStatus?: number };
-    const translated = json?.responseData?.translatedText?.trim();
+    return json?.responseData?.translatedText?.trim() ?? null;
+  };
+
+  try {
+    let translated = await tryFetch(apiUrl);
+    if (!translated) {
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
+      translated = await tryFetch(proxyUrl);
+    }
     if (translated) {
       memoryCache.set(cacheKey, { translated, ts: Date.now() });
       saveToPersistedCache();
       return translated;
     }
   } catch {
-    // síťová chyba
+    // síťová chyba nebo CORS – zkusit CORS proxy
+    try {
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
+      const translated = await tryFetch(proxyUrl);
+      if (translated) {
+        memoryCache.set(cacheKey, { translated, ts: Date.now() });
+        saveToPersistedCache();
+        return translated;
+      }
+    } catch {
+      // ignore
+    }
   }
   return null;
 }

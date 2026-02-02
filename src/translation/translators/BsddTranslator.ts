@@ -48,6 +48,16 @@ interface ClassPropertyItem {
   Description?: string;
 }
 
+/** Response Class/v1 – bSDD API může vracet PascalCase */
+interface ClassV1Response {
+  name?: string;
+  Name?: string;
+  definition?: string;
+  Definition?: string;
+  description?: string;
+  Description?: string;
+}
+
 /** GET /api/Class/v1 - vrací ClassContract.v1 s polem 'name' (přeložený název) */
 async function fetchClass(uri: string): Promise<TranslationResult> {
   try {
@@ -64,12 +74,48 @@ async function fetchClass(uri: string): Promise<TranslationResult> {
     if (!ct.toLowerCase().includes("application/json")) {
       return { translated: null, source: "bsdd" };
     }
-    const data = (await res.json()) as { name?: string };
-    const name = typeof data?.name === "string" && data.name.trim() ? data.name.trim() : null;
-    return { translated: name, source: "bsdd" };
+    const data = (await res.json()) as ClassV1Response;
+    const name = (data?.name ?? data?.Name ?? "").trim();
+    return { translated: name || null, source: "bsdd" };
   } catch {
     return { translated: null, source: "bsdd" };
   }
+}
+
+/** GET /api/Class/v1 - vrací Definition (nebo Description) třídy z bSDD. */
+export async function fetchClassDefinition(uri: string): Promise<string | null> {
+  try {
+    const url = `${API_BASE}/api/Class/v1?Uri=${encodeURIComponent(uri)}&languageCode=${BSDD_LANG}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": USER_AGENT,
+      },
+    });
+    if (!res.ok) return null;
+    const ct = res.headers.get("content-type") ?? "";
+    if (!ct.toLowerCase().includes("application/json")) return null;
+    const data = (await res.json()) as ClassV1Response;
+    const def = (data?.definition ?? data?.Definition ?? "").trim();
+    const desc = (data?.description ?? data?.Description ?? "").trim();
+    return def || desc || null;
+  } catch {
+    return null;
+  }
+}
+
+/** URI IFC entity pro bSDD. */
+export function getEntityClassUri(entityName: string): string | null {
+  if (!entityName?.trim()) return null;
+  return `${BSDD_BASE}/class/${encodeURIComponent(entityName.trim())}`;
+}
+
+/** URI IFC predefined type (entity + typ bez oddělovače). */
+export function getPredefinedTypeClassUri(entity: string, predefinedType: string): string | null {
+  if (!entity?.trim() || !predefinedType?.trim()) return null;
+  const combined = `${entity.trim()}${predefinedType.trim()}`;
+  return `${BSDD_BASE}/class/${encodeURIComponent(combined)}`;
 }
 
 /** GET /api/Class/v1 s IncludeClassProperties - pro překlad vlastností v Pset/Qto */

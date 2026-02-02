@@ -8,7 +8,9 @@ import type { ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, P
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
 import { TranslatedLabel } from "./TranslatedLabel";
-import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition } from "../../translation/translators/BsddTranslator";
+import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition, fetchClassDefinition, getEntityClassUri, getPredefinedTypeClassUri } from "../../translation/translators/BsddTranslator";
+import { translateViaApi } from "../../translation/translators/MtApiTranslator";
+import { useTranslation } from "../../translation/TranslationContext";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable";
@@ -155,8 +157,8 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
   "IFCRELFILLSELEMENT",
 ];
 
-/** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, Datový typ, Omezení, Hodnota, Jednotka, Popis, Poznámka, Příklady, Fáze, Použitelnost, Akce */
-const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 220, 160, 140, 100, 50, 110];
+/** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, Datový typ, Omezení, Hodnota, Jednotka, Popis+Poznámka+Příklady, Fáze, Použitelnost, Akce */
+const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 540, 100, 50, 110];
 
 // Czech help text for relation types (displayed in modal)
 const RELATION_TYPES_HELP_TEXT = `Vztah IFCRELAGGREGATES popisuje, jak lze více menších dílčích objektů agregovat do jednoho většího objektu. Například několik podlaží budovy tvoří jednu budovu. Jiným příkladem je deska, kterou tvoří nosníky, podlahové desky a spoje. Nebo sestava, kterou tvoří konzoly, sloupky (mullions) a ocelové plechy.
@@ -1329,6 +1331,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [propertyRowEditDialog, setPropertyRowEditDialog] = useState<{ prop: PropertyRequirement; groupKey: string } | null>(null);
   /** Šířky sloupců tabulky vlastností (index → px); prázdné = auto */
   const [propertyTableColWidths, setPropertyTableColWidths] = useState<Record<number, number>>({});
+  /** Načítání Definition pro popis objektu: "entity" | "typ" | null */
+  const [loadingObjectDefinition, setLoadingObjectDefinition] = useState<"entity" | "typ" | null>(null);
+  const { translationMode } = useTranslation();
   /** Index sloupce, který se právě roztahuje (resize handle) */
   const [resizingCol, setResizingCol] = useState<number | null>(null);
   const resizingStartX = useRef(0);
@@ -1536,23 +1541,80 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const handlePredefinedChange = (value: string) => {
     if (!value) {
-      updateObject({ predefinedType: { mode: "NONE" } });
+      updateObject({ predefinedType: { mode: "NONE" }, popis: "" });
       return;
     }
     if (value === "USERDEFINED") {
-      updateObject({ predefinedType: { mode: "USERDEFINED", value: "" } });
+      updateObject({ predefinedType: { mode: "USERDEFINED", value: "" }, popis: "" });
     } else {
-      updateObject({ predefinedType: { mode: "ENUM", value } });
+      updateObject({ predefinedType: { mode: "ENUM", value }, popis: "" });
     }
   };
 
   const handleIfcEntityChange = (value: string) => {
-    // Při změně IFC entity resetujeme PredefinedType na NONE
+    // Při změně IFC entity resetujeme PredefinedType na NONE a popis objektu
     updateObject({ 
       ifcEntity: value,
-      predefinedType: { mode: "NONE" }
+      predefinedType: { mode: "NONE" },
+      popis: "",
     });
   };
+
+  const looksLikeCzech = (t: string) => /[ěščřžýáíéúůďťň]/i.test(t);
+
+  /** Stáhne Definition IFC entity z bSDD a přidá do popisu objektu (odděleno řádkem). Při režimu AUTO/BSDD se angl. text přeloží. */
+  const fetchEntityDefinitionToPopis = useCallback(async () => {
+    if (!object.ifcEntity?.trim()) return;
+    setLoadingObjectDefinition("entity");
+    try {
+      const uri = getEntityClassUri(object.ifcEntity);
+      if (!uri) return;
+      let def = await fetchClassDefinition(uri);
+      if (def && (translationMode === "AUTO" || translationMode === "BSDD") && !looksLikeCzech(def)) {
+        try {
+          const translated = await translateViaApi(def.trim(), "cs");
+          if (translated) def = translated;
+        } catch {
+          // ponechat původní
+        }
+      }
+      if (def) {
+        const current = (object.popis ?? "").trim();
+        const next = current ? `${current}\n\n${def}` : def;
+        updateObject({ popis: next });
+      }
+    } finally {
+      setLoadingObjectDefinition(null);
+    }
+  }, [object.ifcEntity, object.popis, updateObject, translationMode]);
+
+  /** Stáhne Definition PredefinedType z bSDD a přidá do popisu objektu (odděleno řádkem). Při režimu AUTO/BSDD se angl. text přeloží. */
+  const fetchTypDefinitionToPopis = useCallback(async () => {
+    const pt = object.predefinedType;
+    const value = pt?.mode === "ENUM" || pt?.mode === "USERDEFINED" ? pt?.value?.trim() : "";
+    if (!object.ifcEntity?.trim() || !value) return;
+    setLoadingObjectDefinition("typ");
+    try {
+      const uri = getPredefinedTypeClassUri(object.ifcEntity, value);
+      if (!uri) return;
+      let def = await fetchClassDefinition(uri);
+      if (def && (translationMode === "AUTO" || translationMode === "BSDD") && !looksLikeCzech(def)) {
+        try {
+          const translated = await translateViaApi(def.trim(), "cs");
+          if (translated) def = translated;
+        } catch {
+          // ponechat původní
+        }
+      }
+      if (def) {
+        const current = (object.popis ?? "").trim();
+        const next = current ? `${current}\n\n${def}` : def;
+        updateObject({ popis: next });
+      }
+    } finally {
+      setLoadingObjectDefinition(null);
+    }
+  }, [object.ifcEntity, object.predefinedType, object.popis, updateObject, translationMode]);
 
   const getAvailableAttributes = (currentId?: string) => {
     const allAttributes = ["Name", "Description", "Tag", "ObjectType", "GlobalId"];
@@ -1660,7 +1722,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     });
   };
 
-  /** Načte z bSDD Definition pro všechny vlastnosti v Pset/Qto a propíše je do sloupce Popis. */
+  /** Načte z bSDD Definition pro všechny vlastnosti v Pset/Qto a propíše je do sloupce Popis. Při režimu AUTO se nepřeložený (angl.) text přeloží do češtiny. */
   const fillDescriptionsFromBsdd = useCallback(
     async (groupKeyValue: string) => {
       const group = propertyGroups.find((g) => g.key === groupKeyValue);
@@ -1670,6 +1732,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         let definitions: Record<string, string> = await fetchPsetOrQtoPropertyDefinitions(group.psetName);
         if (!definitions || typeof definitions !== "object") definitions = {};
         const updates = new Map<string, string>();
+        const shouldTranslate = translationMode === "AUTO" || translationMode === "BSDD";
+        const looksLikeCzech = (t: string) => /[ěščřžýáíéúůďťň]/i.test(t);
         for (const prop of group.properties) {
           const pn = (prop.propertyName ?? "").trim();
           if (!pn) continue;
@@ -1678,7 +1742,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             const single = await fetchSinglePropertyDefinition(pn);
             if (single) def = single;
           }
-          if (def != null && typeof def === "string") updates.set(prop.id, def);
+          if (def != null && typeof def === "string") {
+            if (shouldTranslate && def.trim() && !looksLikeCzech(def)) {
+              try {
+                const translated = await translateViaApi(def.trim(), "cs");
+                if (translated) def = translated;
+              } catch {
+                // ponechat původní
+              }
+            }
+            updates.set(prop.id, def);
+          }
         }
         if (updates.size === 0) return;
         updateRequirements((reqs) => {
@@ -1694,7 +1768,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         setFillingDescriptionsGroupKey(null);
       }
     },
-    [propertyGroups, updateRequirements]
+    [propertyGroups, updateRequirements, translationMode]
   );
 
   const addAllFromSchema = (groupKeyValue: string) => {
@@ -2297,7 +2371,51 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       <div className="min-w-0 border-b border-slate-200 bg-white px-4 py-3">
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="min-w-0">
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Popis</label>
+            <div className="mb-1 flex flex-wrap items-center gap-2">
+              <label className="text-xs font-semibold text-slate-600">Popis</label>
+              {isIfcPrimary && object.ifcEntity && !isLocked && (
+                <>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Stáhnout Definition IFC entity z bSDD do popisu"
+                    onClick={fetchEntityDefinitionToPopis}
+                    disabled={loadingObjectDefinition !== null}
+                  >
+                    {loadingObjectDefinition === "entity" ? (
+                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
+                          <path d="m6 9 6 6 6-6" />
+                        </svg>
+                        <span>bSDD Entity</span>
+                      </>
+                    )}
+                  </button>
+                  {(object.predefinedType?.mode === "ENUM" || object.predefinedType?.mode === "USERDEFINED") && object.predefinedType?.value && (
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Stáhnout Definition PredefinedType z bSDD do popisu"
+                      onClick={fetchTypDefinitionToPopis}
+                      disabled={loadingObjectDefinition !== null}
+                    >
+                      {loadingObjectDefinition === "typ" ? (
+                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+                      ) : (
+                        <>
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
+                            <path d="m6 9 6 6 6-6" />
+                          </svg>
+                          <span>bSDD Predefined type</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
             <textarea
               className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
               placeholder="Popis objektu"
@@ -2405,7 +2523,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     className="min-w-[100px] max-w-[160px] rounded border border-slate-300 px-2 py-1 text-sm"
                     placeholder="Vlastní typ"
                     value={object.predefinedType.value ?? ""}
-                    onChange={(e) => updateObject({ predefinedType: { mode: "USERDEFINED", value: e.target.value } })}
+                    onChange={(e) => updateObject({ predefinedType: { mode: "USERDEFINED", value: e.target.value }, popis: "" })}
                   />
                 )}
                 {object.predefinedType.mode === "ENUM" && object.predefinedType.value && (
@@ -3514,39 +3632,32 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     <span className="block pr-1">Jednotka</span>
                                     <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(6); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[6] ?? DEFAULT_PROPERTY_COL_WIDTHS[6]; }} aria-hidden />
                                   </th>,
-                                  <th key="7" className="px-2 py-2 relative select-none">
+                                  <th key="7" className="px-2 py-2 relative select-none" colSpan={3}>
                                     <div className="flex items-center gap-1 pr-1">
                                       <span>Popis</span>
                                       {(group.source === "PSET" || group.source === "QTO") && group.psetName && !isTempGroup && (
-                                        <button type="button" className="flex items-center justify-center w-6 h-6 rounded border border-slate-300 bg-slate-50 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed" title="Propíš z bSDD Definition do sloupce Popis u všech vlastností v této skupině" onClick={() => fillDescriptionsFromBsdd(group.key)} disabled={fillingDescriptionsGroupKey === group.key}>
-                                          {fillingDescriptionsGroupKey === group.key ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" /> : <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="m6 9 6 6 6-6" /></svg>}
+                                        <button type="button" className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium" title="Propíš z bSDD Definition do sloupce Popis u všech vlastností v této skupině" onClick={() => fillDescriptionsFromBsdd(group.key)} disabled={fillingDescriptionsGroupKey === group.key}>
+                                          {fillingDescriptionsGroupKey === group.key ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" /> : <><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0"><path d="m6 9 6 6 6-6" /></svg><span>bSDD</span></>}
                                         </button>
                                       )}
+                                      <span>· Poznámka · Příklady</span>
                                     </div>
                                     <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(7); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
                                   </th>,
                                   <th key="8" className="px-2 py-2 relative select-none">
-                                    <span className="block pr-1">Poznámka</span>
+                                    <span className="block pr-1">Fáze</span>
                                     <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(8); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
                                   </th>,
-                                  <th key="9" className="px-2 py-2 relative select-none">
-                                    <span className="block pr-1">Příklady</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(9); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[9] ?? DEFAULT_PROPERTY_COL_WIDTHS[9]; }} aria-hidden />
-                                  </th>,
-                                  <th key="10" className="px-2 py-2 relative select-none">
-                                    <span className="block pr-1">Fáze</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(10); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[10] ?? DEFAULT_PROPERTY_COL_WIDTHS[10]; }} aria-hidden />
-                                  </th>,
-                                  <th key="11" className="px-2 py-2 text-center relative select-none">
+                                  <th key="9" className="px-2 py-2 text-center relative select-none">
                                     <div className="flex items-center justify-center gap-1 pr-1">
                                       <span>Použitelnost</span>
                                       <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(11); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[11] ?? DEFAULT_PROPERTY_COL_WIDTHS[11]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(9); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[9] ?? DEFAULT_PROPERTY_COL_WIDTHS[9]; }} aria-hidden />
                                   </th>,
-                                  <th key="12" className="px-2 py-2 text-right relative select-none">
+                                  <th key="10" className="px-2 py-2 text-right relative select-none">
                                     <span className="block pr-1">Akce</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(12); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[12] ?? DEFAULT_PROPERTY_COL_WIDTHS[12]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(10); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[10] ?? DEFAULT_PROPERTY_COL_WIDTHS[10]; }} aria-hidden />
                                   </th>,
                                 ]}
                               </tr>
@@ -3591,7 +3702,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                           const newValue = e.target.value;
                                           // Pokud uživatel zadá text začínající na _NEW_, ignoruj to a nastav prázdný string
                                           if (newValue.startsWith("_NEW_")) {
-                                            updatePropertyField(prop.id, { propertyName: "" });
+                                            updatePropertyField(prop.id, { propertyName: "", popis: "" });
                                           } else {
                                             updatePropertyField(prop.id, { propertyName: newValue });
                                           }
@@ -3611,7 +3722,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                           <select
                                             className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
                                             value={prop.propertyName}
-                                            onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value })}
+                                            onChange={(e) => updatePropertyField(prop.id, { propertyName: e.target.value, popis: "" })}
                                             disabled={!group.psetName}
                                           >
                                             <option value="">— vybrat —</option>
@@ -4203,17 +4314,29 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       );
                                     })()}
                                   </td>
-                                  <td className="px-2 py-2">
-                                    <div className="flex items-center gap-1">
+                                  <td className="px-2 py-2" colSpan={3}>
+                                    <div className="flex items-center gap-2 rounded-lg border-2 border-slate-300 bg-slate-50/50 p-2">
                                       <input 
-                                        className="min-w-0 flex-1 rounded border border-slate-300 px-2 py-1 text-sm" 
+                                        className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm" 
                                         value={prop.popis ?? ""} 
                                         onChange={(e) => updatePropertyField(prop.id, { popis: e.target.value })}
                                         placeholder="Popis" 
                                       />
+                                      <input 
+                                        className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm" 
+                                        value={prop.note ?? ""} 
+                                        onChange={(e) => updatePropertyField(prop.id, { note: e.target.value })}
+                                        placeholder="Poznámka" 
+                                      />
+                                      <input 
+                                        className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm" 
+                                        value={prop.priklady ?? ""} 
+                                        onChange={(e) => updatePropertyField(prop.id, { priklady: e.target.value })}
+                                        placeholder="Příklady" 
+                                      />
                                       <button
                                         type="button"
-                                        className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded border border-slate-300 bg-slate-50 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300"
+                                        className="flex-shrink-0 flex items-center justify-center w-7 h-7 rounded border border-slate-300 bg-white text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-300"
                                         title="Otevřít Popis, Poznámka, Příklady v dialogu"
                                         onClick={() => setPropertyRowEditDialog({ prop: { ...prop }, groupKey: group.key })}
                                       >
@@ -4223,22 +4346,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         </svg>
                                       </button>
                                     </div>
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    <input 
-                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                                      value={prop.note ?? ""} 
-                                      onChange={(e) => updatePropertyField(prop.id, { note: e.target.value })}
-                                      placeholder="Poznámka" 
-                                    />
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    <input 
-                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                                      value={prop.priklady ?? ""} 
-                                      onChange={(e) => updatePropertyField(prop.id, { priklady: e.target.value })}
-                                      placeholder="Příklady" 
-                                    />
                                   </td>
                                   <td className="px-2 py-2">
                                     <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
