@@ -122,6 +122,77 @@ const PropertyRowEditDialog: React.FC<{
   );
 };
 
+/** Sekce s možností sbalení a přesunutí nahoru/dolů */
+const CollapsibleSection: React.FC<{
+  title: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  children: React.ReactNode;
+  className?: string;
+  style?: React.CSSProperties;
+  /** Sekce roste a má vlastní scroll (např. Požadavky) */
+  flexGrow?: boolean;
+  /** Max výška s overflow scroll (např. Identifikační údaje) */
+  maxHeightScroll?: boolean;
+}> = ({ title, isExpanded, onToggle, onMoveUp, onMoveDown, canMoveUp, canMoveDown, children, className = "", style, flexGrow, maxHeightScroll }) => (
+  <div className={`border-b border-slate-200 ${className}`} style={style}>
+    <div className="flex items-center gap-2 bg-slate-50 px-4 py-2 flex-shrink-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-slate-600 hover:text-slate-800"
+        aria-expanded={isExpanded}
+      >
+        <svg
+          className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        {title}
+      </button>
+      <div className="flex items-center gap-0.5 ml-2">
+        <button
+          type="button"
+          onClick={onMoveUp}
+          disabled={!canMoveUp}
+          className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Posunout nahoru"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={onMoveDown}
+          disabled={!canMoveDown}
+          className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Posunout dolů"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </div>
+      <div className="h-px flex-1 bg-slate-200" />
+    </div>
+    {isExpanded && (
+      <div
+        className={`bg-white ${flexGrow ? "flex flex-1 flex-col min-h-0 overflow-hidden" : ""} ${maxHeightScroll ? "max-h-[45vh] overflow-y-auto" : ""}`}
+      >
+        {children}
+      </div>
+    )}
+  </div>
+);
+
 interface Props {
   node: ClassificationNode;
   object: ProjectObject;
@@ -1613,6 +1684,61 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [resizingContext, setResizingContext] = useState<{ table: "attribute" | "partOf" | "material" | "classification" | "property"; col: number } | null>(null);
   const resizingStartX = useRef(0);
   const resizingStartW = useRef(0);
+
+  /** Viditelnost a pořadí sekcí: Popis/poznámky/příklady, Identifikační údaje, Požadavky */
+  type SectionKey = "popis" | "identifikacni" | "pozadavky";
+  const SECTION_LABELS: Record<SectionKey, string> = {
+    popis: "Popis, poznámka, příklady",
+    identifikacni: "Identifikační údaje",
+    pozadavky: "Požadavky",
+  };
+  const [sectionVisibility, setSectionVisibility] = useState<Record<SectionKey, boolean>>(() => {
+    try {
+      const s = localStorage.getItem("infoReqApp_sectionVisibility");
+      if (s) {
+        const parsed = JSON.parse(s) as Record<string, boolean>;
+        return {
+          popis: parsed.popis ?? true,
+          identifikacni: parsed.identifikacni ?? true,
+          pozadavky: parsed.pozadavky ?? true,
+        };
+      }
+    } catch { /* ignore */ }
+    return { popis: true, identifikacni: true, pozadavky: true };
+  });
+  const [sectionOrder, setSectionOrder] = useState<SectionKey[]>(() => {
+    try {
+      const s = localStorage.getItem("infoReqApp_sectionOrder");
+      if (s) {
+        const parsed = JSON.parse(s) as string[];
+        const valid = parsed.filter((k): k is SectionKey => ["popis", "identifikacni", "pozadavky"].includes(k));
+        if (valid.length === 3) return valid;
+      }
+    } catch { /* ignore */ }
+    return ["popis", "identifikacni", "pozadavky"];
+  });
+
+  const toggleSectionVisibility = useCallback((key: SectionKey) => {
+    setSectionVisibility((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem("infoReqApp_sectionVisibility", JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const moveSection = useCallback((key: SectionKey, direction: "up" | "down") => {
+    setSectionOrder((prev) => {
+      const idx = prev.indexOf(key);
+      if (idx < 0) return prev;
+      const newIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[newIdx]] = [next[newIdx], next[idx]];
+      localStorage.setItem("infoReqApp_sectionOrder", JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
   // Ref pro uložení aktuálních hodnot selectedGroups a selectedProperties pro mazání
   const selectedGroupsRef = useRef<Set<string>>(new Set());
   const selectedPropertiesRef = useRef<Set<string>>(new Set());
@@ -2765,8 +2891,19 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
       </div>
 
-      {/* Popisová textová pole k objektu – pouze pro Excel export, ne do IDS */}
-      <div className="min-w-0 border-b border-slate-200 bg-white px-4 py-3">
+      {/* Sekce v pořadí dle sectionOrder (flex order) */}
+      <CollapsibleSection
+        title={SECTION_LABELS.popis}
+        isExpanded={sectionVisibility.popis}
+        onToggle={() => toggleSectionVisibility("popis")}
+        onMoveUp={() => moveSection("popis", "up")}
+        onMoveDown={() => moveSection("popis", "down")}
+        canMoveUp={sectionOrder.indexOf("popis") > 0}
+        canMoveDown={sectionOrder.indexOf("popis") < sectionOrder.length - 1}
+        className="min-w-0"
+        style={{ order: sectionOrder.indexOf("popis") }}
+      >
+      <div className="min-w-0 px-4 py-3">
         <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
           <div className="min-w-0">
             <div className="mb-1 flex flex-wrap items-center gap-2">
@@ -2847,13 +2984,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           </div>
         </div>
       </div>
+      </CollapsibleSection>
 
-      {/* Identifikační údaje – údaje specifikující objekt (lze odvodit z klasifikačního systému / hierarchie) */}
-      <div className="min-w-0 border-b border-slate-200 bg-white px-4 py-3">
-        <div className="mb-3 flex items-center gap-2">
-          <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Identifikační údaje</div>
-          <div className="h-px flex-1 bg-slate-200"></div>
-        </div>
+      <CollapsibleSection
+        title={SECTION_LABELS.identifikacni}
+        isExpanded={sectionVisibility.identifikacni}
+        onToggle={() => toggleSectionVisibility("identifikacni")}
+        onMoveUp={() => moveSection("identifikacni", "up")}
+        onMoveDown={() => moveSection("identifikacni", "down")}
+        canMoveUp={sectionOrder.indexOf("identifikacni") > 0}
+        canMoveDown={sectionOrder.indexOf("identifikacni") < sectionOrder.length - 1}
+        className="min-w-0"
+        style={{ order: sectionOrder.indexOf("identifikacni") }}
+        maxHeightScroll
+      >
+      <div className="min-w-0 px-4 py-3">
         {isIfcPrimary && object.ifcEntity && !isCurrentSelectionInHierarchy && onAddToIfcHierarchy && !isLocked && (
           <div className="mb-2 flex items-center justify-between gap-2 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800">
             <span>Vybraná entita <strong>{object.ifcEntity}</strong>
@@ -3347,15 +3492,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           )}
         </div>
       </div>
+      </CollapsibleSection>
 
-      {/* Požadavky */}
+      <CollapsibleSection
+        title={SECTION_LABELS.pozadavky}
+        isExpanded={sectionVisibility.pozadavky}
+        onToggle={() => toggleSectionVisibility("pozadavky")}
+        onMoveUp={() => moveSection("pozadavky", "up")}
+        onMoveDown={() => moveSection("pozadavky", "down")}
+        canMoveUp={sectionOrder.indexOf("pozadavky") > 0}
+        canMoveDown={sectionOrder.indexOf("pozadavky") < sectionOrder.length - 1}
+        className="flex flex-1 flex-col min-h-0 overflow-hidden"
+        style={{ order: sectionOrder.indexOf("pozadavky") }}
+        flexGrow
+      >
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="bg-white px-4 pt-3">
-          <div className="mb-2 flex items-center gap-2">
-            <div className="text-sm font-semibold uppercase tracking-wide text-slate-500">Požadavky</div>
-            <div className="h-px flex-1 bg-slate-200"></div>
-          </div>
-        </div>
         <div className="sticky top-0 z-10 flex items-center border-b border-slate-200 bg-white px-4 shadow-sm">
           {(Object.keys(TAB_LABELS) as TabKey[]).map((key) => (
             <button
@@ -6837,6 +6988,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           })()}
         </div>
       </div>
+      </CollapsibleSection>
       
       {/* Export IDS dialog – výběr fáze, výskytu a metadata */}
       {isExportIdsDialogOpen && activeTab === "ids" && (

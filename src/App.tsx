@@ -84,8 +84,20 @@ const AppInner: React.FC = () => {
     const stored = localStorage.getItem("infoReqApp_panelWidth");
     return stored ? parseInt(stored, 10) : 360;
   });
+  const [leftPanelVisible, setLeftPanelVisible] = useState<boolean>(() => {
+    const stored = localStorage.getItem("infoReqApp_leftPanelVisible");
+    return stored !== null ? stored === "true" : true;
+  });
   const isResizingRef = useRef<boolean>(false);
   const resizeContainerRef = useRef<HTMLDivElement>(null);
+
+  const toggleLeftPanel = useCallback(() => {
+    setLeftPanelVisible((v) => {
+      const next = !v;
+      localStorage.setItem("infoReqApp_leftPanelVisible", String(next));
+      return next;
+    });
+  }, []);
   
   // Undo/Redo history
   const historyRef = useRef<Project[]>([]);
@@ -175,6 +187,48 @@ const AppInner: React.FC = () => {
     return { entity: entity?.trim() ?? "", predefinedType: pt || undefined };
   }, []);
 
+  /** Propaguje object.authoringClassifications do node.mappedValues (pro import – objekty mají data, uzly ne). */
+  const propagateObjectAuthoringToNodes = useCallback((proj: Project): Project => {
+    const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    const authoringIds = (primary?.authoringToolSystemIds?.length ? primary.authoringToolSystemIds : primary?.mappedSystemIds) ?? [];
+    const authEntries = authoringIds
+      .map((sid) => (proj.classificationSystemEntries ?? []).find((e) => e.id === sid))
+      .filter((e): e is ClassificationSystemEntry => !!e && (e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification")) === "authoring");
+    if (!primary?.nodes || authEntries.length === 0) return proj;
+
+    let changed = false;
+    let nextNodes = primary.nodes;
+    for (const [objCode, obj] of Object.entries(proj.objects)) {
+      const auth = obj.authoringClassifications ?? [];
+      if (auth.length === 0) continue;
+      for (const entry of authEntries) {
+        const codes = auth.filter((a) => a.systemEntryId === entry.id).map((a) => a.code).filter((c) => c?.trim());
+        const val = joinAuthoringValues(codes);
+        const leaf = findNodeByCode(nextNodes, objCode);
+        const currVal = leaf?.mappedValues?.[entry.id] ?? "";
+        if (currVal !== val) {
+          nextNodes = updateLeafMappedValue(nextNodes, objCode, entry.id, val);
+          changed = true;
+        }
+      }
+    }
+    if (!changed) return proj;
+    const nextEntries = (proj.classificationSystemEntries ?? []).map((e) =>
+      e.id === primary.id ? { ...e, nodes: nextNodes } : e
+    );
+    // Po importu JSON jsou classification.nodes a primary.nodes oddělené kopie (reference !==),
+    // proto vždy synchronizujeme classification s primárním systémem při aktualizaci
+    const nextClassification = proj.classification && primary
+      ? { ...proj.classification, nodes: nextNodes }
+      : proj.classification;
+    return {
+      ...proj,
+      classificationSystemEntries: nextEntries,
+      classification: nextClassification,
+      updatedAt: new Date().toISOString(),
+    };
+  }, []);
+
   /** Propaguje mapování autorských nástrojů (mappedValues) z primárního systému do object.authoringClassifications. */
   const propagateAuthoringMappingToObjects = useCallback((proj: Project): Project => {
     const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
@@ -246,7 +300,8 @@ const AppInner: React.FC = () => {
     const stored = loadProjectFromStorage();
     if (stored) {
       const migrated = migrateProject(stored);
-      let withPropagation = propagateMappingToObjects(migrated);
+      let withPropagation = propagateObjectAuthoringToNodes(migrated);
+      withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       setProject(withPropagation);
       setClassification(withPropagation.classification);
@@ -257,7 +312,7 @@ const AppInner: React.FC = () => {
       }
     }
     // Bez uloženého projektu zůstane prázdný stav – uživatel si sám nahraje klasifikaci.
-  }, [propagateMappingToObjects, propagateAuthoringMappingToObjects]);
+  }, [propagateObjectAuthoringToNodes, propagateMappingToObjects, propagateAuthoringMappingToObjects]);
 
   const selectedNode = useMemo<ClassificationNode | undefined>(() => {
     if (!classification || !selectedCode) return undefined;
@@ -560,25 +615,27 @@ const AppInner: React.FC = () => {
     const primaryIsIfc = primaryEntry?.isIfcSystem === true;
 
     const prevObj = project.objects[obj.code];
+    // Sloučit s aktuálním objektem v projektu – zachovat pole, která mohla být ztracena při rychlém psaní (např. authoringClassifications)
+    const mergedObj = prevObj ? { ...prevObj, ...obj } : obj;
     const ifcChanged =
       prevObj &&
-      (prevObj.ifcEntity !== obj.ifcEntity ||
-        JSON.stringify(prevObj.predefinedType) !== JSON.stringify(obj.predefinedType));
+      (prevObj.ifcEntity !== mergedObj.ifcEntity ||
+        JSON.stringify(prevObj.predefinedType) !== JSON.stringify(mergedObj.predefinedType));
 
-    const ptVal = obj.predefinedType.mode === "ENUM" && obj.predefinedType.value ? obj.predefinedType.value : undefined;
+    const ptVal = mergedObj.predefinedType.mode === "ENUM" && mergedObj.predefinedType.value ? mergedObj.predefinedType.value : undefined;
     const newCode =
-      schemaIndex && obj.ifcEntity
-        ? toIfcCode(schemaIndex, obj.ifcEntity, ptVal)
-        : obj.code;
+      schemaIndex && mergedObj.ifcEntity
+        ? toIfcCode(schemaIndex, mergedObj.ifcEntity, ptVal)
+        : mergedObj.code;
 
     let next: Project;
     // Při primární „Klasifikaci“ měnit code a description podle IFC entity nesmíme – název zůstane z klasifikace
-    if (primaryIsIfc && ifcChanged && newCode !== obj.code && schemaIndex) {
+    if (primaryIsIfc && ifcChanged && newCode !== mergedObj.code && schemaIndex) {
       // Změna entity/typu → přepočítat code, přeřadit objekt pod nový klíč a aktualizovat IFC strom vlevo
       const nextObjects = { ...project.objects };
       delete nextObjects[obj.code];
       const updatedObj: ProjectObject = {
-        ...obj,
+        ...mergedObj,
         code: newCode,
         description: formatIfcDescriptionFromCode(newCode),
       };
@@ -589,7 +646,7 @@ const AppInner: React.FC = () => {
       let nextClassification = project.classification;
       if (ifcEntry?.nodes) {
         const currentCodes = new Set(collectLeaves(ifcEntry.nodes).map((n) => n.code));
-        currentCodes.delete(obj.code);
+        currentCodes.delete(mergedObj.code);
         currentCodes.add(newCode);
         const data = buildClassificationFromSchemaFiltered(schemaIndex, currentCodes);
         let dataNodes = data.nodes;
@@ -618,7 +675,7 @@ const AppInner: React.FC = () => {
         updatedAt: new Date().toISOString(),
       };
       updateProjectWithHistory(next);
-      if (selectedCode === obj.code) {
+      if (selectedCode === mergedObj.code) {
         setSelectedCode(newCode);
         setSelectedObject(updatedObj);
       }
@@ -627,7 +684,7 @@ const AppInner: React.FC = () => {
 
     next = {
       ...project,
-      objects: { ...project.objects, [obj.code]: obj },
+      objects: { ...project.objects, [mergedObj.code]: mergedObj },
       updatedAt: new Date().toISOString(),
     };
 
@@ -641,27 +698,27 @@ const AppInner: React.FC = () => {
     if (primaryEntry?.nodes && authoringEntries.length > 0) {
       let nextNodes = primaryEntry.nodes;
       for (const entry of authoringEntries) {
-        const codes = (obj.authoringClassifications ?? []).filter((a) => a.systemEntryId === entry.id).map((a) => a.code).filter((c) => c?.trim());
+        const codes = (mergedObj.authoringClassifications ?? []).filter((a) => a.systemEntryId === entry.id).map((a) => a.code).filter((c) => c?.trim());
         const val = joinAuthoringValues(codes);
-        nextNodes = updateLeafMappedValue(nextNodes, obj.code, entry.id, val);
+        nextNodes = updateLeafMappedValue(nextNodes, mergedObj.code, entry.id, val);
       }
       next = {
         ...next,
         classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
           e.id === primaryEntry.id ? { ...e, nodes: nextNodes } : e
         ),
-        classification: project.classification && project.classification.nodes === primaryEntry.nodes
+        classification: project.classification && primaryEntry
           ? { ...project.classification, nodes: nextNodes }
           : next.classification,
       };
-      if (project.classification && project.classification.nodes === primaryEntry.nodes) {
+      if (project.classification && primaryEntry) {
         setClassification({ ...project.classification, nodes: nextNodes });
       }
     }
 
     updateProjectWithHistory(next);
-    if (selectedObject && selectedObject.code === obj.code) {
-      setSelectedObject(obj);
+    if (selectedObject && selectedObject.code === mergedObj.code) {
+      setSelectedObject(mergedObj);
     }
   };
 
@@ -669,7 +726,8 @@ const AppInner: React.FC = () => {
     try {
       const imported = await importProjectFile(file);
       const migrated = migrateProject(imported);
-      let withPropagation = propagateMappingToObjects(migrated);
+      let withPropagation = propagateObjectAuthoringToNodes(migrated);
+      withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       // Reset history for imported project
       historyRef.current = [JSON.parse(JSON.stringify(withPropagation))];
@@ -1545,7 +1603,22 @@ const AppInner: React.FC = () => {
         <div className="bg-amber-50 px-4 py-2 text-sm text-amber-700">{status}</div>
       )}
 
-      <div ref={resizeContainerRef} className="flex flex-1 overflow-hidden">
+      <div ref={resizeContainerRef} className="flex flex-1 overflow-hidden relative">
+        {/* Toggle button when panel is hidden - show on left edge */}
+        {!leftPanelVisible && (
+          <button
+            type="button"
+            onClick={toggleLeftPanel}
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-8 h-16 rounded-r-md border border-slate-300 bg-white shadow-md hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-indigo-600 transition-colors"
+            title="Zobrazit levý panel"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 5l7 7-7 7M5 12h14" />
+            </svg>
+          </button>
+        )}
+        {leftPanelVisible && (
+          <>
         <div 
           className="flex-shrink-0 overflow-hidden"
           style={{ width: panelWidth }}
@@ -1576,12 +1649,26 @@ const AppInner: React.FC = () => {
           />
         </div>
         
-        {/* Resize handle */}
-        <div
-          className="w-1 cursor-col-resize bg-slate-200 hover:bg-indigo-400 active:bg-indigo-500 transition-colors flex-shrink-0"
-          onMouseDown={handleResizeStart}
-          title="Táhněte pro změnu šířky panelu"
-        />
+        {/* Resize handle and hide panel button */}
+        <div className="flex items-stretch flex-shrink-0">
+          <div
+            className="w-1 cursor-col-resize bg-slate-200 hover:bg-indigo-400 active:bg-indigo-500 transition-colors"
+            onMouseDown={handleResizeStart}
+            title="Táhněte pro změnu šířky panelu"
+          />
+          <button
+            type="button"
+            onClick={toggleLeftPanel}
+            className="w-6 flex items-center justify-center bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-700 border-l border-slate-200"
+            title="Skrýt levý panel"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7M18 19l-7-7 7-7" />
+            </svg>
+          </button>
+        </div>
+          </>
+        )}
 
         <div className="flex-1 overflow-hidden">
           {schemaLoading && (

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import type { ClassificationNode } from "../../classification/types";
 import type { ClassificationSystemEntry } from "../../project/types";
 import type { SchemaIndex } from "../../schema/types";
@@ -83,6 +83,10 @@ const getLeafCodes = (entry: ClassificationSystemEntry): string[] => {
 export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [], onSave, onClose, hideMapButton, schemaIndex }) => {
   const initialFlat = useMemo(() => flattenNodes(system.nodes || []), [system.nodes]);
   const [rows, setRows] = useState<FlatNode[]>(initialFlat);
+  // Synchronizovat řádky při externí změně system.nodes (např. propagace z objektu v kartě Identifikační údaje)
+  useEffect(() => {
+    setRows(flattenNodes(system.nodes || []));
+  }, [system.nodes]);
   const [search, setSearch] = useState("");
   const [mappedSystemIds, setMappedSystemIds] = useState<string[]>(system.mappedSystemIds ?? []);
   const [authoringToolSystemIds, setAuthoringToolSystemIds] = useState<string[]>(system.authoringToolSystemIds ?? []);

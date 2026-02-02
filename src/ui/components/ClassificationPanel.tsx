@@ -226,19 +226,25 @@ const buildMappedIfcSystemTreeByValue = (
 };
 
 /**
- * Build a tree grouped by value per leaf (object assignment nebo node.mappedValues).
- * getValue(leaf) vrací hodnotu pro daný list; prázdné → "nepřiřazeno".
+ * Build a tree grouped by values – list se zobrazí ve VŠECH skupinách, do kterých patří (pro více kategorií autorských nástrojů).
+ * getValues(leaf) vrací pole hodnot; prázdné pole → "nepřiřazeno".
  */
-const buildMappedSystemTreeByValue = (
+const buildMappedSystemTreeByValues = (
   nodes: ClassificationNode[],
-  getValue: (leaf: ClassificationNode) => string
+  getValues: (leaf: ClassificationNode) => string[]
 ): ClassificationNode[] => {
   const leaves = collectLeaves(nodes);
   const byValue: Record<string, ClassificationNode[]> = {};
   leaves.forEach((leaf) => {
-    const raw = getValue(leaf);
-    const key = raw && raw.trim() !== "" ? raw.trim() : UNASSIGNED_LABEL;
-    (byValue[key] ??= []).push(leaf);
+    const vals = getValues(leaf).map((v) => v?.trim()).filter(Boolean);
+    if (vals.length === 0) {
+      const key = UNASSIGNED_LABEL;
+      (byValue[key] ??= []).push(leaf);
+    } else {
+      vals.forEach((key) => {
+        (byValue[key] ??= []).push(leaf);
+      });
+    }
   });
   const sortedKeys = Object.keys(byValue).sort((a, b) => {
     if (a === UNASSIGNED_LABEL) return 1;
@@ -490,22 +496,25 @@ export const ClassificationPanel: React.FC<Props> = ({
       const isIfcSystem = entry?.isIfcSystem === true;
       // Když máme objekty, seskupujeme dle přiřazené hodnoty na objektu (IFC: ifcEntity+predefinedType, jinak authoringClassifications), jinak dle node.mappedValues
       if (Object.keys(objects ?? {}).length > 0) {
-        const getValue = (leaf: ClassificationNode): string => {
-          if (isIfcSystem) {
+        if (isIfcSystem) {
+          const getValue = (leaf: ClassificationNode): string => {
             const o = objects![leaf.code];
             const pt = o?.predefinedType?.mode === "ENUM" ? o?.predefinedType?.value : undefined;
             return pt ? `${o?.ifcEntity ?? ""}::${pt}`.trim() : (o?.ifcEntity?.trim() ?? leaf.mappedValues?.[systemEntryId] ?? "");
-          }
+          };
+          return buildMappedIfcSystemTreeByValue(nodes, getValue);
+        }
+        // Autor. nástroje: objekt se zobrazí ve všech přiřazených kategoriích
+        const getValues = (leaf: ClassificationNode): string[] => {
           const fromObject = (objects![leaf.code]?.authoringClassifications ?? [])
             .filter((c) => c.systemEntryId === systemEntryId)
             .map((c) => c.code)
             .filter((c) => c?.trim());
-          if (fromObject.length > 0) return fromObject[0].trim();
+          if (fromObject.length > 0) return fromObject;
           const raw = leaf.mappedValues?.[systemEntryId] ?? "";
-          const parsed = parseAuthoringValues(raw);
-          return parsed[0] ?? raw;
+          return parseAuthoringValues(raw);
         };
-        return isIfcSystem ? buildMappedIfcSystemTreeByValue(nodes, getValue) : buildMappedSystemTreeByValue(nodes, getValue);
+        return buildMappedSystemTreeByValues(nodes, getValues);
       }
       return isIfcSystem ? buildMappedIfcSystemTree(nodes, systemEntryId) : buildMappedSystemTree(nodes, systemEntryId);
     }
