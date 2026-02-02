@@ -6,7 +6,7 @@ import { SettingsDialog } from "./ui/components/SettingsDialog";
 import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
-import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, updateLeafMappedValue, removeNodeByCode } from "./classification/parser";
+import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import {
   buildClassificationFromSchema,
@@ -1430,6 +1430,7 @@ const AppInner: React.FC = () => {
               phases={project?.phases ?? []}
               codeLists={project?.codeLists ?? []}
               classificationSystemEntries={project?.classificationSystemEntries ?? []}
+              project={project}
               onSaveEnumAsCodeList={onSaveEnumAsCodeList}
               onAddToIfcHierarchy={onAddToIfcHierarchy}
               onDeleteObject={onDeleteObject}
@@ -1456,6 +1457,7 @@ const AppInner: React.FC = () => {
           classification={classification}
           isOpen={isIDSExportOpen}
           onClose={() => setIsIDSExportOpen(false)}
+          onUpdateProject={onUpdateProjectDetails}
         />
       )}
 

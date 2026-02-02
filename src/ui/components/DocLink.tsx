@@ -27,10 +27,10 @@ export const DocLink: React.FC<DocLinkProps> = ({ href, label, type, className =
       href={href} 
       target="_blank" 
       rel="noreferrer" 
-      className={`flex items-center opacity-60 hover:opacity-100 transition-opacity ${className}`}
+      className={`inline-flex items-center shrink-0 opacity-60 hover:opacity-100 transition-opacity ${className}`}
       title={tooltipText}
     >
-      <img src={logoSrc} alt={`${logoType.toUpperCase()} logo`} className="h-5 w-auto" />
+      <img src={logoSrc} alt={`${logoType.toUpperCase()} logo`} className="h-5 w-auto shrink-0 object-contain" />
     </a>
   );
 };

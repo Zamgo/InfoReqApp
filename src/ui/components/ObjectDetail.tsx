@@ -4,7 +4,8 @@ import { collectLeaves } from "../../classification/parser";
 import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
-import type { ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
+import { generateHumanReadable, filterObjectByPhase, matchesOccurrenceFilter } from "../../utils/humanReadableIds";
+import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
 import { TranslatedLabel } from "./TranslatedLabel";
@@ -13,7 +14,7 @@ import { translateViaApi } from "../../translation/translators/MtApiTranslator";
 import { useTranslation } from "../../translation/TranslationContext";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
-type IdsSubTabKey = "schema" | "readable";
+type IdsSubTabKey = "schema" | "readable" | "metadata";
 type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
 
 const IFC_DOC_BASE = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical";
@@ -129,6 +130,8 @@ interface Props {
   phases: Phase[];
   codeLists: CodeList[];
   classificationSystemEntries: ClassificationSystemEntry[];
+  /** Projekt – pro metadata při exportu IDS z náhledu */
+  project?: Project | null;
   onSaveEnumAsCodeList: (opts: { objectCode: string; propertyId: string; name: string; values: string[]; link: boolean }) => void;
   /** Přidat vybranou entitu/PredefinedType do IFC hierarchie projektu (když není v hierarchii) */
   /** Přidá objekt (podle object.code) do IFC hierarchie – bez duplikátu, zůstane stejný objekt. */
@@ -159,6 +162,112 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
 
 /** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, Datový typ, Omezení, Hodnota, Jednotka, Popis+Poznámka+Příklady, Fáze, Použitelnost, Akce */
 const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 540, 100, 50, 110];
+
+/** Všechny sloupce tabulky vlastností, které lze skrýt (index → label) */
+const PROPERTY_COLUMNS_HIDEABLE: Record<number, string> = {
+  0: "Checkbox",
+  1: "Výskyt",
+  2: "Vlastnost",
+  3: "Datový typ",
+  4: "Omezení",
+  5: "Hodnota",
+  6: "Jednotka",
+  7: "Popis · Poznámka · Příklady",
+  8: "Fáze",
+  9: "Použitelnost",
+  10: "Akce",
+};
+
+/** Výchozí šířky sloupců: Atributy (12), Součástí (11), Materiál (11), Klasifikace (12) */
+const DEFAULT_ATTRIBUTE_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 100, 100, 100, 100, 50, 80];
+const DEFAULT_PARTOF_COL_WIDTHS = [40, 90, 180, 140, 160, 120, 100, 100, 100, 50, 80];
+const DEFAULT_MATERIAL_COL_WIDTHS = [40, 90, 95, 150, 100, 120, 100, 100, 100, 50, 80];
+const DEFAULT_CLASSIFICATION_COL_WIDTHS = [40, 100, 180, 95, 150, 100, 120, 100, 100, 100, 50, 80];
+
+/** Sloupce tabulky atributů (index → label) */
+const ATTRIBUTE_COLUMNS_HIDEABLE: Record<number, string> = {
+  0: "Checkbox",
+  1: "Výskyt",
+  2: "Atribut",
+  3: "Datový typ",
+  4: "Omezení",
+  5: "Hodnota",
+  6: "Popis",
+  7: "Poznámka",
+  8: "Příklady",
+  9: "Fáze",
+  10: "Použitelnost",
+  11: "Akce",
+};
+
+/** Sloupce tabulky Součástí (index → label) */
+const PARTOF_COLUMNS_HIDEABLE: Record<number, string> = {
+  0: "Checkbox",
+  1: "Výskyt",
+  2: "Součást entity",
+  3: "PredefinedType",
+  4: "Vztah",
+  5: "Popis",
+  6: "Poznámka",
+  7: "Příklady",
+  8: "Fáze",
+  9: "Použitelnost",
+  10: "Akce",
+};
+
+/** Sloupce tabulky Materiál (index → label) */
+const MATERIAL_COLUMNS_HIDEABLE: Record<number, string> = {
+  0: "Checkbox",
+  1: "Výskyt",
+  2: "Omezení",
+  3: "Hodnota",
+  4: "URI",
+  5: "Popis",
+  6: "Poznámka",
+  7: "Příklady",
+  8: "Fáze",
+  9: "Použitelnost",
+  10: "Akce",
+};
+
+/** Sloupce tabulky Klasifikace (index → label) */
+const CLASSIFICATION_COLUMNS_HIDEABLE: Record<number, string> = {
+  0: "Checkbox",
+  1: "Výskyt",
+  2: "Klasifikační systém",
+  3: "Omezení",
+  4: "Hodnota",
+  5: "URI",
+  6: "Popis",
+  7: "Poznámka",
+  8: "Příklady",
+  9: "Fáze",
+  10: "Použitelnost",
+  11: "Akce",
+};
+
+/** Načte skryté sloupce z localStorage */
+const loadHiddenColumns = (key: string, maxIndex: number): Set<number> => {
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const arr = JSON.parse(stored) as number[];
+      return new Set(arr.filter((i) => typeof i === "number" && i >= 0 && i <= maxIndex));
+    }
+  } catch {
+    /* ignore */
+  }
+  return new Set();
+};
+
+/** Uloží skryté sloupce do localStorage */
+const saveHiddenColumns = (key: string, hidden: Set<number>) => {
+  if (hidden.size > 0) {
+    localStorage.setItem(key, JSON.stringify(Array.from(hidden)));
+  } else {
+    localStorage.removeItem(key);
+  }
+};
 
 // Czech help text for relation types (displayed in modal)
 const RELATION_TYPES_HELP_TEXT = `Vztah IFCRELAGGREGATES popisuje, jak lze více menších dílčích objektů agregovat do jednoho většího objektu. Například několik podlaží budovy tvoří jednu budovu. Jiným příkladem je deska, kterou tvoří nosníky, podlahové desky a spoje. Nebo sestava, kterou tvoří konzoly, sloupky (mullions) a ocelové plechy.
@@ -698,80 +807,83 @@ const validateIdsCompliance = (obj: import("../../project/types").ProjectObject)
   return errors;
 };
 
-// Helper to check if a requirement matches a phase filter
-const requirementMatchesPhase = (phases: string[] | undefined, phaseId: string | null): boolean => {
-  // null phaseId means "all" - show everything
-  if (phaseId === null) return true;
-  // If requirement has no phases set, treat as "applies to all phases" (zobrazit vždy)
-  if (!phases || phases.length === 0) return true;
-  // Check if the phase is in the requirement's phases
-  return phases.includes(phaseId);
-};
-
-// Filter a ProjectObject's requirements by phase
-const filterObjectByPhase = (
+/** Get metadata for phase+occurrence. Supports legacy single-object format. */
+const getIdsSpecMetadataForPhaseOccurrence = (
   obj: import("../../project/types").ProjectObject,
-  phaseId: string | null
-): import("../../project/types").ProjectObject => {
-  if (phaseId === null) return obj; // Return full object for "all"
-  
-  return {
-    ...obj,
-    requirements: {
-      attributes: obj.requirements.attributes.filter((a) => requirementMatchesPhase(a.phases, phaseId)),
-      properties: obj.requirements.properties.filter((p) => requirementMatchesPhase(p.phases, phaseId)),
-      relations: obj.requirements.relations.filter((r) => requirementMatchesPhase(r.phases, phaseId)),
-      classifications: obj.requirements.classifications.filter((c) => requirementMatchesPhase(c.phases, phaseId)),
-      materials: obj.requirements.materials.filter((m) => requirementMatchesPhase(m.phases, phaseId)),
-    },
-  };
+  phaseId: string | null,
+  occurrence: string
+): IdsSpecMetadata | undefined => {
+  const map = obj.idsSpecMetadata;
+  if (!map || typeof map !== "object") return undefined;
+  const keys = Object.keys(map);
+  if (keys.length === 0) return undefined;
+  const isLegacy = !keys.some((k) => k.includes("|"));
+  if (isLegacy) return map as unknown as IdsSpecMetadata;
+  const key = `${phaseId ?? "all"}|${occurrence}`;
+  return (map as Record<string, IdsSpecMetadata>)[key];
 };
 
-// Generate IDS XML from ProjectObject - compliant with IDS 1.0 XSD schema
-const generateIdsXml = (
-  obj: import("../../project/types").ProjectObject, 
-  ifcVersion: IdsIfcVersion = "IFC4X3_ADD2", 
-  phaseId: string | null = null, 
-  phaseName?: string, 
-  classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[] = [],
-  occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all"
-): string => {
-  // Filter object by phase
-  const filteredObj = filterObjectByPhase(obj, phaseId);
-  // Normalize entity name to uppercase
+/** Build one specification block (applicability + requirements) for given occurrence. Returns null if no requirements. */
+const buildOneSpecificationXml = (
+  filteredObj: import("../../project/types").ProjectObject,
+  obj: import("../../project/types").ProjectObject,
+  phaseId: string | null,
+  classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[],
+  occurrenceFilter: "required" | "prohibited" | "optional",
+  ifcVersion: IdsIfcVersion,
+  phaseName?: string
+): string | null => {
   const entityName = normalizeEntityName(filteredObj.ifcEntity);
-  const specName = phaseName ? `${filteredObj.description || filteredObj.code} - ${phaseName}` : (filteredObj.description || filteredObj.code);
-  
-  let xml = `<?xml version="1.0" encoding="UTF-8"?>
-<ids:ids xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://standards.buildingsmart.org/IDS http://standards.buildingsmart.org/IDS/1.0/ids.xsd" xmlns:ids="http://standards.buildingsmart.org/IDS">
-  <ids:info>
-    <ids:title>${escapeXml(specName)}</ids:title>
-    <ids:version>1.0</ids:version>
-  </ids:info>
-  <ids:specifications>
-    <ids:specification ifcVersion="${ifcVersion}" name="${escapeXml(specName)}">
+  const meta = getIdsSpecMetadataForPhaseOccurrence(obj, phaseId, occurrenceFilter);
+  const sanitizeForSpec = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
+  const occurrenceLabel = occurrenceFilter === "required" ? "Požadované" : occurrenceFilter === "prohibited" ? "Zakázané" : "Možné";
+  const derivedSpecName = [
+    sanitizeForSpec((filteredObj.code || filteredObj.description || "").replace(/::/g, ".")),
+    phaseName ? sanitizeForSpec(phaseName.split(" - ")[0] ?? "") : "",
+    occurrenceLabel,
+  ].filter(Boolean).join("_");
+  const finalSpecName = meta?.name ?? derivedSpecName;
+  const specAttrs = [
+    `ifcVersion="${ifcVersion}"`,
+    `name="${escapeXml(finalSpecName)}"`,
+    meta?.identifier ? `identifier="${escapeXml(meta.identifier)}"` : "",
+    meta?.description ? `description="${escapeXml(meta.description)}"` : "",
+    meta?.instructions ? `instructions="${escapeXml(meta.instructions)}"` : "",
+  ].filter(Boolean).join(" ");
+
+  // Check if we have any requirements for this occurrence
+  const hasReqAttr = filteredObj.requirements.attributes.some((a) => !a.isApplicability && a.attribute !== "PredefinedType" && matchesOccurrenceFilter(a.occurrence, occurrenceFilter));
+  const hasReqProp = filteredObj.requirements.properties.some((p) => !p.isApplicability && p.psetName && !p.psetName.startsWith("_NEW_") && p.propertyName && matchesOccurrenceFilter(p.occurrence, occurrenceFilter));
+  const hasReqRel = filteredObj.requirements.relations.some((r) => !r.isApplicability && matchesOccurrenceFilter(r.occurrence, occurrenceFilter));
+  const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => {
+    if (cls.isApplicability || cls.readOnly) return false;
+    const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
+    if (entry?.isIfcSystem) return false;
+    return true;
+  });
+  const hasReqCls = requirementClassifications.some((c) => matchesOccurrenceFilter(c.occurrence ?? "required", occurrenceFilter));
+  const hasReqMat = filteredObj.requirements.materials.some((m) => !m.isApplicability && matchesOccurrenceFilter(m.occurrence, occurrenceFilter));
+  if (!hasReqAttr && !hasReqProp && !hasReqRel && !hasReqCls && !hasReqMat) return null;
+
+  let spec = `    <ids:specification ${specAttrs}>
       <ids:applicability minOccurs="1" maxOccurs="unbounded">
         <ids:entity>
           <ids:name>
             <ids:simpleValue>${escapeXml(entityName)}</ids:simpleValue>
           </ids:name>`;
-  
-  // PredefinedType phases
+
   const predefinedTypePhases = obj.predefinedTypePhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
   const ptVal = (filteredObj.predefinedType.value ?? "").trim();
   const predefinedTypeApplies = filteredObj.predefinedType.mode !== "NONE" && !!ptVal && ptVal !== EMPTY_PLACEHOLDER && (!phaseId ? (predefinedTypePhases.length > 0) : (predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId)));
   if (predefinedTypeApplies) {
-    const ptValue = ptVal;
-    xml += `
+    spec += `
           <ids:predefinedType>
-            <ids:simpleValue>${escapeXml(ptValue.toUpperCase())}</ids:simpleValue>
+            <ids:simpleValue>${escapeXml(ptVal.toUpperCase())}</ids:simpleValue>
           </ids:predefinedType>`;
   }
-  
-  xml += `
+  spec += `
         </ids:entity>`;
-  
-  // Add applicability classifications (isApplicability = true OR readOnly) – IFC systém není klasifikace v IDS, vychází jen z entity/predefinedType
+
   const applicabilityClassifications = filteredObj.requirements.classifications.filter((cls) => {
     if (!cls.isApplicability && !cls.readOnly) return false;
     const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
@@ -779,73 +891,62 @@ const generateIdsXml = (
     return true;
   });
   applicabilityClassifications.forEach((cls) => {
-    // Look up system name from entries first, fall back to stored value
     const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
     const system = entryName || cls.system || cls.name;
     if (!system) return;
-    
     const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
-    
-    xml += `
+    spec += `
         <ids:classification${uriAttr}>`;
-    
-    // Value comes first in XSD sequence
     if (cls.value) {
       const constraint = cls.constraint ?? "FILLED";
       if (constraint === "ENUM") {
         const values = cls.value.split("|").map((v) => v.trim()).filter(Boolean);
-        xml += `
+        spec += `
           <ids:value>
             <xs:restriction base="xs:string">`;
-        values.forEach((v) => {
-          xml += `
-              <xs:enumeration value="${escapeXml(v)}" />`;
-        });
-        xml += `
+        values.forEach((v) => { spec += `
+              <xs:enumeration value="${escapeXml(v)}" />`; });
+        spec += `
             </xs:restriction>
           </ids:value>`;
       } else if (constraint === "PATTERN") {
-        xml += `
+        spec += `
           <ids:value>
             <xs:restriction base="xs:string">
               <xs:pattern value="${escapeXml(cls.value)}" />
             </xs:restriction>
           </ids:value>`;
       } else {
-        xml += `
+        spec += `
           <ids:value>
             <ids:simpleValue>${escapeXml(cls.value)}</ids:simpleValue>
           </ids:value>`;
       }
     }
-    
-    xml += `
+    spec += `
           <ids:system>
             <ids:simpleValue>${escapeXml(system)}</ids:simpleValue>
           </ids:system>
         </ids:classification>`;
   });
-  
-  // Applicability: attributes, properties, partOf, materials (marked as isApplicability)
+
   filteredObj.requirements.attributes.forEach((attr) => {
     if (!attr.isApplicability || attr.attribute === "PredefinedType") return;
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
-    xml += `
+    spec += `
         <ids:attribute>
           <ids:name>
             <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>
           </ids:name>`;
     const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ");
-    if (constraintXml) xml += `\n${constraintXml}`;
-    xml += `
+    if (constraintXml) spec += `\n${constraintXml}`;
+    spec += `
         </ids:attribute>`;
   });
   filteredObj.requirements.properties.forEach((prop) => {
     if (!prop.isApplicability || !prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     const dataType = mapDataTypeToIds(prop.dataType);
     const dataTypeAttr = dataType ? ` dataType="${escapeXml(dataType)}"` : "";
-    xml += `
+    spec += `
         <ids:property${dataTypeAttr}>
           <ids:propertySet>
             <ids:simpleValue>${escapeXml(prop.psetName)}</ids:simpleValue>
@@ -854,101 +955,91 @@ const generateIdsXml = (
             <ids:simpleValue>${escapeXml(prop.propertyName)}</ids:simpleValue>
           </ids:baseName>`;
     const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ");
-    if (constraintXml) xml += `\n${constraintXml}`;
-    xml += `
+    if (constraintXml) spec += `\n${constraintXml}`;
+    spec += `
         </ids:property>`;
   });
   filteredObj.requirements.relations.forEach((rel) => {
     if (!rel.isApplicability) return;
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
     const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
     const relatedEntityName = normalizeEntityName(rel.entityType || "IFCBUILDINGELEMENT");
-    xml += `
+    spec += `
         <ids:partOf${relationAttr}>
           <ids:entity>
             <ids:name>
               <ids:simpleValue>${escapeXml(relatedEntityName)}</ids:simpleValue>
             </ids:name>`;
     if (rel.entityPredefinedType) {
-      xml += `
+      spec += `
             <ids:predefinedType>
               <ids:simpleValue>${escapeXml(rel.entityPredefinedType.toUpperCase())}</ids:simpleValue>
             </ids:predefinedType>`;
     }
-    xml += `
+    spec += `
           </ids:entity>
         </ids:partOf>`;
   });
   filteredObj.requirements.materials.forEach((mat) => {
     if (!mat.isApplicability) return;
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
-    xml += `
+    spec += `
         <ids:material${uriAttr}>`;
     if (mat.value || (mat.category && mat.categoryMode !== "NONE")) {
       const val = mat.value || mat.category || "";
       const constraint = mat.constraint ?? "FILLED";
       if (constraint === "ENUM" && val.includes("|")) {
         const values = val.split("|").map((v) => v.trim()).filter(Boolean);
-        xml += `
+        spec += `
           <ids:value>
             <xs:restriction base="xs:string">`;
-        values.forEach((v) => { xml += `
+        values.forEach((v) => { spec += `
               <xs:enumeration value="${escapeXml(v)}" />`; });
-        xml += `
+        spec += `
             </xs:restriction>
           </ids:value>`;
       } else if (constraint === "PATTERN") {
-        xml += `
+        spec += `
           <ids:value>
             <xs:restriction base="xs:string">
               <xs:pattern value="${escapeXml(val)}" />
             </xs:restriction>
           </ids:value>`;
       } else {
-        xml += `
+        spec += `
           <ids:value>
             <ids:simpleValue>${escapeXml(val)}</ids:simpleValue>
           </ids:value>`;
       }
     }
-    xml += `
+    spec += `
         </ids:material>`;
   });
-  
-  xml += `
+
+  spec += `
       </ids:applicability>
       <ids:requirements>`;
-  
-  // Requirements: only non-applicability items
+
   filteredObj.requirements.attributes.forEach((attr) => {
-    if (attr.attribute === "PredefinedType") return; // Skip, already handled in entity
-    if (attr.isApplicability) return; // In applicability section
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
+    if (attr.attribute === "PredefinedType" || attr.isApplicability) return;
+    if (!matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = attr.occurrence === "prohibited" ? "prohibited" : attr.occurrence === "optional" ? "optional" : "required";
-    xml += `
+    spec += `
         <ids:attribute cardinality="${cardinality}">
           <ids:name>
             <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>
           </ids:name>`;
     const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ");
-    if (constraintXml) {
-      xml += `\n${constraintXml}`;
-    }
-    xml += `
+    if (constraintXml) spec += `\n${constraintXml}`;
+    spec += `
         </ids:attribute>`;
   });
-  
   filteredObj.requirements.properties.forEach((prop) => {
-    if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
-    if (prop.isApplicability) return; // In applicability section
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
-    
+    if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName || prop.isApplicability) return;
+    if (!matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = prop.occurrence === "prohibited" ? "prohibited" : prop.occurrence === "optional" ? "optional" : "required";
     const dataType = mapDataTypeToIds(prop.dataType);
     const dataTypeAttr = dataType ? ` dataType="${escapeXml(dataType)}"` : "";
-    
-    xml += `
+    spec += `
         <ids:property cardinality="${cardinality}"${dataTypeAttr}>
           <ids:propertySet>
             <ids:simpleValue>${escapeXml(prop.psetName)}</ids:simpleValue>
@@ -957,312 +1048,424 @@ const generateIdsXml = (
             <ids:simpleValue>${escapeXml(prop.propertyName)}</ids:simpleValue>
           </ids:baseName>`;
     const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ");
-    if (constraintXml) {
-      xml += `\n${constraintXml}`;
-    }
-    xml += `
+    if (constraintXml) spec += `\n${constraintXml}`;
+    spec += `
         </ids:property>`;
   });
-  
-  // Relations (PartOf) - only non-applicability
   filteredObj.requirements.relations.forEach((rel) => {
-    if (rel.isApplicability) return; // In applicability section
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
+    if (rel.isApplicability) return;
+    if (!matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
     const cardinality: SimpleCardinality = rel.occurrence === "prohibited" ? "prohibited" : "required";
     const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
     const relatedEntityName = normalizeEntityName(rel.entityType || "IFCBUILDINGELEMENT");
-    
-    xml += `
+    spec += `
         <ids:partOf${relationAttr} cardinality="${cardinality}">
           <ids:entity>
             <ids:name>
               <ids:simpleValue>${escapeXml(relatedEntityName)}</ids:simpleValue>
             </ids:name>`;
     if (rel.entityPredefinedType) {
-      xml += `
+      spec += `
             <ids:predefinedType>
               <ids:simpleValue>${escapeXml(rel.entityPredefinedType.toUpperCase())}</ids:simpleValue>
             </ids:predefinedType>`;
     }
-    xml += `
+    spec += `
           </ids:entity>
         </ids:partOf>`;
   });
-  
-  // Classifications - system is required, value comes BEFORE system according to XSD sequence
-  // IFC systém není klasifikace v IDS (vychází z entity/predefinedType), vynecháme ho
-  const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => {
-    if (cls.isApplicability || cls.readOnly) return false;
-    const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
-    if (entry?.isIfcSystem) return false;
-    return true;
-  });
   requirementClassifications.forEach((cls) => {
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(cls.occurrence ?? "required", occurrenceFilter)) return;
-    // Look up system name from entries first, fall back to stored value
+    if (!matchesOccurrenceFilter(cls.occurrence ?? "required", occurrenceFilter)) return;
     const entryName = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name : undefined;
     const system = entryName || cls.system || cls.name;
-    // Skip classifications without system (required by XSD)
     if (!system) return;
-    
     const cardinality: ConditionalCardinality = cls.occurrence === "prohibited" ? "prohibited" : cls.occurrence === "optional" ? "optional" : "required";
     const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
-    
-    xml += `
+    spec += `
         <ids:classification cardinality="${cardinality}"${uriAttr}>`;
-    
-    // Value comes first in XSD sequence (minOccurs="0")
     if (cls.value) {
       const constraint = cls.constraint ?? "FILLED";
       if (constraint === "ENUM") {
         const values = cls.value.split("|").map((v) => v.trim()).filter(Boolean);
-        xml += `
+        spec += `
           <ids:value>
             <xs:restriction base="xs:string">`;
-        values.forEach((v) => {
-          xml += `
-              <xs:enumeration value="${escapeXml(v)}" />`;
-        });
-        xml += `
+        values.forEach((v) => { spec += `
+              <xs:enumeration value="${escapeXml(v)}" />`; });
+        spec += `
             </xs:restriction>
           </ids:value>`;
       } else if (constraint === "PATTERN") {
-        xml += `
+        spec += `
           <ids:value>
             <xs:restriction base="xs:string">
               <xs:pattern value="${escapeXml(cls.value)}" />
             </xs:restriction>
           </ids:value>`;
       } else {
-        xml += `
+        spec += `
           <ids:value>
             <ids:simpleValue>${escapeXml(cls.value)}</ids:simpleValue>
           </ids:value>`;
       }
     }
-    
-    // System is required (minOccurs="1")
-    xml += `
+    spec += `
           <ids:system>
             <ids:simpleValue>${escapeXml(system)}</ids:simpleValue>
           </ids:system>
         </ids:classification>`;
   });
-  
-  // Materials
   filteredObj.requirements.materials.forEach((mat) => {
-    if (mat.isApplicability) return; // In applicability section
-    if (occurrenceFilter !== "all" && !matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
+    if (mat.isApplicability) return;
+    if (!matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = mat.occurrence === "prohibited" ? "prohibited" : mat.occurrence === "optional" ? "optional" : "required";
     const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
-    
-    xml += `
+    spec += `
         <ids:material cardinality="${cardinality}"${uriAttr}>`;
     if (mat.category && mat.categoryMode !== "NONE") {
       const constraintXml = generateConstraintXml(mat.categoryMode === "ENUM" ? "ENUM" : undefined, mat.category, "          ");
-      if (constraintXml) {
-        xml += `\n${constraintXml}`;
-      }
+      if (constraintXml) spec += `\n${constraintXml}`;
     }
-    xml += `
+    spec += `
         </ids:material>`;
   });
-  
-  xml += `
+
+  spec += `
       </ids:requirements>
-    </ids:specification>
+    </ids:specification>`;
+  return spec;
+};
+
+// Generate IDS XML from ProjectObject - compliant with IDS 1.0 XSD schema
+// When occurrenceFilter is "all", creates separate specifications for required, prohibited, optional
+const generateIdsXml = (
+  obj: import("../../project/types").ProjectObject, 
+  ifcVersion: IdsIfcVersion = "IFC4X3_ADD2", 
+  phaseId: string | null = null, 
+  classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[] = [],
+  occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all",
+  phaseName?: string, 
+  idsMetadata?: Partial<IdsMetadata>
+): string => {
+  const filteredObj = filterObjectByPhase(obj, phaseId);
+  const today = new Date().toISOString().split("T")[0];
+  const infoTitle = idsMetadata?.title ?? "";
+  const infoCopyright = idsMetadata?.copyright;
+  const infoVersion = idsMetadata?.version ?? "";
+  const infoDescription = idsMetadata?.description;
+  const infoAuthor = idsMetadata?.author;
+  const infoDate = idsMetadata?.date ?? today;
+  const infoPurpose = idsMetadata?.purpose;
+  const infoMilestone = idsMetadata?.milestone;
+  const infoLines = [
+    `    <ids:title>${escapeXml(infoTitle)}</ids:title>`,
+    infoCopyright ? `    <ids:copyright>${escapeXml(infoCopyright)}</ids:copyright>` : "",
+    `    <ids:version>${escapeXml(infoVersion)}</ids:version>`,
+    infoDescription ? `    <ids:description>${escapeXml(infoDescription)}</ids:description>` : "",
+    infoAuthor ? `    <ids:author>${escapeXml(infoAuthor)}</ids:author>` : "",
+    `    <ids:date>${escapeXml(infoDate)}</ids:date>`,
+    infoPurpose ? `    <ids:purpose>${escapeXml(infoPurpose)}</ids:purpose>` : "",
+    infoMilestone ? `    <ids:milestone>${escapeXml(infoMilestone)}</ids:milestone>` : "",
+  ].filter(Boolean);
+
+  const occurrenceTypes: ("required" | "prohibited" | "optional")[] =
+    occurrenceFilter === "all" ? ["required", "prohibited", "optional"] : [occurrenceFilter];
+
+  const specifications: string[] = [];
+  for (const occ of occurrenceTypes) {
+    const spec = buildOneSpecificationXml(filteredObj, obj, phaseId, classificationSystemEntries, occ, ifcVersion, phaseName);
+    if (spec) specifications.push(spec);
+  }
+
+  if (specifications.length === 0) {
+    throw new Error("Žádné požadavky pro export");
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<ids:ids xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://standards.buildingsmart.org/IDS http://standards.buildingsmart.org/IDS/1.0/ids.xsd" xmlns:ids="http://standards.buildingsmart.org/IDS">
+  <ids:info>
+${infoLines.join("\n")}
+  </ids:info>
+  <ids:specifications>
+${specifications.join("\n")}
   </ids:specifications>
 </ids:ids>`;
-  
-  return xml;
 };
 
-// Translate constraint to human-readable Czech
-const translateConstraint = (constraint?: string, value?: string, _dataType?: string): string => {
-  const c = (constraint ?? "FILLED").toUpperCase();
-  const val = value ?? "";
-  
-  // No value specified = any value allowed
-  if (!val) {
-    return "s libovolnou hodnotou";
-  }
-  
-  // FILLED with value = exact value required
-  if (c === "FILLED") {
-    return `s hodnotou **${val}**`;
-  }
-  
-  if (c === "ENUM") {
-    const values = val.split("|").map((v) => v.trim()).filter(Boolean);
-    if (values.length === 1) {
-      return `s hodnotou "${values[0]}"`;
+/** Dialog pro export jednoho objektu do IDS – výběr fáze, výskytu a metadata */
+const IdsSingleExportDialog: React.FC<{
+  object: ProjectObject;
+  phases: Phase[];
+  entityPhaseIds?: string[];
+  classificationSystemEntries: ClassificationSystemEntry[];
+  project?: Project | null;
+  selectedIfcVersion: "IFC2X3" | "IFC4" | "IFC4X3_ADD2";
+  generateIdsXml: (
+    obj: ProjectObject,
+    ifcVersion: "IFC2X3" | "IFC4" | "IFC4X3_ADD2",
+    phaseId: string | null,
+    classificationSystemEntries: ClassificationSystemEntry[],
+    occurrenceFilter: "all" | "required" | "prohibited" | "optional",
+    phaseName?: string,
+    idsMetadata?: Partial<IdsMetadata>
+  ) => string;
+  onClose: () => void;
+}> = ({ object, phases, entityPhaseIds, classificationSystemEntries, project, selectedIfcVersion, generateIdsXml, onClose }) => {
+  const phasesForExport = entityPhaseIds?.length ? phases.filter((p) => entityPhaseIds.includes(p.id)) : phases;
+  const [exportPhaseId, setExportPhaseId] = useState<string>(() => phasesForExport[0]?.id ?? phases[0]?.id ?? "");
+  const [exportOccurrence, setExportOccurrence] = useState<"all" | "required" | "prohibited" | "optional">("all");
+  const [metadataExpanded, setMetadataExpanded] = useState(false);
+  const [idsMetadata, setIdsMetadata] = useState<Partial<IdsMetadata>>(() => {
+    const base = { ...project?.idsMetadata };
+    if (project?.name && base.title === undefined) base.title = project.name;
+    if (project?.author && base.author === undefined) base.author = project.author;
+    if (project?.description && base.description === undefined) base.description = project.description;
+    return base;
+  });
+  const [customExportFileName, setCustomExportFileName] = useState<string>("");
+
+  const currentPhase = phases.find((p) => p.id === exportPhaseId);
+  const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
+  const specName = phaseName ? `${object.description || object.code} - ${phaseName}` : (object.description || object.code);
+  const occurrenceLabel = exportOccurrence === "all" ? "Vše" : exportOccurrence === "required" ? "Požadované" : exportOccurrence === "prohibited" ? "Zakázané" : "Možné";
+
+  const sanitize = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
+
+  const isAuthorValid = (v: string) => (v.trim().length > 0 && /@[^@]*\.[^@]+/.test(v.trim()));
+  const effectiveAuthor = idsMetadata.author ?? project?.author ?? "";
+  const objectNameForFile = (object.code || object.description || "").replace(/::/g, ".");
+  const generatedFileName = [
+    sanitize(project?.name ?? "Projekt"),
+    sanitize(objectNameForFile),
+    currentPhase?.code ? sanitize(currentPhase.code) : "",
+    occurrenceLabel,
+  ].filter(Boolean).join("_");
+
+  const handleExport = () => {
+    try {
+      const metaWithMilestone: Partial<IdsMetadata> = {
+        ...idsMetadata,
+        milestone: idsMetadata.milestone ?? currentPhase?.code,
+      };
+      const xml = generateIdsXml(
+        object,
+        selectedIfcVersion,
+        exportPhaseId || null,
+        classificationSystemEntries,
+        exportOccurrence,
+        phaseName,
+        metaWithMilestone
+      );
+      const blob = new Blob([xml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const fileName = (customExportFileName.trim() || generatedFileName).replace(/\.ids$/i, "");
+      a.download = `${fileName}.ids`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      onClose();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Export se nezdařil");
     }
-    return `s hodnotou jednou z: ${values.join(", ")}`;
-  }
-  
-  if (c === "PATTERN") {
-    return `s hodnotou odpovídající vzoru ${val}`;
-  }
-  
-  if (c === "RANGE") {
-    const parts = val.split(/\s*(?:AND|,|;)\s*/i);
-    const conditions: string[] = [];
-    parts.forEach((part) => {
-      const trimmed = part.trim();
-      if (trimmed.startsWith(">=")) {
-        conditions.push(`větší nebo rovno ${trimmed.slice(2).trim()}`);
-      } else if (trimmed.startsWith(">")) {
-        conditions.push(`větší než ${trimmed.slice(1).trim()}`);
-      } else if (trimmed.startsWith("<=")) {
-        conditions.push(`menší nebo rovno ${trimmed.slice(2).trim()}`);
-      } else if (trimmed.startsWith("<")) {
-        conditions.push(`menší než ${trimmed.slice(1).trim()}`);
-      }
-    });
-    if (conditions.length > 0) {
-      return `s hodnotou [${conditions.join(" a ")}]`;
-    }
-    return `s hodnotou v rozmezí ${val}`;
-  }
-  
-  if (c === "LENGTH") {
-    return `s délkou ${val}`;
-  }
-  
-  return `s hodnotou "${val}"`;
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="flex max-h-[90vh] w-full max-w-lg flex-col rounded-lg bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex-shrink-0 border-b border-slate-200 px-5 py-4">
+          <h3 className="text-lg font-semibold text-slate-800">Export IDS</h3>
+          <p className="text-sm text-slate-500">Vyberte fázi a výskyt. Metadata se doplní z údajů projektu (levý horní roh), milník z vybrané fáze.</p>
+        </div>
+        <div className="flex-1 overflow-auto px-5 py-4 space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Fáze</label>
+            <select
+              value={exportPhaseId}
+              onChange={(e) => setExportPhaseId(e.target.value)}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              disabled={phasesForExport.length === 0}
+            >
+              {phasesForExport.length === 0 ? (
+                <option value="">Žádné fáze</option>
+              ) : (
+                phasesForExport.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.code} - {p.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Výskyt</label>
+            <div className="flex gap-2 flex-wrap">
+              {(["all", "required", "prohibited", "optional"] as const).map((occ) => (
+                <button
+                  key={occ}
+                  type="button"
+                  className={`px-3 py-1.5 text-xs font-medium rounded ${
+                    exportOccurrence === occ
+                      ? occ === "all"
+                        ? "bg-slate-700 text-white"
+                        : occ === "required"
+                          ? "bg-green-600 text-white"
+                          : occ === "prohibited"
+                            ? "bg-red-600 text-white"
+                            : "bg-amber-600 text-white"
+                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                  onClick={() => setExportOccurrence(occ)}
+                >
+                  {occ === "all" ? "Vše" : occ === "required" ? "Požadované" : occ === "prohibited" ? "Zakázané" : "Možné"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Název exportovaného souboru</label>
+            <input
+              type="text"
+              value={customExportFileName || generatedFileName}
+              onChange={(e) => setCustomExportFileName(e.target.value)}
+              placeholder={generatedFileName}
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+              title="Přípona .ids se doplní automaticky"
+            />
+            <p className="mt-0.5 text-xs text-slate-500">Formát: Název projektu_Název objektu_Kód fáze_Výskyt</p>
+          </div>
+          <div>
+            <button
+              type="button"
+              className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-indigo-600"
+              onClick={() => setMetadataExpanded((v) => !v)}
+            >
+              <span className={metadataExpanded ? "rotate-90" : ""}>▶</span>
+              Metadata souboru IDS
+            </button>
+            {metadataExpanded && (
+              <div className="mt-3 grid gap-3 text-sm">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Název (title)</label>
+                  <input
+                    type="text"
+                    value={idsMetadata.title ?? project?.name ?? ""}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, title: e.target.value || undefined }))}
+                    placeholder={project?.name ?? specName}
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Copyright</label>
+                  <input
+                    type="text"
+                    value={idsMetadata.copyright ?? ""}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, copyright: e.target.value || undefined }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Verze (version)</label>
+                  <input
+                    type="text"
+                    value={idsMetadata.version ?? "1.0"}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, version: e.target.value || undefined }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Autor (author, e-mail) <span className="text-red-500">*</span></label>
+                  <input
+                    type="email"
+                    value={idsMetadata.author ?? project?.author ?? ""}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, author: e.target.value || undefined }))}
+                    placeholder="email@example.com"
+                    className={`w-full rounded border px-2 py-1 text-sm ${effectiveAuthor && !isAuthorValid(effectiveAuthor) ? "border-red-400" : "border-slate-300"}`}
+                    title="Z údajů projektu (levý horní roh). Musí být e-mail (např. jmeno@domena.cz)"
+                  />
+                  {effectiveAuthor && !isAuthorValid(effectiveAuthor) && (
+                    <p className="text-[10px] text-red-600 mt-0.5">Autor musí být e-mail (např. jmeno@domena.cz)</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Datum (date)</label>
+                  <input
+                    type="date"
+                    value={idsMetadata.date ?? new Date().toISOString().split("T")[0]}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, date: e.target.value || undefined }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Účel (purpose)</label>
+                  <input
+                    type="text"
+                    value={idsMetadata.purpose ?? ""}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, purpose: e.target.value || undefined }))}
+                    placeholder="quantity take off, clash detection..."
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Popis (description)</label>
+                  <textarea
+                    value={idsMetadata.description ?? project?.description ?? ""}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, description: e.target.value || undefined }))}
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm min-h-[60px]"
+                    rows={2}
+                    title="Z údajů projektu (levý horní roh)"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-0.5">Milník (milestone)</label>
+                  <input
+                    type="text"
+                    value={idsMetadata.milestone ?? currentPhase?.code ?? ""}
+                    onChange={(e) => setIdsMetadata((m) => ({ ...m, milestone: e.target.value || undefined }))}
+                    placeholder={currentPhase?.code ?? "Schematic Design, Construction..."}
+                    className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    title="Automaticky z vybrané fáze, lze přepsat"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex-shrink-0 flex justify-end gap-2 border-t border-slate-200 px-5 py-4">
+          <button
+            type="button"
+            className="rounded border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            onClick={onClose}
+          >
+            Zrušit
+          </button>
+          <button
+            type="button"
+            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            onClick={handleExport}
+            disabled={phasesForExport.length === 0 || !isAuthorValid(effectiveAuthor)}
+          >
+            Exportovat .ids
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 };
 
-// Helper to check if requirement matches occurrence filter
-const matchesOccurrenceFilter = (
-  occurrence: "required" | "prohibited" | "optional" | undefined,
-  filter: "all" | "required" | "prohibited" | "optional"
-): boolean => {
-  if (filter === "all") return true;
-  const actualOccurrence = occurrence || "required";
-  return actualOccurrence === filter;
-};
-
-// Generate human-readable text from ProjectObject
-const generateHumanReadable = (
-  obj: import("../../project/types").ProjectObject,
-  _phases: import("../../project/types").Phase[],
-  classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[],
-  phaseId: string | null = null,
-  occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all"
-): { applicability: string[]; requirements: string[] } => {
-  // Filter object by phase
-  const filteredObj = filterObjectByPhase(obj, phaseId);
-  
-  const applicability: string[] = [];
-  const requirements: string[] = [];
-  
-  // Entity a PredefinedType jsou v IDS vždy v applicability a vždy požadované – zobrazovat bez ohledu na filtr výskytu
-  if (filteredObj.ifcEntity) {
-    applicability.push(`IFC třídu **${filteredObj.ifcEntity}**`);
-  }
-  const predefinedTypePhasesReadable = obj.predefinedTypePhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
-  const predefinedTypeAppliesReadable = phaseId === null ? predefinedTypePhasesReadable.length > 0 : predefinedTypePhasesReadable.length === 0 || predefinedTypePhasesReadable.includes(phaseId);
-  if (filteredObj.predefinedType.mode !== "NONE" && filteredObj.predefinedType.value && predefinedTypeAppliesReadable) {
-    applicability.push(`s předdefinovaným typem **${filteredObj.predefinedType.value}**`);
-  }
-  
-  // Attributes - applicability vs requirements (PredefinedType is only in Entity card, not in attributes)
-  filteredObj.requirements.attributes.forEach((attr) => {
-    if (attr.attribute === "PredefinedType") return; // Handled in Entity card
-    if (!matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
-    const occurrence = attr.occurrence === "prohibited" ? "NESMÍ" : attr.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-    const constraintText = translateConstraint(attr.constraint, attr.value, attr.dataType);
-    const line = `atribut **${attr.attribute}** ${constraintText}${attr.dataType ? ` *(${attr.dataType})*` : ""}`;
-    if (attr.isApplicability && occurrenceFilter === "all") {
-      applicability.push(line);
-    } else {
-      requirements.push(`**${occurrence}** mít ${line}`);
-    }
-  });
-  
-  // Properties
-  filteredObj.requirements.properties.forEach((prop) => {
-    if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
-    if (!matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
-    const occurrence = prop.occurrence === "prohibited" ? "NESMÍ" : prop.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-    const constraintText = translateConstraint(prop.constraint, prop.value, prop.dataType);
-    const psetType = prop.source === "PSET" ? "property setu" : prop.source === "QTO" ? "quantity setu" : "vlastní sady";
-    const line = `vlastnost **${prop.propertyName}** ${psetType} **${prop.psetName}** ${constraintText}${prop.dataType ? ` *(${prop.dataType})*` : ""}`;
-    if (prop.isApplicability && occurrenceFilter === "all") {
-      applicability.push(line);
-    } else {
-      requirements.push(`**${occurrence}** mít ${line}`);
-    }
-  });
-  
-  // Relations
-  filteredObj.requirements.relations.forEach((rel) => {
-    if (!matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
-    const occurrence = rel.occurrence === "prohibited" ? "NESMÍ" : rel.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-    const entityText = rel.entityType ? `IFC třídou **${rel.entityType}**` : "prvkem";
-    const predefinedText = rel.entityPredefinedType ? ` s typem **${rel.entityPredefinedType}**` : "";
-    const line = `relaci **${rel.relationType}** s ${entityText}${predefinedText}`;
-    if (rel.isApplicability && occurrenceFilter === "all") {
-      applicability.push(line);
-    } else {
-      requirements.push(`**${occurrence}** mít ${line}`);
-    }
-  });
-  
-  // Classifications - split by applicability; IFC systém není klasifikace v IDS (vše vyplývá z entity/predefinedType)
-  filteredObj.requirements.classifications.forEach((cls) => {
-    if (!cls.system && !cls.value && !cls.name && !cls.systemEntryId) return;
-    const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
-    if (entry?.isIfcSystem) return;
-    const systemName = entry?.name || cls.system || cls.name;
-    
-    if (cls.isApplicability || cls.readOnly) {
-      // Add to applicability section (primary classifications are always applicability) – zobrazovat vždy bez ohledu na filtr výskytu
-      if (cls.value) {
-        applicability.push(`klasifikaci **${cls.value}** ze systému **${systemName}**`);
-      } else {
-        applicability.push(`klasifikaci ze systému **${systemName}**`);
-      }
-    } else {
-      // Add to requirements section - use classification occurrence (primární je vždy required)
-      const occurrence = cls.occurrence === "prohibited" ? "NESMÍ" : cls.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-      if (matchesOccurrenceFilter(cls.occurrence ?? "required", occurrenceFilter)) {
-        if (cls.value) {
-          requirements.push(`**${occurrence}** mít klasifikaci **${cls.value}** ze systému **${systemName}**`);
-        } else {
-          requirements.push(`**${occurrence}** mít klasifikaci ze systému **${systemName}**`);
-        }
-      }
-    }
-  });
-  
-  // Materials - applicability vs requirements
-  filteredObj.requirements.materials.forEach((mat) => {
-    if (!matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
-    const occurrence = mat.occurrence === "prohibited" ? "NESMÍ" : mat.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-    let categoryText = "";
-    if (mat.category && mat.categoryMode !== "NONE") {
-      categoryText = ` s kategorií **${mat.category}**`;
-    }
-    const line = `materiál${categoryText}`;
-    if (mat.isApplicability && occurrenceFilter === "all") {
-      applicability.push(line);
-    } else {
-      requirements.push(`**${occurrence}** mít ${line}`);
-    }
-  });
-  
-  return { applicability, requirements };
-};
-
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, onSaveEnumAsCodeList, onAddToIfcHierarchy, onDeleteObject, onToggleLock }) => {
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onDeleteObject, onToggleLock }) => {
   const isLocked = object.locked === true;
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [idsSubTab, setIdsSubTab] = useState<IdsSubTabKey>("readable");
+  const [isExportIdsDialogOpen, setIsExportIdsDialogOpen] = useState(false);
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null); // null = "Vše"
   const [occurrenceFilter, setOccurrenceFilter] = useState<OccurrenceFilter>("all");
-  // Fixed IFC version for IDS export
-  const selectedIfcVersion: IdsIfcVersion = "IFC4X3_ADD2";
+  const selectedIfcVersion: IdsIfcVersion = (project?.ifcSchemaVersion === "IFC4X3" ? "IFC4X3_ADD2" : "IFC4X3_ADD2") as IdsIfcVersion;
   const [enumDraftByPropId, setEnumDraftByPropId] = useState<Record<string, string>>({});
   const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[]; type?: "property" | "attribute" }>(null);
   const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
@@ -1329,13 +1532,73 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [fillingDescriptionsGroupKey, setFillingDescriptionsGroupKey] = useState<string | null>(null);
   /** Dialog pro úpravu řádku vlastnosti (tužka) – zobrazí celý Popis, Poznámka, Příklady */
   const [propertyRowEditDialog, setPropertyRowEditDialog] = useState<{ prop: PropertyRequirement; groupKey: string } | null>(null);
-  /** Šířky sloupců tabulky vlastností (index → px); prázdné = auto */
-  const [propertyTableColWidths, setPropertyTableColWidths] = useState<Record<number, number>>({});
+  /** Šířky sloupců tabulek (index → px) */
+  const [propertyTableColWidths, setPropertyTableColWidths] = useState<Record<number, number>>(() => {
+    try {
+      const s = localStorage.getItem("infoReqApp_propertyTableColWidths");
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  });
+  const [attributeTableColWidths, setAttributeTableColWidths] = useState<Record<number, number>>(() => {
+    try {
+      const s = localStorage.getItem("infoReqApp_attributeTableColWidths");
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  });
+  const [partOfTableColWidths, setPartOfTableColWidths] = useState<Record<number, number>>(() => {
+    try {
+      const s = localStorage.getItem("infoReqApp_partOfTableColWidths");
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  });
+  const [materialTableColWidths, setMaterialTableColWidths] = useState<Record<number, number>>(() => {
+    try {
+      const s = localStorage.getItem("infoReqApp_materialTableColWidths");
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  });
+  const [classificationTableColWidths, setClassificationTableColWidths] = useState<Record<number, number>>(() => {
+    try {
+      const s = localStorage.getItem("infoReqApp_classificationTableColWidths");
+      return s ? JSON.parse(s) : {};
+    } catch { return {}; }
+  });
+  /** Skryté sloupce tabulky vlastností (index) – perspektivně v localStorage */
+  const [hiddenPropertyColumns, setHiddenPropertyColumns] = useState<Set<number>>(() => {
+    try {
+      const stored = localStorage.getItem("infoReqApp_hiddenPropertyColumns");
+      if (stored) {
+        const arr = JSON.parse(stored) as number[];
+        return new Set(arr.filter((i) => typeof i === "number" && i >= 0 && i <= 10));
+      }
+    } catch {
+      /* ignore */
+    }
+    return new Set();
+  });
+  const [propertyColumnMenuOpen, setPropertyColumnMenuOpen] = useState(false);
+  /** Skryté sloupce pro Atributy, Součástí, Materiál, Klasifikace */
+  const [hiddenAttributeColumns, setHiddenAttributeColumns] = useState<Set<number>>(() =>
+    loadHiddenColumns("infoReqApp_hiddenAttributeColumns", 11)
+  );
+  const [hiddenPartOfColumns, setHiddenPartOfColumns] = useState<Set<number>>(() =>
+    loadHiddenColumns("infoReqApp_hiddenPartOfColumns", 10)
+  );
+  const [hiddenMaterialColumns, setHiddenMaterialColumns] = useState<Set<number>>(() =>
+    loadHiddenColumns("infoReqApp_hiddenMaterialColumns", 10)
+  );
+  const [hiddenClassificationColumns, setHiddenClassificationColumns] = useState<Set<number>>(() =>
+    loadHiddenColumns("infoReqApp_hiddenClassificationColumns", 11)
+  );
+  const [attributeColumnMenuOpen, setAttributeColumnMenuOpen] = useState(false);
+  const [partOfColumnMenuOpen, setPartOfColumnMenuOpen] = useState(false);
+  const [materialColumnMenuOpen, setMaterialColumnMenuOpen] = useState(false);
+  const [classificationColumnMenuOpen, setClassificationColumnMenuOpen] = useState(false);
   /** Načítání Definition pro popis objektu: "entity" | "typ" | null */
   const [loadingObjectDefinition, setLoadingObjectDefinition] = useState<"entity" | "typ" | null>(null);
   const { translationMode } = useTranslation();
-  /** Index sloupce, který se právě roztahuje (resize handle) */
-  const [resizingCol, setResizingCol] = useState<number | null>(null);
+  /** Kontext roztahování: tabulka + index sloupce */
+  const [resizingContext, setResizingContext] = useState<{ table: "attribute" | "partOf" | "material" | "classification" | "property"; col: number } | null>(null);
   const resizingStartX = useRef(0);
   const resizingStartW = useRef(0);
   // Ref pro uložení aktuálních hodnot selectedGroups a selectedProperties pro mazání
@@ -1351,22 +1614,71 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     selectedPropertiesRef.current = selectedProperties;
   }, [selectedProperties]);
 
-  // Roztahování sloupců tabulky vlastností
+  // Persistovat skryté sloupce do localStorage
   useEffect(() => {
-    if (resizingCol === null) return;
+    saveHiddenColumns("infoReqApp_hiddenPropertyColumns", hiddenPropertyColumns);
+  }, [hiddenPropertyColumns]);
+  useEffect(() => {
+    saveHiddenColumns("infoReqApp_hiddenAttributeColumns", hiddenAttributeColumns);
+  }, [hiddenAttributeColumns]);
+  useEffect(() => {
+    saveHiddenColumns("infoReqApp_hiddenPartOfColumns", hiddenPartOfColumns);
+  }, [hiddenPartOfColumns]);
+  useEffect(() => {
+    saveHiddenColumns("infoReqApp_hiddenMaterialColumns", hiddenMaterialColumns);
+  }, [hiddenMaterialColumns]);
+  useEffect(() => {
+    saveHiddenColumns("infoReqApp_hiddenClassificationColumns", hiddenClassificationColumns);
+  }, [hiddenClassificationColumns]);
+
+  // Roztahování sloupců všech tabulek
+  useEffect(() => {
+    if (resizingContext === null) return;
+    const { table, col } = resizingContext;
+    const prevCursor = document.body.style.cursor;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
     const onMove = (e: MouseEvent) => {
       const delta = e.clientX - resizingStartX.current;
       const newW = Math.max(40, resizingStartW.current + delta);
-      setPropertyTableColWidths((prev) => ({ ...prev, [resizingCol]: newW }));
+      if (table === "property") setPropertyTableColWidths((prev) => ({ ...prev, [col]: newW }));
+      else if (table === "attribute") setAttributeTableColWidths((prev) => ({ ...prev, [col]: newW }));
+      else if (table === "partOf") setPartOfTableColWidths((prev) => ({ ...prev, [col]: newW }));
+      else if (table === "material") setMaterialTableColWidths((prev) => ({ ...prev, [col]: newW }));
+      else if (table === "classification") setClassificationTableColWidths((prev) => ({ ...prev, [col]: newW }));
     };
-    const onUp = () => setResizingCol(null);
+    const onUp = () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      setResizingContext(null);
+    };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [resizingCol]);
+  }, [resizingContext]);
+
+  // Persistovat šířky sloupců při změně (pro property už máme v onUp, pro ostatní ukládáme zde)
+  useEffect(() => {
+    if (Object.keys(propertyTableColWidths).length > 0) localStorage.setItem("infoReqApp_propertyTableColWidths", JSON.stringify(propertyTableColWidths));
+  }, [propertyTableColWidths]);
+  useEffect(() => {
+    if (Object.keys(attributeTableColWidths).length > 0) localStorage.setItem("infoReqApp_attributeTableColWidths", JSON.stringify(attributeTableColWidths));
+  }, [attributeTableColWidths]);
+  useEffect(() => {
+    if (Object.keys(partOfTableColWidths).length > 0) localStorage.setItem("infoReqApp_partOfTableColWidths", JSON.stringify(partOfTableColWidths));
+  }, [partOfTableColWidths]);
+  useEffect(() => {
+    if (Object.keys(materialTableColWidths).length > 0) localStorage.setItem("infoReqApp_materialTableColWidths", JSON.stringify(materialTableColWidths));
+  }, [materialTableColWidths]);
+  useEffect(() => {
+    if (Object.keys(classificationTableColWidths).length > 0) localStorage.setItem("infoReqApp_classificationTableColWidths", JSON.stringify(classificationTableColWidths));
+  }, [classificationTableColWidths]);
 
   // Ref pro uložení onChange callbacku, aby se nemusel přidávat do závislostí
   const onChangeRef = useRef(onChange);
@@ -2092,6 +2404,63 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const toggleGroup = (groupKeyValue: string) => {
     setExpandedGroups((prev) => ({ ...prev, [groupKeyValue]: !(prev[groupKeyValue] ?? true) }));
+  };
+
+  const collapseAllGroups = () => {
+    setExpandedGroups((prev) => {
+      const next = { ...prev };
+      propertyGroups.forEach((g) => { next[g.key] = false; });
+      return next;
+    });
+  };
+
+  const expandAllGroups = () => {
+    setExpandedGroups((prev) => {
+      const next = { ...prev };
+      propertyGroups.forEach((g) => { next[g.key] = true; });
+      return next;
+    });
+  };
+
+  const togglePropertyColumn = (colIndex: number) => {
+    setHiddenPropertyColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(colIndex)) next.delete(colIndex);
+      else next.add(colIndex);
+      return next;
+    });
+  };
+  const toggleAttributeColumn = (colIndex: number) => {
+    setHiddenAttributeColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(colIndex)) next.delete(colIndex);
+      else next.add(colIndex);
+      return next;
+    });
+  };
+  const togglePartOfColumn = (colIndex: number) => {
+    setHiddenPartOfColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(colIndex)) next.delete(colIndex);
+      else next.add(colIndex);
+      return next;
+    });
+  };
+  const toggleMaterialColumn = (colIndex: number) => {
+    setHiddenMaterialColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(colIndex)) next.delete(colIndex);
+      else next.add(colIndex);
+      return next;
+    });
+  };
+  const toggleClassificationColumn = (colIndex: number) => {
+    setHiddenClassificationColumns((prev) => {
+      const next = new Set(prev);
+      if (next.has(colIndex)) next.delete(colIndex);
+      else next.add(colIndex);
+      return next;
+    });
   };
 
   const addRelation = () => {
@@ -2897,7 +3266,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             <div className="h-px flex-1 bg-slate-200"></div>
           </div>
         </div>
-        <div className="flex items-center border-b border-slate-200 bg-white px-4">
+        <div className="sticky top-0 z-10 flex items-center border-b border-slate-200 bg-white px-4 shadow-sm">
           {(Object.keys(TAB_LABELS) as TabKey[]).map((key) => (
             <button
               key={key}
@@ -2925,6 +3294,42 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </button>
                 {visibleAttributes.length > 0 && (
                   <>
+                    <div className="relative">
+                      <button
+                        className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-1"
+                        onClick={() => setAttributeColumnMenuOpen((o) => !o)}
+                        title="Zobrazit nebo skrýt sloupce"
+                      >
+                        Sloupce
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {attributeColumnMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setAttributeColumnMenuOpen(false)} aria-hidden />
+                          <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-slate-200 bg-white py-2 shadow-lg">
+                            <div className="flex items-center justify-between gap-2 px-3 py-1">
+                              <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
+                              <div className="flex gap-1">
+                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set())}>Zobrazit vše</button>
+                                <span className="text-slate-300">|</span>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
+                              </div>
+                            </div>
+                            {Object.entries(ATTRIBUTE_COLUMNS_HIDEABLE).map(([k, label]) => {
+                              const idx = Number(k);
+                              return (
+                                <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenAttributeColumns.has(idx)} onChange={() => toggleAttributeColumn(idx)} />
+                                  {label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <div className="h-4 w-px bg-slate-300" />
                     <button
                       className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
@@ -2950,42 +3355,93 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               ) : (
                 <>
               <div className="text-xs text-slate-500">Ifc attributes (Name, Description, Tag ...)</div>
-              <div className="overflow-auto rounded border border-slate-200">
-                <table className="min-w-full text-sm">
+              <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenAttributeColumns.has(i)).reduce((s, i) => s + (attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i]), 0)) }}>
+                  <colgroup>
+                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenAttributeColumns.has(i)).map((i) => (
+                      <col key={i} style={{ width: attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i] }} />
+                    ))}
+                  </colgroup>
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      <th className="w-8 px-2 py-2"></th>
-                      <th className="px-2 py-2">Výskyt</th>
-                      <th className="px-2 py-2">Atribut</th>
-                      <th className="px-2 py-2">Datový typ</th>
-                      <th className="px-2 py-2">
-                        <div className="flex items-center gap-1">
-                          <span>Omezení</span>
-                          <DocLink 
-                            href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md"
-                            label="Restrictions"
-                            type="ids"
-                          />
-                        </div>
-                      </th>
-                      <th className="px-2 py-2">Hodnota</th>
-                      <th className="px-2 py-2">Popis</th>
-                      <th className="px-2 py-2">Poznámka</th>
-                      <th className="px-2 py-2">Příklady</th>
-                      <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Použitelnost</span>
-                          <button
-                            type="button"
-                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
-                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
-                          >
-                            ?
-                          </button>
-                        </div>
-                      </th>
-                      <th className="px-2 py-2 text-right">Akce</th>
+                      {!hiddenAttributeColumns.has(0) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1" />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[0] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[0]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(1) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Výskyt</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[1] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[1]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(2) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Atribut</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[2] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[2]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(3) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Datový typ</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[3] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[3]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(4) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <div className="flex items-center gap-1 pr-1">
+                            <span>Omezení</span>
+                            <DocLink href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" label="Restrictions" type="ids" />
+                          </div>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[4] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[4]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(5) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Hodnota</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[5] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[5]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(6) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Popis</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[6] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[6]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(7) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Poznámka</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[7] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[7]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(8) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Příklady</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[8] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[8]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(9) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Fáze</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[9] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[9]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(10) && (
+                        <th className="px-2 py-2 text-center relative select-none">
+                          <div className="flex items-center justify-center gap-1 pr-1">
+                            <span>Použitelnost</span>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                          </div>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[10] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[10]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(11) && (
+                        <th className="px-2 py-2 text-right relative select-none">
+                          <span className="block pr-1">Akce</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[11] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[11]; }} aria-hidden />
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -2997,17 +3453,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       
                       return (
                         <tr key={attr.id} className="border-t border-slate-200">
-                          {/* CHECKBOX */}
-                          <td className="px-2 py-2">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                              checked={selectedAttributes.has(attr.id)}
-                              onChange={() => toggleAttributeSelection(attr.id)}
-                            />
-                          </td>
-                          {/* VÝSKYT */}
-                          <td className="px-2 py-2">
+                          {!hiddenAttributeColumns.has(0) && (
+                            <td className="px-2 py-2">
+                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" checked={selectedAttributes.has(attr.id)} onChange={() => toggleAttributeSelection(attr.id)} />
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(1) && (
+                            <td className="px-2 py-2">
                             <select 
                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                               value={attr.occurrence ?? "optional"} 
@@ -3024,10 +3476,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               <option value="prohibited">Zakázáno (prohibited)</option>
                               <option value="optional">Možné (optional)</option>
                             </select>
-                          </td>
-                          
-                          {/* ATRIBUT - Atribut dropdown */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(2) && (
+                            <td className="px-2 py-2">
                             <select
                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                               value={attr.attribute}
@@ -3037,10 +3489,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 <option key={opt} value={opt}>{opt}</option>
                               ))}
                             </select>
-                          </td>
-                          
-                          {/* DATOVÝ TYP - readonly, odvozeno z atributu */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(3) && (
+                            <td className="px-2 py-2">
                             <select
                               className="w-full rounded border border-slate-300 bg-slate-50 px-2 py-1 text-sm text-slate-600"
                               value={dataType}
@@ -3048,10 +3500,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             >
                               <option value={dataType}>{dataType}</option>
                             </select>
-                          </td>
-                          
-                          {/* OMEZENÍ */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(4) && (
+                            <td className="px-2 py-2">
                             <select 
                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                               value={attr.constraint ?? "FILLED"} 
@@ -3066,10 +3518,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 );
                               })}
                             </select>
-                          </td>
-                          
-                          {/* HODNOTA */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(5) && (
+                            <td className="px-2 py-2">
                             {(() => {
                               // Pro PATTERN zobrazit speciální UI + odkazy
                               if (isPattern && !isDisabled) {
@@ -3292,59 +3744,41 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               );
                             })()}
                           </td>
-                          
-                          {/* POPIS */}
-                          <td className="px-2 py-2">
-                            <input 
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                              value={attr.popis ?? ""} 
-                              onChange={(e) => updateAttributeField(attr.id, { popis: e.target.value })}
-                              placeholder="Popis" 
-                            />
-                          </td>
-                          {/* POZNÁMKA */}
-                          <td className="px-2 py-2">
-                            <input 
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                              value={attr.note ?? ""} 
-                              onChange={(e) => updateAttributeField(attr.id, { note: e.target.value })}
-                              placeholder="Poznámka" 
-                            />
-                          </td>
-                          {/* PŘÍKLADY */}
-                          <td className="px-2 py-2">
-                            <input 
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                              value={attr.priklady ?? ""} 
-                              onChange={(e) => updateAttributeField(attr.id, { priklady: e.target.value })}
-                              placeholder="Příklady" 
-                            />
-                          </td>
-                          
-                          {/* FÁZE */}
-                          <td className="px-2 py-2">
+                          )}
+                          {!hiddenAttributeColumns.has(6) && (
+                            <td className="px-2 py-2">
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.popis ?? ""} onChange={(e) => updateAttributeField(attr.id, { popis: e.target.value })} placeholder="Popis" />
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(7) && (
+                            <td className="px-2 py-2">
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.note ?? ""} onChange={(e) => updateAttributeField(attr.id, { note: e.target.value })} placeholder="Poznámka" />
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(8) && (
+                            <td className="px-2 py-2">
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.priklady ?? ""} onChange={(e) => updateAttributeField(attr.id, { priklady: e.target.value })} placeholder="Příklady" />
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(9) && (
+                            <td className="px-2 py-2">
                             <PhaseSelector
                               phases={phases}
                               value={attr.phases}
                               onChange={(ids) => updateAttributeField(attr.id, { phases: ids })}
                             />
-                          </td>
-                          {/* POUŽITELNOST */}
-                          <td className="px-2 py-2 text-center">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
-                              checked={attr.isApplicability ?? false}
-                              onChange={(e) => updateAttributeField(attr.id, { isApplicability: e.target.checked })}
-                              title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
-                            />
-                          </td>
-                          {/* AKCE */}
-                          <td className="px-2 py-2 text-right">
-                            <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("attributes", attr.id)}>
-                              Odebrat
-                            </button>
-                          </td>
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(10) && (
+                            <td className="px-2 py-2 text-center">
+                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={attr.isApplicability ?? false} onChange={(e) => updateAttributeField(attr.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(11) && (
+                            <td className="px-2 py-2 text-right">
+                              <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("attributes", attr.id)}>Odebrat</button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -3368,6 +3802,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <button className="rounded border border-blue-300 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700 hover:bg-blue-100" onClick={() => addPropertyGroup("PSET")}>
                   Přidat skupinu vlastností Pset
                 </button>
+                {propertyGroups.length >= 3 && (
+                  <>
+                    <div className="h-4 w-px bg-slate-300" />
+                    <button
+                      className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={collapseAllGroups}
+                      title="Sbalit všechny skupiny"
+                    >
+                      Sbalit vše
+                    </button>
+                    <button
+                      className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      onClick={expandAllGroups}
+                      title="Rozbalit všechny skupiny"
+                    >
+                      Rozbalit vše
+                    </button>
+                  </>
+                )}
                 <button className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100" onClick={() => addPropertyGroup("QTO")}>
                   Přidat skupinu vlastností Qto
                 </button>
@@ -3377,6 +3830,47 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 {propertyGroups.length > 0 && (
                   <>
                     <div className="h-4 w-px bg-slate-300" />
+                    <div className="relative">
+                      <button
+                        className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-1"
+                        onClick={() => setPropertyColumnMenuOpen((o) => !o)}
+                        title="Zobrazit nebo skrýt sloupce tabulky"
+                      >
+                        Sloupce
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {propertyColumnMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setPropertyColumnMenuOpen(false)} aria-hidden />
+                          <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-slate-200 bg-white py-2 shadow-lg">
+                            <div className="flex items-center justify-between gap-2 px-3 py-1">
+                              <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
+                              <div className="flex gap-1">
+                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set())}>Zobrazit vše</button>
+                                <span className="text-slate-300">|</span>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))}>Skrýt vše</button>
+                              </div>
+                            </div>
+                            {Object.entries(PROPERTY_COLUMNS_HIDEABLE).map(([k, label]) => {
+                              const idx = Number(k);
+                              return (
+                              <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                                  checked={hiddenPropertyColumns.has(idx)}
+                                  onChange={() => togglePropertyColumn(idx)}
+                                />
+                                {label}
+                              </label>
+                            );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <button
                       className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
                       onClick={selectAllGroups}
@@ -3585,54 +4079,78 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </div>
 
                     {expanded && (
-                      <div className="overflow-auto px-3 py-2">
+                      <div className="overflow-x-auto overflow-y-visible px-3 py-2" style={{ maxWidth: "100%" }}>
                         {group.properties.length === 0 && (
                           <div className="rounded border border-dashed border-slate-200 p-2 text-xs text-slate-600">
                             Skupina je prázdná. Přidejte vlastnost.
                           </div>
                         )}
                         {group.properties.length > 0 && (
-                          <table className="min-w-full text-sm table-fixed" style={{ tableLayout: "fixed" }}>
+                          <table
+                            className="text-sm table-fixed"
+                            style={{
+                              tableLayout: "fixed",
+                              minWidth: Math.max(120, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                                .filter((i) => !hiddenPropertyColumns.has(i))
+                                .reduce((sum, i) => sum + (propertyTableColWidths[i] ?? DEFAULT_PROPERTY_COL_WIDTHS[i]), 0)),
+                            }}
+                          >
                             <colgroup>
-                              {DEFAULT_PROPERTY_COL_WIDTHS.map((defW, i) => (
-                                <col key={i} style={{ width: propertyTableColWidths[i] ?? defW }} />
-                              ))}
+                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                                .filter((i) => !hiddenPropertyColumns.has(i))
+                                .map((i) => (
+                                  <col key={i} style={{ width: propertyTableColWidths[i] ?? DEFAULT_PROPERTY_COL_WIDTHS[i] }} />
+                                ))}
                             </colgroup>
                             <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                               <tr>
-                                {[
-                                  <th key="0" className="px-2 py-2 relative select-none">
+                                {!hiddenPropertyColumns.has(0) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1" />
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[0] ?? DEFAULT_PROPERTY_COL_WIDTHS[0]; }} aria-hidden />
-                                  </th>,
-                                  <th key="1" className="px-2 py-2 relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[0] ?? DEFAULT_PROPERTY_COL_WIDTHS[0]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(1) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Výskyt</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[1] ?? DEFAULT_PROPERTY_COL_WIDTHS[1]; }} aria-hidden />
-                                  </th>,
-                                  <th key="2" className="px-2 py-2 relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[1] ?? DEFAULT_PROPERTY_COL_WIDTHS[1]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(2) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Vlastnost</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[2] ?? DEFAULT_PROPERTY_COL_WIDTHS[2]; }} aria-hidden />
-                                  </th>,
-                                  <th key="3" className="px-2 py-2 relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[2] ?? DEFAULT_PROPERTY_COL_WIDTHS[2]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(3) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Datový typ</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(3); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[3] ?? DEFAULT_PROPERTY_COL_WIDTHS[3]; }} aria-hidden />
-                                  </th>,
-                                  <th key="4" className="px-2 py-2 relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[3] ?? DEFAULT_PROPERTY_COL_WIDTHS[3]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(4) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <div className="flex items-center gap-1 pr-1">
                                       <span>Omezení</span>
                                       <DocLink href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" label="Restrictions" type="ids" />
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(4); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[4] ?? DEFAULT_PROPERTY_COL_WIDTHS[4]; }} aria-hidden />
-                                  </th>,
-                                  <th key="5" className="px-2 py-2 relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[4] ?? DEFAULT_PROPERTY_COL_WIDTHS[4]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(5) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Hodnota</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(5); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[5] ?? DEFAULT_PROPERTY_COL_WIDTHS[5]; }} aria-hidden />
-                                  </th>,
-                                  <th key="6" className="px-2 py-2 relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[5] ?? DEFAULT_PROPERTY_COL_WIDTHS[5]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(6) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Jednotka</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(6); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[6] ?? DEFAULT_PROPERTY_COL_WIDTHS[6]; }} aria-hidden />
-                                  </th>,
-                                  <th key="7" className="px-2 py-2 relative select-none" colSpan={3}>
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[6] ?? DEFAULT_PROPERTY_COL_WIDTHS[6]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(7) && (
+                                  <th className="px-2 py-2 relative select-none" colSpan={3}>
                                     <div className="flex items-center gap-1 pr-1">
                                       <span>Popis</span>
                                       {(group.source === "PSET" || group.source === "QTO") && group.psetName && !isTempGroup && (
@@ -3642,49 +4160,67 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       )}
                                       <span>· Poznámka · Příklady</span>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(7); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
-                                  </th>,
-                                  <th key="8" className="px-2 py-2 relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(8) && (
+                                  <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Fáze</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(8); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
-                                  </th>,
-                                  <th key="9" className="px-2 py-2 text-center relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(9) && (
+                                  <th className="px-2 py-2 text-center relative select-none">
                                     <div className="flex items-center justify-center gap-1 pr-1">
                                       <span>Použitelnost</span>
                                       <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(9); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[9] ?? DEFAULT_PROPERTY_COL_WIDTHS[9]; }} aria-hidden />
-                                  </th>,
-                                  <th key="10" className="px-2 py-2 text-right relative select-none">
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[9] ?? DEFAULT_PROPERTY_COL_WIDTHS[9]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(10) && (
+                                  <th className="px-2 py-2 text-right relative select-none">
                                     <span className="block pr-1">Akce</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(10); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[10] ?? DEFAULT_PROPERTY_COL_WIDTHS[10]; }} aria-hidden />
-                                  </th>,
-                                ]}
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[10] ?? DEFAULT_PROPERTY_COL_WIDTHS[10]; }} aria-hidden />
+                                  </th>
+                                )}
                               </tr>
                             </thead>
                             <tbody>
-                              {group.properties.map((prop) => (
+                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].every((i) => hiddenPropertyColumns.has(i)) ? (
+                                <tr>
+                                  <td colSpan={11} className="px-4 py-6 text-center text-sm text-slate-500">
+                                    Všechny sloupce jsou skryté. Zobrazte alespoň jeden v menu „Sloupce“.
+                                  </td>
+                                </tr>
+                              ) : (
+                              group.properties.map((prop) => (
                                 <tr key={prop.id} className={`border-t border-slate-200 ${colors.rowBorder}`}>
-                                  <td className="px-2 py-2">
-                                    <input
-                                      type="checkbox"
-                                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                                      checked={selectedProperties.has(prop.id)}
-                                      onChange={() => togglePropertySelection(prop.id)}
-                                    />
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    <select 
-                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                                      value={prop.occurrence ?? "optional"} 
-                                      onChange={(e) => updatePropertyField(prop.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
-                                    >
-                                      <option value="required">Požadováno (required)</option>
-                                      <option value="prohibited">Zakázáno (prohibited)</option>
-                                      <option value="optional">Možné (optional)</option>
-                                    </select>
-                                  </td>
-                                  <td className="px-2 py-2">
+                                  {!hiddenPropertyColumns.has(0) && (
+                                    <td className="px-2 py-2">
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                        checked={selectedProperties.has(prop.id)}
+                                        onChange={() => togglePropertySelection(prop.id)}
+                                      />
+                                    </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(1) && (
+                                    <td className="px-2 py-2">
+                                      <select 
+                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                                        value={prop.occurrence ?? "optional"} 
+                                        onChange={(e) => updatePropertyField(prop.id, { occurrence: e.target.value as "required" | "prohibited" | "optional" })}
+                                      >
+                                        <option value="required">Požadováno (required)</option>
+                                        <option value="prohibited">Zakázáno (prohibited)</option>
+                                        <option value="optional">Možné (optional)</option>
+                                      </select>
+                                    </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(2) && (
+                                    <td className="px-2 py-2">
                                     {group.source === "CUSTOM" || isTempGroup ? (
                                       <input
                                         className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
@@ -3746,27 +4282,31 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         )}
                                       </div>
                                     )}
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    <select
-                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                      value={prop.dataType}
-                                      onChange={(e) => updatePropertyField(prop.id, { dataType: e.target.value })}
-                                      disabled={group.source !== "CUSTOM"}
-                                    >
-                                      {getDataTypeOptionsForProp(prop).map((dt) => (
-                                        <option key={dt} value={dt}>
-                                          {dt}
-                                        </option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                  <td className="px-2 py-2">
-                                    <select 
-                                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                                      value={prop.constraint ?? "FILLED"} 
-                                      onChange={(e) => updatePropertyField(prop.id, { constraint: e.target.value as any })}
-                                    >
+                                    </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(3) && (
+                                    <td className="px-2 py-2">
+                                      <select
+                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                        value={prop.dataType}
+                                        onChange={(e) => updatePropertyField(prop.id, { dataType: e.target.value })}
+                                        disabled={group.source !== "CUSTOM"}
+                                      >
+                                        {getDataTypeOptionsForProp(prop).map((dt) => (
+                                          <option key={dt} value={dt}>
+                                            {dt}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(4) && (
+                                    <td className="px-2 py-2">
+                                      <select 
+                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
+                                        value={prop.constraint ?? "FILLED"} 
+                                        onChange={(e) => updatePropertyField(prop.id, { constraint: e.target.value as any })}
+                                      >
                                       {CONSTRAINT_OPTIONS.map((opt) => {
                                         const allowed = isConstraintAllowedForDataType(prop.dataType, opt.value);
                                         return (
@@ -3776,7 +4316,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       );})}
                                     </select>
                                   </td>
-                                  <td className="px-2 py-2">
+                                  )}
+                                  {!hiddenPropertyColumns.has(5) && (
+                                    <td className="px-2 py-2">
                                     {(() => {
                                       const isDisabled = prop.constraint === "FILLED" || prop.constraint === undefined;
                                       const isLength = prop.constraint === "LENGTH";
@@ -4265,56 +4807,57 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       );
                                     })()}
                                   </td>
-                                  <td className="px-2 py-2">
-                                    {(() => {
-                                      const unit = prop.unit ?? "";
-                                      const derived =
-                                        unit.trim() !== "" && isPresetUnit(unit) ? unit.trim() : unit.trim() === "" ? "" : "__CUSTOM__";
-                                      const mode = unitModeByPropId[prop.id] ?? derived;
-                                      return (
-                                        <div className="flex flex-col gap-1">
-                                          <select
-                                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                            value={mode}
-                                            onChange={(e) => {
-                                              const v = e.target.value;
-                                              if (v === "__CUSTOM__") {
-                                                // switch to custom input mode
-                                                setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: "__CUSTOM__" }));
-                                                // if previously a preset (incl. empty), clear to make space for typing
-                                                if (isPresetUnit(unit)) updatePropertyField(prop.id, { unit: "" });
-                                                return;
-                                              }
-                                              setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: v }));
-                                              updatePropertyField(prop.id, { unit: v });
-                                            }}
-                                          >
-                                            <option value="__CUSTOM__">Vlastní</option>
-                                            {UNIT_PRESETS.map((p) => (
-                                              <option key={p.value} value={p.value}>
-                                                {p.label ?? (p.value || "—")}
-                                              </option>
-                                            ))}
-                                          </select>
-                                          {mode === "__CUSTOM__" && (
-                                            <input
+                                  )}
+                                  {!hiddenPropertyColumns.has(6) && (
+                                    <td className="px-2 py-2">
+                                      {(() => {
+                                        const unit = prop.unit ?? "";
+                                        const derived =
+                                          unit.trim() !== "" && isPresetUnit(unit) ? unit.trim() : unit.trim() === "" ? "" : "__CUSTOM__";
+                                        const mode = unitModeByPropId[prop.id] ?? derived;
+                                        return (
+                                          <div className="flex flex-col gap-1">
+                                            <select
                                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                              placeholder="Zadejte jednotku"
-                                              value={unit}
+                                              value={mode}
                                               onChange={(e) => {
-                                                // ensure we stay in custom mode while typing
-                                                if (unitModeByPropId[prop.id] !== "__CUSTOM__") {
+                                                const v = e.target.value;
+                                                if (v === "__CUSTOM__") {
                                                   setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: "__CUSTOM__" }));
+                                                  if (isPresetUnit(unit)) updatePropertyField(prop.id, { unit: "" });
+                                                  return;
                                                 }
-                                                updatePropertyField(prop.id, { unit: e.target.value });
+                                                setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: v }));
+                                                updatePropertyField(prop.id, { unit: v });
                                               }}
-                                            />
-                                          )}
-                                        </div>
-                                      );
-                                    })()}
-                                  </td>
-                                  <td className="px-2 py-2" colSpan={3}>
+                                            >
+                                              <option value="__CUSTOM__">Vlastní</option>
+                                              {UNIT_PRESETS.map((p) => (
+                                                <option key={p.value} value={p.value}>
+                                                  {p.label ?? (p.value || "—")}
+                                                </option>
+                                              ))}
+                                            </select>
+                                            {mode === "__CUSTOM__" && (
+                                              <input
+                                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                                placeholder="Zadejte jednotku"
+                                                value={unit}
+                                                onChange={(e) => {
+                                                  if (unitModeByPropId[prop.id] !== "__CUSTOM__") {
+                                                    setUnitModeByPropId((prev) => ({ ...prev, [prop.id]: "__CUSTOM__" }));
+                                                  }
+                                                  updatePropertyField(prop.id, { unit: e.target.value });
+                                                }}
+                                              />
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+                                    </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(7) && (
+                                    <td className="px-2 py-2" colSpan={3}>
                                     <div className="flex items-center gap-2 rounded-lg border-2 border-slate-300 bg-slate-50/50 p-2">
                                       <input 
                                         className="min-w-0 flex-1 rounded border border-slate-300 bg-white px-2 py-1 text-sm" 
@@ -4347,25 +4890,33 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       </button>
                                     </div>
                                   </td>
-                                  <td className="px-2 py-2">
+                                  )}
+                                  {!hiddenPropertyColumns.has(8) && (
+                                    <td className="px-2 py-2">
                                     <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
                                   </td>
-                                  <td className="px-2 py-2 text-center">
-                                    <input
-                                      type="checkbox"
-                                      className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
-                                      checked={prop.isApplicability ?? false}
-                                      onChange={(e) => updatePropertyField(prop.id, { isApplicability: e.target.checked })}
-                                      title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
-                                    />
-                                  </td>
-                                  <td className="px-2 py-2 text-right">
-                                    <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("properties", prop.id)}>
-                                      Odebrat
-                                    </button>
-                                  </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(9) && (
+                                    <td className="px-2 py-2 text-center">
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
+                                        checked={prop.isApplicability ?? false}
+                                        onChange={(e) => updatePropertyField(prop.id, { isApplicability: e.target.checked })}
+                                        title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
+                                      />
+                                    </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(10) && (
+                                    <td className="px-2 py-2 text-right">
+                                      <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("properties", prop.id)}>
+                                        Odebrat
+                                      </button>
+                                    </td>
+                                  )}
                                 </tr>
-                              ))}
+                              ))
+                              )}
                             </tbody>
                           </table>
                         )}
@@ -4494,6 +5045,36 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </button>
                 {object.requirements.relations.length > 0 && (
                   <>
+                    <div className="relative">
+                      <button className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-1" onClick={() => setPartOfColumnMenuOpen((o) => !o)} title="Zobrazit nebo skrýt sloupce">
+                        Sloupce
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                      </button>
+                      {partOfColumnMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setPartOfColumnMenuOpen(false)} aria-hidden />
+                          <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-slate-200 bg-white py-2 shadow-lg">
+                            <div className="flex items-center justify-between gap-2 px-3 py-1">
+                              <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
+                              <div className="flex gap-1">
+                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set())}>Zobrazit vše</button>
+                                <span className="text-slate-300">|</span>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set([0,1,2,3,4,5,6,7,8,9,10]))}>Skrýt vše</button>
+                              </div>
+                            </div>
+                            {Object.entries(PARTOF_COLUMNS_HIDEABLE).map(([k, label]) => {
+                              const idx = Number(k);
+                              return (
+                                <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenPartOfColumns.has(idx)} onChange={() => togglePartOfColumn(idx)} />
+                                  {label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <div className="h-4 w-px bg-slate-300" />
                     <button
                       className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
@@ -4519,32 +5100,84 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               ) : (
                 <>
               <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
-              <div className="overflow-auto rounded border border-slate-200">
-                <table className="min-w-full text-sm">
+              <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenPartOfColumns.has(i)).reduce((s, i) => s + (partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i]), 0)) }}>
+                  <colgroup>
+                    {[0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenPartOfColumns.has(i)).map((i) => (
+                      <col key={i} style={{ width: partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i] }} />
+                    ))}
+                  </colgroup>
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      <th className="w-8 px-2 py-2"></th>
-                      <th className="px-2 py-2">Výskyt</th>
-                      <th className="px-2 py-2">Součást entity</th>
-                      <th className="px-2 py-2">PredefinedType</th>
-                      <th className="px-2 py-2">Vztah</th>
-                      <th className="px-2 py-2">Popis</th>
-                      <th className="px-2 py-2">Poznámka</th>
-                      <th className="px-2 py-2">Příklady</th>
-                      <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Použitelnost</span>
-                          <button
-                            type="button"
-                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
-                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
-                          >
-                            ?
-                          </button>
-                        </div>
-                      </th>
-                      <th className="px-2 py-2 text-right">Akce</th>
+                      {!hiddenPartOfColumns.has(0) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1" />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[0] ?? DEFAULT_PARTOF_COL_WIDTHS[0]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(1) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Výskyt</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[1] ?? DEFAULT_PARTOF_COL_WIDTHS[1]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(2) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Součást entity</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[2] ?? DEFAULT_PARTOF_COL_WIDTHS[2]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(3) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">PredefinedType</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[3] ?? DEFAULT_PARTOF_COL_WIDTHS[3]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(4) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Vztah</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[4] ?? DEFAULT_PARTOF_COL_WIDTHS[4]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(5) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Popis</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[5] ?? DEFAULT_PARTOF_COL_WIDTHS[5]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(6) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Poznámka</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[6] ?? DEFAULT_PARTOF_COL_WIDTHS[6]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(7) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Příklady</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[7] ?? DEFAULT_PARTOF_COL_WIDTHS[7]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(8) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Fáze</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[8] ?? DEFAULT_PARTOF_COL_WIDTHS[8]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(9) && (
+                        <th className="px-2 py-2 text-center relative select-none">
+                          <div className="flex items-center justify-center gap-1 pr-1">
+                            <span>Použitelnost</span>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                          </div>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[9] ?? DEFAULT_PARTOF_COL_WIDTHS[9]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(10) && (
+                        <th className="px-2 py-2 text-right relative select-none">
+                          <span className="block pr-1">Akce</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -4555,17 +5188,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       
                       return (
                         <tr key={rel.id} className="border-t border-slate-200">
-                          {/* CHECKBOX */}
-                          <td className="px-2 py-2">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                              checked={selectedRelations.has(rel.id)}
-                              onChange={() => toggleRelationSelection(rel.id)}
-                            />
-                          </td>
-                          {/* VÝSKYT */}
-                          <td className="px-2 py-2">
+                          {!hiddenPartOfColumns.has(0) && (
+                            <td className="px-2 py-2">
+                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" checked={selectedRelations.has(rel.id)} onChange={() => toggleRelationSelection(rel.id)} />
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(1) && (
+                            <td className="px-2 py-2">
                             <select 
                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                               value={rel.occurrence ?? "optional"} 
@@ -4582,9 +5211,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               <option value="prohibited">Zakázáno (prohibited)</option>
                               <option value="optional">Možné (optional)</option>
                             </select>
-                          </td>
-                          {/* SOUČÁST ENTITY */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(2) && (
+                            <td className="px-2 py-2">
                             <select
                               className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                               value={rel.entityType ?? ""}
@@ -4605,9 +5235,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 </option>
                               ))}
                             </select>
-                          </td>
-                          {/* PREDEFINED TYPE */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(3) && (
+                            <td className="px-2 py-2">
                             <select
                               className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${!rel.entityType ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
                               value={rel.entityPredefinedType ?? ""}
@@ -4621,9 +5252,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 </option>
                               ))}
                             </select>
-                          </td>
-                          {/* VZTAH (TYP RELACE) */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(4) && (
+                            <td className="px-2 py-2">
                             <div className="flex items-center gap-1">
                               <select
                                 className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
@@ -4645,54 +5277,38 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 ?
                               </button>
                             </div>
-                          </td>
-                          {/* POPIS */}
-                          <td className="px-2 py-2">
-                            <input 
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                              value={rel.popis ?? ""} 
-                              onChange={(e) => updateRelationField(rel.id, { popis: e.target.value })} 
-                              placeholder="Popis" 
-                            />
-                          </td>
-                          {/* POZNÁMKA */}
-                          <td className="px-2 py-2">
-                            <input 
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                              value={rel.note ?? ""} 
-                              onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} 
-                              placeholder="Poznámka k relaci" 
-                            />
-                          </td>
-                          {/* PŘÍKLADY */}
-                          <td className="px-2 py-2">
-                            <input 
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm" 
-                              value={rel.priklady ?? ""} 
-                              onChange={(e) => updateRelationField(rel.id, { priklady: e.target.value })} 
-                              placeholder="Příklady" 
-                            />
-                          </td>
-                          {/* FÁZE */}
-                          <td className="px-2 py-2">
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(5) && (
+                            <td className="px-2 py-2">
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.popis ?? ""} onChange={(e) => updateRelationField(rel.id, { popis: e.target.value })} placeholder="Popis" />
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(6) && (
+                            <td className="px-2 py-2">
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.note ?? ""} onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} placeholder="Poznámka k relaci" />
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(7) && (
+                            <td className="px-2 py-2">
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.priklady ?? ""} onChange={(e) => updateRelationField(rel.id, { priklady: e.target.value })} placeholder="Příklady" />
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(8) && (
+                            <td className="px-2 py-2">
                             <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
-                          </td>
-                          {/* POUŽITELNOST */}
-                          <td className="px-2 py-2 text-center">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
-                              checked={rel.isApplicability ?? false}
-                              onChange={(e) => updateRelationField(rel.id, { isApplicability: e.target.checked })}
-                              title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
-                            />
-                          </td>
-                          {/* AKCE */}
-                          <td className="px-2 py-2 text-right">
-                            <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>
-                              Odebrat
-                            </button>
-                          </td>
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(9) && (
+                            <td className="px-2 py-2 text-center">
+                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={rel.isApplicability ?? false} onChange={(e) => updateRelationField(rel.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(10) && (
+                            <td className="px-2 py-2 text-right">
+                              <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>Odebrat</button>
+                            </td>
+                          )}
                         </tr>
                       );
                     })}
@@ -4717,6 +5333,36 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </button>
                 {object.requirements.materials.length > 0 && (
                   <>
+                    <div className="relative">
+                      <button className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-1" onClick={() => setMaterialColumnMenuOpen((o) => !o)} title="Zobrazit nebo skrýt sloupce">
+                        Sloupce
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                      </button>
+                      {materialColumnMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setMaterialColumnMenuOpen(false)} aria-hidden />
+                          <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-slate-200 bg-white py-2 shadow-lg">
+                            <div className="flex items-center justify-between gap-2 px-3 py-1">
+                              <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
+                              <div className="flex gap-1">
+                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set())}>Zobrazit vše</button>
+                                <span className="text-slate-300">|</span>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set([0,1,2,3,4,5,6,7,8,9,10]))}>Skrýt vše</button>
+                              </div>
+                            </div>
+                            {Object.entries(MATERIAL_COLUMNS_HIDEABLE).map(([k, label]) => {
+                              const idx = Number(k);
+                              return (
+                                <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenMaterialColumns.has(idx)} onChange={() => toggleMaterialColumn(idx)} />
+                                  {label}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <div className="h-4 w-px bg-slate-300" />
                     <button
                       className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
@@ -4742,48 +5388,96 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               ) : (
                 <>
               <div className="text-xs text-slate-500">Materiálové požadavky (IfcMaterial, IfcMaterialLayerSet, ...)</div>
-              <div className="overflow-auto rounded border border-slate-200">
-                <table className="min-w-full text-sm">
+              <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenMaterialColumns.has(i)).reduce((s, i) => s + (materialTableColWidths[i] ?? DEFAULT_MATERIAL_COL_WIDTHS[i]), 0)) }}>
+                  <colgroup>
+                    {[0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenMaterialColumns.has(i)).map((i) => (
+                      <col key={i} style={{ width: materialTableColWidths[i] ?? DEFAULT_MATERIAL_COL_WIDTHS[i] }} />
+                    ))}
+                  </colgroup>
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      <th className="w-8 px-2 py-2"></th>
-                      <th className="px-2 py-2">Výskyt</th>
-                      <th className="px-2 py-2">Omezení</th>
-                      <th className="px-2 py-2">Hodnota</th>
-                      <th className="px-2 py-2">URI</th>
-                      <th className="px-2 py-2">Popis</th>
-                      <th className="px-2 py-2">Poznámka</th>
-                      <th className="px-2 py-2">Příklady</th>
-                      <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Použitelnost</span>
-                          <button
-                            type="button"
-                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
-                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
-                          >
-                            ?
-                          </button>
-                        </div>
-                      </th>
-                      <th className="px-2 py-2 text-right">Akce</th>
+                      {!hiddenMaterialColumns.has(0) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1" />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[0] ?? DEFAULT_MATERIAL_COL_WIDTHS[0]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(1) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Výskyt</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[1] ?? DEFAULT_MATERIAL_COL_WIDTHS[1]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(2) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Omezení</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[2] ?? DEFAULT_MATERIAL_COL_WIDTHS[2]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(3) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Hodnota</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[3] ?? DEFAULT_MATERIAL_COL_WIDTHS[3]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(4) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">URI</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[4] ?? DEFAULT_MATERIAL_COL_WIDTHS[4]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(5) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Popis</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[5] ?? DEFAULT_MATERIAL_COL_WIDTHS[5]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(6) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Poznámka</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[6] ?? DEFAULT_MATERIAL_COL_WIDTHS[6]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(7) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Příklady</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[7] ?? DEFAULT_MATERIAL_COL_WIDTHS[7]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(8) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Fáze</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[8] ?? DEFAULT_MATERIAL_COL_WIDTHS[8]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(9) && (
+                        <th className="px-2 py-2 text-center relative select-none">
+                          <div className="flex items-center justify-center gap-1 pr-1">
+                            <span>Použitelnost</span>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                          </div>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[9] ?? DEFAULT_MATERIAL_COL_WIDTHS[9]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(10) && (
+                        <th className="px-2 py-2 text-right relative select-none">
+                          <span className="block pr-1">Akce</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[10] ?? DEFAULT_MATERIAL_COL_WIDTHS[10]; }} aria-hidden />
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {object.requirements.materials.map((mat) => (
                       <tr key={mat.id} className="border-t border-slate-200">
-                        {/* CHECKBOX */}
-                        <td className="px-2 py-2">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                            checked={selectedMaterials.has(mat.id)}
-                            onChange={() => toggleMaterialSelection(mat.id)}
-                          />
-                        </td>
-                        {/* VÝSKYT */}
-                        <td className="px-2 py-2">
+                        {!hiddenMaterialColumns.has(0) && (
+                          <td className="px-2 py-2">
+                            <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" checked={selectedMaterials.has(mat.id)} onChange={() => toggleMaterialSelection(mat.id)} />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(1) && (
+                          <td className="px-2 py-2">
                           <select 
                             className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
                             value={mat.occurrence ?? "optional"} 
@@ -4801,13 +5495,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <option value="optional">Možné (optional)</option>
                           </select>
                         </td>
-                        {/* OMEZENÍ */}
-                        <td className="px-2 py-2">
-                          <select
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.constraint ?? "FILLED"}
-                            onChange={(e) => updateMaterialField(mat.id, { constraint: e.target.value as any, value: "" })}
-                          >
+                        )}
+                        {!hiddenMaterialColumns.has(2) && (
+                          <td className="px-2 py-2">
+                            <select className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.constraint ?? "FILLED"} onChange={(e) => updateMaterialField(mat.id, { constraint: e.target.value as any, value: "" })}>
                             {MATERIAL_CONSTRAINT_OPTIONS.map((opt) => (
                               <option key={opt.value} value={opt.value}>
                                 {opt.label}
@@ -4815,8 +5506,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             ))}
                           </select>
                         </td>
-                        {/* HODNOTA */}
-                        <td className="px-2 py-2">
+                        )}
+                        {!hiddenMaterialColumns.has(3) && (
+                          <td className="px-2 py-2">
                           {(() => {
                             const isDisabled = mat.constraint === "FILLED" || mat.constraint === undefined;
                             const isLength = mat.constraint === "LENGTH";
@@ -5207,63 +5899,42 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             );
                           })()}
                         </td>
-                        {/* URI */}
-                        <td className="px-2 py-2">
-                          <input
-                            type="text"
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.uri ?? ""}
-                            onChange={(e) => updateMaterialField(mat.id, { uri: e.target.value })}
-                            placeholder="URI materiálu"
-                          />
-                        </td>
-                        {/* POPIS */}
-                        <td className="px-2 py-2">
-                          <input
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.popis ?? ""}
-                            onChange={(e) => updateMaterialField(mat.id, { popis: e.target.value })}
-                            placeholder="Popis"
-                          />
-                        </td>
-                        {/* POZNÁMKA */}
-                        <td className="px-2 py-2">
-                          <input
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.note ?? ""}
-                            onChange={(e) => updateMaterialField(mat.id, { note: e.target.value })}
-                            placeholder="Poznámka k materiálu"
-                          />
-                        </td>
-                        {/* PŘÍKLADY */}
-                        <td className="px-2 py-2">
-                          <input
-                            className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={mat.priklady ?? ""}
-                            onChange={(e) => updateMaterialField(mat.id, { priklady: e.target.value })}
-                            placeholder="Příklady"
-                          />
-                        </td>
-                        {/* FÁZE */}
-                        <td className="px-2 py-2">
-                          <PhaseSelector phases={phases} value={mat.phases} onChange={(ids) => updateMaterialField(mat.id, { phases: ids })} />
-                        </td>
-                        {/* POUŽITELNOST */}
-                        <td className="px-2 py-2 text-center">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500"
-                            checked={mat.isApplicability ?? false}
-                            onChange={(e) => updateMaterialField(mat.id, { isApplicability: e.target.checked })}
-                            title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)"
-                          />
-                        </td>
-                        {/* AKCE */}
-                        <td className="px-2 py-2 text-right">
-                          <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("materials", mat.id)}>
-                            Odebrat
-                          </button>
-                        </td>
+                        )}
+                        {!hiddenMaterialColumns.has(4) && (
+                          <td className="px-2 py-2">
+                            <input type="text" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.uri ?? ""} onChange={(e) => updateMaterialField(mat.id, { uri: e.target.value })} placeholder="URI materiálu" />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(5) && (
+                          <td className="px-2 py-2">
+                            <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.popis ?? ""} onChange={(e) => updateMaterialField(mat.id, { popis: e.target.value })} placeholder="Popis" />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(6) && (
+                          <td className="px-2 py-2">
+                            <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.note ?? ""} onChange={(e) => updateMaterialField(mat.id, { note: e.target.value })} placeholder="Poznámka k materiálu" />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(7) && (
+                          <td className="px-2 py-2">
+                            <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={mat.priklady ?? ""} onChange={(e) => updateMaterialField(mat.id, { priklady: e.target.value })} placeholder="Příklady" />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(8) && (
+                          <td className="px-2 py-2">
+                            <PhaseSelector phases={phases} value={mat.phases} onChange={(ids) => updateMaterialField(mat.id, { phases: ids })} />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(9) && (
+                          <td className="px-2 py-2 text-center">
+                            <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={mat.isApplicability ?? false} onChange={(e) => updateMaterialField(mat.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(10) && (
+                          <td className="px-2 py-2 text-right">
+                            <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("materials", mat.id)}>Odebrat</button>
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -5285,6 +5956,38 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addClassification}>
                   Přidat klasifikaci
                 </button>
+                {classificationsWithoutIfc.length > 0 && (
+                  <div className="relative">
+                    <button className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-1" onClick={() => setClassificationColumnMenuOpen((o) => !o)} title="Zobrazit nebo skrýt sloupce">
+                      Sloupce
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                    </button>
+                    {classificationColumnMenuOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setClassificationColumnMenuOpen(false)} aria-hidden />
+                        <div className="absolute left-0 top-full mt-1 z-50 min-w-[200px] rounded-md border border-slate-200 bg-white py-2 shadow-lg">
+                          <div className="flex items-center justify-between gap-2 px-3 py-1">
+                            <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
+                            <div className="flex gap-1">
+                              <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set())}>Zobrazit vše</button>
+                              <span className="text-slate-300">|</span>
+                              <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
+                            </div>
+                          </div>
+                          {Object.entries(CLASSIFICATION_COLUMNS_HIDEABLE).map(([k, label]) => {
+                            const idx = Number(k);
+                            return (
+                              <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
+                                <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenClassificationColumns.has(idx)} onChange={() => toggleClassificationColumn(idx)} />
+                                {label}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {classificationsWithoutIfc.some((c) => !c.readOnly) && (
                   <>
                     <div className="h-4 w-px bg-slate-300" />
@@ -5311,49 +6014,102 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </div>
               ) : (
                 <>
-              <div className="overflow-auto rounded border border-slate-200">
-                <table className="min-w-full text-sm">
+              <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenClassificationColumns.has(i)).reduce((s, i) => s + (classificationTableColWidths[i] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[i]), 0)) }}>
+                  <colgroup>
+                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenClassificationColumns.has(i)).map((i) => (
+                      <col key={i} style={{ width: classificationTableColWidths[i] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[i] }} />
+                    ))}
+                  </colgroup>
                   <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
                     <tr>
-                      <th className="w-8 px-2 py-2"></th>
-                      <th className="px-2 py-2">Výskyt</th>
-                      <th className="px-2 py-2">Klasifikační systém</th>
-                      <th className="px-2 py-2">Omezení</th>
-                      <th className="px-2 py-2">Hodnota</th>
-                      <th className="px-2 py-2">URI</th>
-                      <th className="px-2 py-2">Popis</th>
-                      <th className="px-2 py-2">Poznámka</th>
-                      <th className="px-2 py-2">Příklady</th>
-                      <th className="px-2 py-2">Fáze</th>
-                      <th className="px-2 py-2 text-center">
-                        <div className="flex items-center justify-center gap-1">
-                          <span>Použitelnost</span>
-                          <button
-                            type="button"
-                            className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
-                            title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj."
-                          >
-                            ?
-                          </button>
-                        </div>
-                      </th>
-                      <th className="px-2 py-2 text-right">Akce</th>
+                      {!hiddenClassificationColumns.has(0) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1" />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[0] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[0]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(1) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Výskyt</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[1] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[1]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(2) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Klasifikační systém</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[2] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[2]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(3) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Omezení</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[3] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[3]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(4) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Hodnota</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[4] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[4]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(5) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">URI</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[5] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[5]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(6) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Popis</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[6] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[6]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(7) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Poznámka</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[7] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[7]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(8) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Příklady</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[8] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[8]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(9) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Fáze</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[9] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[9]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(10) && (
+                        <th className="px-2 py-2 text-center relative select-none">
+                          <div className="flex items-center justify-center gap-1 pr-1">
+                            <span>Použitelnost</span>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                          </div>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[10] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[10]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(11) && (
+                        <th className="px-2 py-2 text-right relative select-none">
+                          <span className="block pr-1">Akce</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[11] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[11]; }} aria-hidden />
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
                     {classificationsWithoutIfc.map((cls) => (
                       <tr key={cls.id} className="border-t border-slate-200">
-                        <td className="px-2 py-2">
-                          <input
-                            type="checkbox"
-                            className={`h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${cls.readOnly ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
-                            checked={selectedClassifications.has(cls.id)}
-                            onChange={() => !cls.readOnly && toggleClassificationSelection(cls.id)}
-                            disabled={cls.readOnly}
-                            title={cls.readOnly ? "Primární klasifikace - nelze vybrat" : ""}
-                          />
-                        </td>
-                        <td className="px-2 py-2">
+                        {!hiddenClassificationColumns.has(0) && (
+                          <td className="px-2 py-2">
+                            <input type="checkbox" className={`h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${cls.readOnly ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`} checked={selectedClassifications.has(cls.id)} onChange={() => !cls.readOnly && toggleClassificationSelection(cls.id)} disabled={cls.readOnly} title={cls.readOnly ? "Primární klasifikace - nelze vybrat" : ""} />
+                          </td>
+                        )}
+                        {!hiddenClassificationColumns.has(1) && (
+                          <td className="px-2 py-2">
                           {cls.readOnly ? (
                             <span className="text-xs font-medium text-slate-700">Požadované</span>
                           ) : (
@@ -5372,10 +6128,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             </select>
                           )}
                         </td>
-                        <td className="px-2 py-2">
-                          <select
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.systemEntryId ?? ""}
+                        )}
+                        {!hiddenClassificationColumns.has(2) && (
+                          <td className="px-2 py-2">
+                            <select
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.systemEntryId ?? ""}
                             onChange={(e) => {
                               const selectedEntryId = e.target.value;
                               const selectedEntry = classificationSystemEntriesForRequirements.find((s) => s.id === selectedEntryId);
@@ -5414,10 +6172,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             />
                           )}
                         </td>
-                        <td className="px-2 py-2">
-                          <select
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.constraint ?? "FILLED"}
+                        )}
+                        {!hiddenClassificationColumns.has(3) && (
+                          <td className="px-2 py-2">
+                            <select
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.constraint ?? "FILLED"}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, constraint: e.target.value as "FILLED" | "ENUM" | "PATTERN" } : c));
@@ -5430,10 +6190,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <option value="PATTERN">Vzor (regex)</option>
                           </select>
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.value ?? cls.identification ?? cls.code ?? ""}
+                        )}
+                        {!hiddenClassificationColumns.has(4) && (
+                          <td className="px-2 py-2">
+                            <input
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.value ?? cls.identification ?? cls.code ?? ""}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, value: e.target.value, identification: e.target.value, code: e.target.value } : c));
@@ -5443,10 +6205,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             placeholder={cls.constraint === "ENUM" ? "Hodnoty oddělené |" : cls.constraint === "PATTERN" ? "Regex vzor" : "Hodnota klasifikace"}
                           />
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.uri ?? ""}
+                        )}
+                        {!hiddenClassificationColumns.has(5) && (
+                          <td className="px-2 py-2">
+                            <input
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.uri ?? ""}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, uri: e.target.value || undefined } : c));
@@ -5456,10 +6220,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             placeholder="URI odkaz"
                           />
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.description ?? ""}
+                        )}
+                        {!hiddenClassificationColumns.has(6) && (
+                          <td className="px-2 py-2">
+                            <input
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.description ?? ""}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, description: e.target.value } : c));
@@ -5469,10 +6235,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             placeholder="Popis"
                           />
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.note ?? ""}
+                        )}
+                        {!hiddenClassificationColumns.has(7) && (
+                          <td className="px-2 py-2">
+                            <input
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.note ?? ""}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, note: e.target.value || undefined } : c));
@@ -5482,10 +6250,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             placeholder="Poznámka"
                           />
                         </td>
-                        <td className="px-2 py-2">
-                          <input
-                            className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                            value={cls.priklady ?? ""}
+                        )}
+                        {!hiddenClassificationColumns.has(8) && (
+                          <td className="px-2 py-2">
+                            <input
+                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                              value={cls.priklady ?? ""}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, priklady: e.target.value || undefined } : c));
@@ -5495,10 +6265,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             placeholder="Příklady"
                           />
                         </td>
-                        <td className="px-2 py-2">
-                          <PhaseSelector
-                            phases={phases}
-                            value={cls.phases}
+                        )}
+                        {!hiddenClassificationColumns.has(9) && (
+                          <td className="px-2 py-2">
+                            <PhaseSelector
+                              phases={phases}
+                              value={cls.phases}
                             onChange={(ids) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, phases: ids } : c));
@@ -5506,11 +6278,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             }
                           />
                         </td>
-                        <td className="px-2 py-2 text-center">
-                          <input
-                            type="checkbox"
-                            className={`h-4 w-4 rounded border-slate-300 text-green-600 focus:ring-green-500 ${cls.readOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
-                            checked={cls.readOnly ? true : (cls.isApplicability ?? false)}
+                        )}
+                        {!hiddenClassificationColumns.has(10) && (
+                          <td className="px-2 py-2 text-center">
+                            <input
+                              type="checkbox"
+                              className={`h-4 w-4 rounded border-slate-300 text-green-600 focus:ring-green-500 ${cls.readOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
+                              checked={cls.readOnly ? true : (cls.isApplicability ?? false)}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, isApplicability: e.target.checked } : c));
@@ -5520,8 +6294,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             title={cls.readOnly ? "Primární klasifikace je vždy v části Použitelnost" : "Pokud je zaškrtnuto, klasifikace bude v části Použitelnost (applicability)"}
                           />
                         </td>
-                        <td className="px-2 py-2 text-right">
-                          {!cls.readOnly && (
+                        )}
+                        {!hiddenClassificationColumns.has(11) && (
+                          <td className="px-2 py-2 text-right">
+                            {!cls.readOnly && (
                             <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("classifications", cls.id)}>
                               Odebrat
                             </button>
@@ -5530,10 +6306,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <span className="text-xs text-slate-400" title="Tato klasifikace je z primárního systému a nelze ji odebrat">
                               Primární
                             </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                            )}
+                          </td>
+                        )}
+                        </tr>
+                      ))}
                   </tbody>
                 </table>
               </div>
@@ -5553,9 +6330,40 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             
             return (
             <div className="space-y-3">
-              <div className="flex justify-between items-center">
+              {/* První řádek: Fáze + Export IDS (jako jeden řádek) */}
+              <div className="flex justify-between items-center flex-wrap gap-2">
+                <div className="flex gap-1 flex-wrap items-center">
+                  {phases.length > 0 && (
+                    <>
+                      <span className="text-xs text-slate-500 w-12 shrink-0">Fáze:</span>
+                      <button
+                        className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+                          effectivePhaseId === null
+                            ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
+                            : "text-slate-600 hover:bg-slate-100"
+                        }`}
+                        onClick={() => setSelectedPhaseId(null)}
+                      >
+                        Vše
+                      </button>
+                      {phasesForIdsPreview.map((phase) => (
+                        <button
+                          key={phase.id}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+                            effectivePhaseId === phase.id
+                              ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
+                              : "text-slate-600 hover:bg-slate-100"
+                          }`}
+                          onClick={() => setSelectedPhaseId(phase.id)}
+                          title={phase.name}
+                        >
+                          {phase.code}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">IFC4X3_ADD2</span>
                   {hasErrors && (
                     <span className="text-xs text-red-600 flex items-center gap-1">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
@@ -5572,6 +6380,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       {validationErrors.filter((e) => e.type === "warning").length} varování
                     </span>
                   )}
+                  <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">IFC4X3_ADD2</span>
                   {!hasErrors && !hasWarnings && (
                     <span className="text-xs text-green-600 flex items-center gap-1">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
@@ -5580,35 +6389,99 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       Validní
                     </span>
                   )}
+                  <button
+                    className={`text-sm text-white px-3 py-1.5 rounded flex items-center gap-1.5 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
+                    onClick={() => hasErrors || setIsExportIdsDialogOpen(true)}
+                    disabled={hasErrors}
+                    title={hasErrors ? "Opravte chyby před exportem" : "Export IDS – výběr fáze, výskytu a metadata"}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                      <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
+                      <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
+                    </svg>
+                    Export IDS
+                  </button>
                 </div>
-                <button
-                  className={`text-sm text-white px-3 py-1.5 rounded flex items-center gap-1.5 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
-                  onClick={() => {
-                    if (hasErrors) return;
-                    const currentPhase = phases.find((p) => p.id === effectivePhaseId);
-                    const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
-                    const xml = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, phaseName, classificationSystemEntries);
-                    const blob = new Blob([xml], { type: "application/xml" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    const baseFileName = (object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_");
-                    const fileName = currentPhase ? `${baseFileName}_${currentPhase.code}` : baseFileName;
-                    a.download = `${fileName}.ids`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                  }}
-                  disabled={hasErrors}
-                  title={hasErrors ? "Opravte chyby před exportem" : "Stáhnout jako .ids soubor"}
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                    <path d="M10.75 2.75a.75.75 0 00-1.5 0v8.614L6.295 8.235a.75.75 0 10-1.09 1.03l4.25 4.5a.75.75 0 001.09 0l4.25-4.5a.75.75 0 00-1.09-1.03l-2.955 3.129V2.75z" />
-                    <path d="M3.5 12.75a.75.75 0 00-1.5 0v2.5A2.75 2.75 0 004.75 18h10.5A2.75 2.75 0 0018 15.25v-2.5a.75.75 0 00-1.5 0v2.5c0 .69-.56 1.25-1.25 1.25H4.75c-.69 0-1.25-.56-1.25-1.25v-2.5z" />
-                  </svg>
-                  Export IDS
-                </button>
+              </div>
+              
+              {/* Druhý řádek: Výskyt */}
+              <div className="flex gap-1 flex-wrap items-center">
+                <span className="text-xs text-slate-500 w-12 shrink-0">Výskyt:</span>
+                  <button
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      occurrenceFilter === "all"
+                        ? "bg-slate-700 text-white"
+                        : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                    }`}
+                    onClick={() => setOccurrenceFilter("all")}
+                  >
+                    Vše
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      occurrenceFilter === "required"
+                        ? "bg-green-600 text-white"
+                        : "bg-green-100 text-green-700 hover:bg-green-200"
+                    }`}
+                    onClick={() => setOccurrenceFilter("required")}
+                  >
+                    Požadované
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      occurrenceFilter === "prohibited"
+                        ? "bg-red-600 text-white"
+                        : "bg-red-100 text-red-700 hover:bg-red-200"
+                    }`}
+                    onClick={() => setOccurrenceFilter("prohibited")}
+                  >
+                    Zakázané
+                  </button>
+                  <button
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      occurrenceFilter === "optional"
+                        ? "bg-amber-600 text-white"
+                        : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                    }`}
+                    onClick={() => setOccurrenceFilter("optional")}
+                  >
+                    Možné
+                  </button>
+              </div>
+              
+              {/* Třetí řádek: Náhled */}
+              <div className="flex gap-2 flex-wrap items-center">
+                <span className="text-xs text-slate-500 w-12 shrink-0">Náhled:</span>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      idsSubTab === "readable"
+                        ? "border-b-2 border-indigo-500 text-indigo-600"
+                        : "text-slate-600 hover:text-slate-800"
+                    }`}
+                    onClick={() => setIdsSubTab("readable")}
+                  >
+                    Lidská řeč
+                  </button>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      idsSubTab === "schema"
+                        ? "border-b-2 border-indigo-500 text-indigo-600"
+                        : "text-slate-600 hover:text-slate-800"
+                    }`}
+                    onClick={() => setIdsSubTab("schema")}
+                  >
+                    Schéma IDS
+                  </button>
+                  <button
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      idsSubTab === "metadata"
+                        ? "border-b-2 border-indigo-500 text-indigo-600"
+                        : "text-slate-600 hover:text-slate-800"
+                    }`}
+                    onClick={() => setIdsSubTab("metadata")}
+                  >
+                    Metadata specifikace
+                  </button>
               </div>
               
               {/* Validation errors */}
@@ -5633,108 +6506,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </ul>
                 </div>
               )}
-              
-              {/* Phase tabs – pouze fáze zaškrtnuté u entity (ifcEntityPhases) */}
-              {phases.length > 0 && (
-                <div className="flex flex-wrap gap-1 border-b border-slate-200 pb-1">
-                  <button
-                    className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
-                      effectivePhaseId === null
-                        ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
-                        : "text-slate-600 hover:bg-slate-100"
-                    }`}
-                    onClick={() => setSelectedPhaseId(null)}
-                  >
-                    Vše
-                  </button>
-                  {phasesForIdsPreview.map((phase) => (
-                    <button
-                      key={phase.id}
-                      className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
-                        effectivePhaseId === phase.id
-                          ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
-                          : "text-slate-600 hover:bg-slate-100"
-                      }`}
-                      onClick={() => setSelectedPhaseId(phase.id)}
-                      title={phase.name}
-                    >
-                      {phase.code}
-                    </button>
-                  ))}
-                </div>
-              )}
-              
-              {/* Content view mode tabs */}
-              <div className="flex gap-2 border-b border-slate-200">
-                <button
-                  className={`px-4 py-2 text-sm font-medium transition-colors ${
-                    idsSubTab === "readable"
-                      ? "border-b-2 border-indigo-500 text-indigo-600"
-                      : "text-slate-600 hover:text-slate-800"
-                  }`}
-                  onClick={() => setIdsSubTab("readable")}
-                >
-                  Lidská řeč
-                </button>
-                <button
-                  className={`px-4 py-2 text-sm font-medium transition-colors ${
-                    idsSubTab === "schema"
-                      ? "border-b-2 border-indigo-500 text-indigo-600"
-                      : "text-slate-600 hover:text-slate-800"
-                  }`}
-                  onClick={() => setIdsSubTab("schema")}
-                >
-                  Schéma IDS
-                </button>
-              </div>
-              
-              {/* Occurrence filter tabs */}
-              <div className="flex gap-1 flex-wrap items-center">
-                <span className="text-xs text-slate-500 mr-2">Výskyt:</span>
-                <button
-                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                    occurrenceFilter === "all"
-                      ? "bg-slate-700 text-white"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                  onClick={() => setOccurrenceFilter("all")}
-                >
-                  Vše
-                </button>
-                <button
-                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                    occurrenceFilter === "required"
-                      ? "bg-green-600 text-white"
-                      : "bg-green-100 text-green-700 hover:bg-green-200"
-                  }`}
-                  onClick={() => setOccurrenceFilter("required")}
-                >
-                  Požadované
-                </button>
-                <button
-                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                    occurrenceFilter === "prohibited"
-                      ? "bg-red-600 text-white"
-                      : "bg-red-100 text-red-700 hover:bg-red-200"
-                  }`}
-                  onClick={() => setOccurrenceFilter("prohibited")}
-                >
-                  Zakázané
-                </button>
-                <button
-                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                    occurrenceFilter === "optional"
-                      ? "bg-amber-600 text-white"
-                      : "bg-amber-100 text-amber-700 hover:bg-amber-200"
-                  }`}
-                  onClick={() => setOccurrenceFilter("optional")}
-                >
-                  Možné
-                </button>
-                {occurrenceFilter !== "all" && (
-                  <span className="text-[10px] text-slate-400 ml-2">(pouze náhled)</span>
-                )}
-              </div>
               
               {/* Human-readable view */}
               {idsSubTab === "readable" && (() => {
@@ -5811,11 +6582,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 const currentPhase = phases.find((p) => p.id === effectivePhaseId);
                 const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
                 // For preview, apply occurrence filter; for export, use "all"
-                const xml = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, phaseName, classificationSystemEntries, occurrenceFilter);
-                const xmlForExport = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, phaseName, classificationSystemEntries, "all");
+                const xml = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, classificationSystemEntries, occurrenceFilter, phaseName);
+                const xmlForExport = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, classificationSystemEntries, "all", phaseName);
+                const sanitize = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
+                const objectNameForFile = (object.code || object.description || "specification").replace(/::/g, ".");
                 const fileName = currentPhase 
-                  ? `${(object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_")}_${currentPhase.code}`
-                  : (object.description || object.code || "specification").replace(/[^a-zA-Z0-9_-]/g, "_");
+                  ? `${sanitize(objectNameForFile)}_${sanitize(currentPhase.code)}`
+                  : sanitize(objectNameForFile);
                 
                 return (
                 <div className="space-y-2">
@@ -5877,11 +6650,117 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 );
               })()}
               
+              {/* Metadata specifikace – pro aktuální kombinaci fáze a výskytu */}
+              {idsSubTab === "metadata" && (() => {
+                const metaKey = `${effectivePhaseId ?? "all"}|${occurrenceFilter}`;
+                const meta = getIdsSpecMetadataForPhaseOccurrence(object, effectivePhaseId, occurrenceFilter) ?? {};
+                const updateMeta = (patch: Partial<IdsSpecMetadata>) => {
+                  const existing = object.idsSpecMetadata ?? {};
+                  const keys = Object.keys(existing);
+                  const isLegacy = keys.length > 0 && !keys.some((k) => k.includes("|"));
+                  const baseMap: Record<string, IdsSpecMetadata> = isLegacy
+                    ? { [metaKey]: existing as unknown as IdsSpecMetadata }
+                    : { ...(existing as Record<string, IdsSpecMetadata>) };
+                  baseMap[metaKey] = { ...baseMap[metaKey], ...patch };
+                  onChange({
+                    ...object,
+                    idsSpecMetadata: baseMap,
+                  });
+                };
+                const currentPhase = phases.find((p) => p.id === effectivePhaseId);
+                const occurrenceLabel = occurrenceFilter === "all" ? "Vše" : occurrenceFilter === "required" ? "Požadované" : occurrenceFilter === "prohibited" ? "Zakázané" : "Možné";
+                const objectNameForSpec = (object.code || object.description || "").replace(/::/g, ".");
+                const sanitize = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
+                const derivedSpecName = [
+                  sanitize(objectNameForSpec),
+                  currentPhase?.code ? sanitize(currentPhase.code) : "",
+                  occurrenceLabel,
+                ].filter(Boolean).join("_");
+                return (
+                  <div className="rounded border border-slate-200 bg-white p-4 space-y-4">
+                    <p className="text-xs text-slate-500">
+                      Metadata pro <strong>{currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : "Všechny fáze"}</strong> a výskyt <strong>{occurrenceLabel}</strong>.
+                    </p>
+                    <div className="grid gap-3 text-sm">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Název (name)</label>
+                        <input
+                          type="text"
+                          value={(meta.name ?? "").trim() || derivedSpecName}
+                          onChange={(e) => updateMeta({ name: (e.target.value.trim() || undefined) })}
+                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                          disabled={isLocked}
+                        />
+                        <span className="text-[10px] text-slate-400">Krátký název specifikované informace</span>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">IFC verze (ifcVersion)</label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={selectedIfcVersion}
+                          className="w-full rounded border border-slate-200 bg-slate-50 px-2 py-1.5 text-sm text-slate-600"
+                        />
+                        <span className="text-[10px] text-slate-400">Z nastavení projektu, nelze měnit</span>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Identifikátor (identifier)</label>
+                        <input
+                          type="text"
+                          value={meta.identifier ?? ""}
+                          onChange={(e) => updateMeta({ identifier: e.target.value || undefined })}
+                          placeholder="SP01, Fire-001, nebo UUID"
+                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                          disabled={isLocked}
+                        />
+                        <span className="text-[10px] text-slate-400">Unikátní v rámci IDS souboru</span>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Popis (description)</label>
+                        <textarea
+                          value={meta.description ?? ""}
+                          onChange={(e) => updateMeta({ description: e.target.value || undefined })}
+                          placeholder="Proč je požadavek důležitý pro projekt, jaké workflow podporuje"
+                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm min-h-[80px]"
+                          rows={3}
+                          disabled={isLocked}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-600 mb-1">Instrukce (instructions)</label>
+                        <textarea
+                          value={meta.instructions ?? ""}
+                          onChange={(e) => updateMeta({ instructions: e.target.value || undefined })}
+                          placeholder="Kdo je odpovědný, jak dosáhnout požadavku, edge-cases"
+                          className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm min-h-[80px]"
+                          rows={3}
+                          disabled={isLocked}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              
             </div>
             );
           })()}
         </div>
       </div>
+      
+      {/* Export IDS dialog – výběr fáze, výskytu a metadata */}
+      {isExportIdsDialogOpen && activeTab === "ids" && (
+        <IdsSingleExportDialog
+          object={object}
+          phases={phases}
+          entityPhaseIds={object.ifcEntityPhases ?? object.entityPhases}
+          classificationSystemEntries={classificationSystemEntries}
+          project={project}
+          selectedIfcVersion={selectedIfcVersion}
+          generateIdsXml={generateIdsXml}
+          onClose={() => setIsExportIdsDialogOpen(false)}
+        />
+      )}
     </div>
   );
 };

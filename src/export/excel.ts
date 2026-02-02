@@ -536,11 +536,27 @@ const createRelationsSheet = (
 };
 
 /**
+ * Exclude IFC classification – IFC třídění je už v entitě a predefined type, neexportovat
+ */
+const excludeIfcClassifications = (
+  items: ClassificationRequirement[],
+  classificationSystemEntries: ClassificationSystemEntry[]
+): ClassificationRequirement[] => {
+  return items.filter((cls) => {
+    if (!cls.systemEntryId) return true;
+    const entry = classificationSystemEntries.find((e) => e.id === cls.systemEntryId);
+    return !entry?.isIfcSystem;
+  });
+};
+
+/**
  * Create Sheet 10: KLASIFIKACE_POŽADAVKY (Classification Requirements)
+ * IFC třídění (isIfcSystem) se neexportuje – je už v entitě a predefined type
  */
 const createClassificationRequirementsSheet = (
   workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>
+  objects: Record<string, ProjectObject>,
+  classificationSystemEntries: ClassificationSystemEntry[] = []
 ) => {
   const sheet = workbook.addWorksheet("KLASIFIKACE_POŽADAVKY");
 
@@ -565,7 +581,8 @@ const createClassificationRequirementsSheet = (
 
   let rowIndex = 0;
   Object.values(objects).forEach((obj) => {
-    obj.requirements.classifications.forEach((cls: ClassificationRequirement) => {
+    const classifications = excludeIfcClassifications(obj.requirements.classifications, classificationSystemEntries);
+    classifications.forEach((cls: ClassificationRequirement) => {
       const row = sheet.addRow([
         cls.id,
         obj.code,
@@ -723,7 +740,7 @@ export const generateExcelWorkbook = async (
     createRelationsSheet(workbook, project.objects);
   }
   if (selection.klasifikacePozadavky) {
-    createClassificationRequirementsSheet(workbook, project.objects);
+    createClassificationRequirementsSheet(workbook, project.objects, project.classificationSystemEntries ?? []);
   }
   if (selection.materialy) {
     createMaterialsSheet(workbook, project.objects);
@@ -763,6 +780,7 @@ export const exportExcelFile = async (
 
 /**
  * Get statistics about export content
+ * Excludes IFC classifications from count (isIfcSystem) – ty jsou v entitě/predefined type
  */
 export const getExportStatistics = (project: Project): {
   phases: number;
@@ -776,16 +794,21 @@ export const getExportStatistics = (project: Project): {
   materials: number;
 } => {
   const objects = Object.values(project.objects);
+  const entries = project.classificationSystemEntries ?? [];
+  const classificationsCount = objects.reduce((sum, obj) => {
+    const filtered = excludeIfcClassifications(obj.requirements.classifications, entries);
+    return sum + filtered.length;
+  }, 0);
 
   return {
     phases: project.phases.length,
     codeLists: (project.codeLists || []).length,
-    classificationSystems: (project.classificationSystemEntries || []).length,
+    classificationSystems: entries.length,
     objects: objects.length,
     attributes: objects.reduce((sum, obj) => sum + obj.requirements.attributes.length, 0),
     properties: objects.reduce((sum, obj) => sum + obj.requirements.properties.length, 0),
     relations: objects.reduce((sum, obj) => sum + obj.requirements.relations.length, 0),
-    classifications: objects.reduce((sum, obj) => sum + obj.requirements.classifications.length, 0),
+    classifications: classificationsCount,
     materials: objects.reduce((sum, obj) => sum + obj.requirements.materials.length, 0),
   };
 };

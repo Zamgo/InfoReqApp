@@ -154,6 +154,40 @@ export interface AuthoringClassification {
   code: string;
 }
 
+/** IDS metadata pro celý soubor (ids:info) – dle buildingSMART ids-metadata.md */
+export interface IdsMetadata {
+  /** Název dokumentu IDS */
+  title?: string;
+  /** Vlastník autorských práv */
+  copyright?: string;
+  /** Verze IDS (doporučeno sémantické verzování X.Y) */
+  version?: string;
+  /** Popis účelu, pro koho je IDS určen, na jaké projekty se vztahuje */
+  description?: string;
+  /** Autor IDS (e-mailová adresa) */
+  author?: string;
+  /** Datum publikace (YYYY-MM-DD) */
+  date?: string;
+  /** Proč jsou informace potřeba (např. quantity take off, clash detection, coordination) */
+  purpose?: string;
+  /** Milník dodání, kdy jsou informace potřeba (např. Schematic Design, Construction, RIBA Stage 3) */
+  milestone?: string;
+}
+
+/** IDS metadata pro jednotlivou specifikaci – dle buildingSMART ids-metadata.md */
+export interface IdsSpecMetadata {
+  /** Krátký název specifikované informace */
+  name?: string;
+  /** Očekávaná verze IFC: IFC2X3, IFC4, IFC4X3_ADD2 */
+  ifcVersion?: "IFC2X3" | "IFC4" | "IFC4X3_ADD2";
+  /** Jednoznačný identifikátor pro sledování a referencování (unikátní v rámci IDS) */
+  identifier?: string;
+  /** Proč je požadavek důležitý pro projekt, jaké workflow podporuje */
+  description?: string;
+  /** Instrukce: kdo je odpovědný, jak dosáhnout požadavku, edge-cases */
+  instructions?: string;
+}
+
 export interface ProjectObject {
   code: string;
   description: string;
@@ -175,6 +209,8 @@ export interface ProjectObject {
   entityPhases?: string[];
   /** Třídění autorských nástrojů – klasifikace dle nástroje (např. Kategorie RVT), nevyžadované v IFC/IDS */
   authoringClassifications?: AuthoringClassification[];
+  /** Metadata specifikace pro IDS export (dle buildingSMART ids-metadata.md). Klíč: `${phaseId}|${occurrence}` pro kombinaci fáze a výskytu. */
+  idsSpecMetadata?: Record<string, IdsSpecMetadata>;
   requirements: ObjectRequirements;
 }
 
@@ -245,4 +281,6 @@ export interface Project {
   codeLists?: CodeList[];
   /** User-managed list of classification systems for dropdown selection */
   classificationSystemEntries?: ClassificationSystemEntry[];
+  /** Metadata celého IDS souboru (ids:info) – dle buildingSMART ids-metadata.md */
+  idsMetadata?: IdsMetadata;
 }

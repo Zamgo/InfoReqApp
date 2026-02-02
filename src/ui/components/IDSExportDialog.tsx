@@ -1,34 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
-import type { Project, Phase, ProjectObject, PropertyRequirement, AttributeRequirement, ClassificationRequirement, MaterialRequirement } from "../../project/types";
+import type { Project, ProjectObject, PropertyRequirement, AttributeRequirement, ClassificationRequirement, MaterialRequirement, IdsMetadata } from "../../project/types";
+import { generateHumanReadable } from "../../utils/humanReadableIds";
 import type { ClassificationNode } from "../../classification/types";
-import { generateIDS, exportIDSFile, exportIDSZip, getObjectsWithRequirementsForPhase } from "../../export/ids";
+import { generateIDS, exportIDSFile, getObjectsWithRequirementsForPhase } from "../../export/ids";
 
 interface Props {
   project: Project;
   classification: { nodes: ClassificationNode[] } | null;
   isOpen: boolean;
   onClose: () => void;
+  /** Callback to save metadata to project (persists idsMetadata) */
+  onUpdateProject?: (updates: Partial<Project>) => void;
 }
 
-type ExportMode = "by-phase" | "by-objects";
 type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
 type ViewMode = "human" | "ids";
-
-/**
- * Collect leaf nodes (objects) from classification tree
- */
-const collectLeaves = (nodes: ClassificationNode[]): ClassificationNode[] => {
-  const result: ClassificationNode[] = [];
-  const traverse = (node: ClassificationNode) => {
-    if (node.children.length === 0) {
-      result.push(node);
-    } else {
-      node.children.forEach(traverse);
-    }
-  };
-  nodes.forEach(traverse);
-  return result;
-};
 
 /**
  * Get occurrence label in Czech
@@ -56,20 +42,6 @@ const getOccurrenceBadgeClass = (occurrence?: "required" | "prohibited" | "optio
     default:
       return "bg-green-100 text-green-700";
   }
-};
-
-/**
- * Format property requirement for human readable view
- */
-const formatPropertyHuman = (prop: PropertyRequirement): string => {
-  let text = `${prop.psetName}.${prop.propertyName}`;
-  if (prop.dataType) {
-    text += ` (${prop.dataType})`;
-  }
-  if (prop.value) {
-    text += ` = "${prop.value}"`;
-  }
-  return text;
 };
 
 /**
@@ -107,17 +79,6 @@ const formatPropertyIDS = (prop: PropertyRequirement): string => {
 };
 
 /**
- * Format attribute requirement for human readable view
- */
-const formatAttributeHuman = (attr: AttributeRequirement): string => {
-  let text = attr.attribute;
-  if (attr.value) {
-    text += ` = "${attr.value}"`;
-  }
-  return text;
-};
-
-/**
  * Format attribute requirement for IDS schema view
  */
 const formatAttributeIDS = (attr: AttributeRequirement): string => {
@@ -132,14 +93,6 @@ const formatAttributeIDS = (attr: AttributeRequirement): string => {
 };
 
 /**
- * Format classification requirement for human readable view
- */
-const formatClassificationHuman = (cls: ClassificationRequirement): string => {
-  let text = `${cls.system}: ${cls.value || cls.identification || cls.name}`;
-  return text;
-};
-
-/**
  * Format classification requirement for IDS schema view
  */
 const formatClassificationIDS = (cls: ClassificationRequirement): string => {
@@ -151,20 +104,6 @@ const formatClassificationIDS = (cls: ClassificationRequirement): string => {
   parts.push(`  <ids:system><ids:simpleValue>${cls.system}</ids:simpleValue></ids:system>`);
   parts.push(`</ids:classification>`);
   return parts.join("\n");
-};
-
-/**
- * Format material requirement for human readable view
- */
-const formatMaterialHuman = (mat: MaterialRequirement): string => {
-  let text = "Materiál";
-  if (mat.category) {
-    text += ` (${mat.category})`;
-  }
-  if (mat.value) {
-    text += ` = "${mat.value}"`;
-  }
-  return text;
 };
 
 /**
@@ -214,15 +153,66 @@ const filterByOccurrence = <T extends { occurrence?: "required" | "prohibited" |
 };
 
 /**
- * Preview component for requirements
+ * Preview component for requirements – lidská řeč = stejný formát jako IDS náhled
  */
 const RequirementsPreview: React.FC<{
   object: ProjectObject;
   phaseId: string;
   occurrenceFilter: OccurrenceFilter;
   viewMode: ViewMode;
-}> = ({ object, phaseId, occurrenceFilter, viewMode }) => {
-  // Filter requirements by phase and occurrence, and filter out invalid/incomplete requirements
+  classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[];
+  phases: import("../../project/types").Phase[];
+}> = ({ object, phaseId, occurrenceFilter, viewMode, classificationSystemEntries, phases }) => {
+  if (viewMode === "human") {
+    const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, phaseId, occurrenceFilter);
+    const hasContent = applicability.length > 0 || requirements.length > 0;
+    if (!hasContent) {
+      return (
+        <div className="text-slate-500 italic text-sm">
+          Žádné požadavky pro tento filtr
+        </div>
+      );
+    }
+    return (
+      <div className="text-sm text-slate-700 space-y-4">
+        {applicability.length > 0 && (
+          <div>
+            <div className="font-semibold text-slate-800 mb-2">
+              Model <span className="text-indigo-600">MUSÍ</span> obsahovat entity, které mají:
+            </div>
+            <ul className="list-disc pl-5 space-y-1">
+              {applicability.map((item, idx) => (
+                <li key={idx} dangerouslySetInnerHTML={{ __html: item.replace(/\*\*([^*]+)\*\*/g, '<strong class="text-slate-900">$1</strong>') }} />
+              ))}
+            </ul>
+          </div>
+        )}
+        {requirements.length > 0 && (
+          <div>
+            <div className="font-semibold text-slate-800 mb-2">
+              A splňovat následující požadavky:
+            </div>
+            <ul className="list-disc pl-5 space-y-1">
+              {requirements.map((item, idx) => (
+                <li
+                  key={idx}
+                  dangerouslySetInnerHTML={{
+                    __html: item
+                      .replace(/\*\*MUSÍ\*\*/g, '<strong class="text-indigo-600">MUSÍ</strong>')
+                      .replace(/\*\*NESMÍ\*\*/g, '<strong class="text-red-600">NESMÍ</strong>')
+                      .replace(/\*\*MŮŽE\*\*/g, '<strong class="text-amber-600">MŮŽE</strong>')
+                      .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-slate-900">$1</strong>')
+                      .replace(/\*([^*]+)\*/g, '<em class="text-slate-500">$1</em>'),
+                  }}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const attributes = filterByOccurrence(
     object.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute),
     occurrenceFilter
@@ -238,7 +228,6 @@ const RequirementsPreview: React.FC<{
     object.requirements.materials.filter((r) => requirementAppliesToPhase(r, phaseId)),
     occurrenceFilter
   );
-
   const hasAny = attributes.length > 0 || properties.length > 0 || classifications.length > 0 || materials.length > 0;
 
   if (!hasAny) {
@@ -259,18 +248,13 @@ const RequirementsPreview: React.FC<{
               <span className={`text-[10px] px-1.5 py-0.5 rounded ${getOccurrenceBadgeClass(attr.occurrence)}`}>
                 {getOccurrenceLabel(attr.occurrence)}
               </span>
-              {viewMode === "human" ? (
-                <span className="text-xs text-slate-700">{formatAttributeHuman(attr)}</span>
-              ) : (
-                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto">
-                  {formatAttributeIDS(attr)}
-                </pre>
-              )}
+              <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto">
+                {formatAttributeIDS(attr)}
+              </pre>
             </div>
           ))}
         </div>
       )}
-
       {properties.length > 0 && (
         <div>
           <div className="text-xs font-medium text-slate-600 mb-1">Vlastnosti ({properties.length})</div>
@@ -279,38 +263,28 @@ const RequirementsPreview: React.FC<{
               <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${getOccurrenceBadgeClass(prop.occurrence)}`}>
                 {getOccurrenceLabel(prop.occurrence)}
               </span>
-              {viewMode === "human" ? (
-                <span className="text-xs text-slate-700">{formatPropertyHuman(prop)}</span>
-              ) : (
-                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
-                  {formatPropertyIDS(prop)}
-                </pre>
-              )}
+              <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
+                {formatPropertyIDS(prop)}
+              </pre>
             </div>
           ))}
         </div>
       )}
-
       {classifications.length > 0 && (
         <div>
           <div className="text-xs font-medium text-slate-600 mb-1">Klasifikace ({classifications.length})</div>
           {classifications.map((cls) => (
             <div key={cls.id} className="flex items-start gap-2 mb-1">
-              <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 bg-blue-100 text-blue-700`}>
+              <span className="text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 bg-blue-100 text-blue-700">
                 Klasifikace
               </span>
-              {viewMode === "human" ? (
-                <span className="text-xs text-slate-700">{formatClassificationHuman(cls)}</span>
-              ) : (
-                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
-                  {formatClassificationIDS(cls)}
-                </pre>
-              )}
+              <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
+                {formatClassificationIDS(cls)}
+              </pre>
             </div>
           ))}
         </div>
       )}
-
       {materials.length > 0 && (
         <div>
           <div className="text-xs font-medium text-slate-600 mb-1">Materiály ({materials.length})</div>
@@ -319,13 +293,9 @@ const RequirementsPreview: React.FC<{
               <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${getOccurrenceBadgeClass(mat.occurrence)}`}>
                 {getOccurrenceLabel(mat.occurrence)}
               </span>
-              {viewMode === "human" ? (
-                <span className="text-xs text-slate-700">{formatMaterialHuman(mat)}</span>
-              ) : (
-                <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
-                  {formatMaterialIDS(mat)}
-                </pre>
-              )}
+              <pre className="text-[10px] text-slate-600 bg-slate-100 rounded px-2 py-1 overflow-x-auto flex-1">
+                {formatMaterialIDS(mat)}
+              </pre>
             </div>
           ))}
         </div>
@@ -334,123 +304,25 @@ const RequirementsPreview: React.FC<{
   );
 };
 
-/**
- * Tree item component for object selection
- */
-const ObjectTreeItem: React.FC<{
-  node: ClassificationNode;
-  project: Project;
-  selectedObjects: Set<string>;
-  objectPhases: Map<string, Set<string>>;
-  onToggleObject: (code: string) => void;
-  onTogglePhase: (objectCode: string, phaseId: string) => void;
-  phases: Phase[];
-}> = ({ node, project, selectedObjects, objectPhases, onToggleObject, onTogglePhase, phases }) => {
-  const [expanded, setExpanded] = useState(node.level <= 2);
-  const isLeaf = node.children.length === 0;
-  const hasObject = isLeaf && project.objects[node.code];
-  const isSelected = selectedObjects.has(node.code);
-  const selectedPhases = objectPhases.get(node.code) || new Set<string>();
-
-  // Check if this branch has any selected items
-  const hasSomeSelected = useMemo(() => {
-    if (isLeaf) return isSelected;
-    const checkChildren = (n: ClassificationNode): boolean => {
-      if (n.children.length === 0) return selectedObjects.has(n.code);
-      return n.children.some(checkChildren);
-    };
-    return node.children.some(checkChildren);
-  }, [isLeaf, isSelected, node.children, selectedObjects]);
-
-  return (
-    <div className="border-l border-slate-200 pl-3">
-      <div className="flex items-start gap-2 py-1">
-        {!isLeaf && (
-          <button
-            className="flex h-5 w-5 items-center justify-center rounded text-xs text-slate-500 hover:bg-slate-200 hover:text-slate-800 flex-shrink-0 mt-0.5"
-            onClick={() => setExpanded((v) => !v)}
-          >
-            {expanded ? "−" : "+"}
-          </button>
-        )}
-        {isLeaf && <span className="w-5 flex-shrink-0" />}
-        
-        <div className="flex-1 min-w-0">
-          <div className={`flex items-center gap-2 ${hasSomeSelected ? "text-indigo-700" : "text-slate-800"}`}>
-            {isLeaf && hasObject && (
-              <input
-                type="checkbox"
-                checked={isSelected}
-                onChange={() => onToggleObject(node.code)}
-                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-              />
-            )}
-            <div className="flex flex-col min-w-0">
-              <span className={`text-sm truncate ${isLeaf ? "font-semibold" : "font-medium"}`}>
-                {node.description || node.code}
-              </span>
-              <span className="text-[11px] text-slate-500">{node.code}</span>
-            </div>
-          </div>
-          
-          {/* Phase selection for selected objects */}
-          {isLeaf && isSelected && (
-            <div className="mt-2 ml-6 flex flex-wrap gap-2">
-              {phases.map((phase) => (
-                <label
-                  key={phase.id}
-                  className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs cursor-pointer ${
-                    selectedPhases.has(phase.id)
-                      ? "bg-indigo-100 text-indigo-700"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedPhases.has(phase.id)}
-                    onChange={() => onTogglePhase(node.code, phase.id)}
-                    className="h-3 w-3 rounded border-slate-300 text-indigo-600"
-                  />
-                  {phase.code}
-                </label>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-      
-      {expanded && node.children.map((child) => (
-        <ObjectTreeItem
-          key={child.code}
-          node={child}
-          project={project}
-          selectedObjects={selectedObjects}
-          objectPhases={objectPhases}
-          onToggleObject={onToggleObject}
-          onTogglePhase={onTogglePhase}
-          phases={phases}
-        />
-      ))}
-    </div>
-  );
-};
-
 export const IDSExportDialog: React.FC<Props> = ({
   project,
-  classification,
   isOpen,
   onClose,
+  onUpdateProject,
 }) => {
-  const [mode, setMode] = useState<ExportMode>("by-phase");
   const [selectedPhaseId, setSelectedPhaseId] = useState<string>("");
   const [occurrenceFilter, setOccurrenceFilter] = useState<OccurrenceFilter>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("human");
   const [selectedObjects, setSelectedObjects] = useState<Set<string>>(new Set());
-  const [objectPhases, setObjectPhases] = useState<Map<string, Set<string>>>(new Map());
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string>("");
   const [search, setSearch] = useState("");
   const [expandedObjects, setExpandedObjects] = useState<Set<string>>(new Set());
+  const [metadataExpanded, setMetadataExpanded] = useState(false);
+  const [idsMetadata, setIdsMetadata] = useState<Partial<IdsMetadata>>({});
+
+  const isAuthorValid = (v: string) => (v.trim().length > 0 && /@[^@]*\.[^@]+/.test(v.trim()));
+  const effectiveAuthor = idsMetadata.author ?? project.author ?? "";
 
   // Initialize with first phase
   useEffect(() => {
@@ -459,101 +331,61 @@ export const IDSExportDialog: React.FC<Props> = ({
     }
   }, [isOpen, project.phases, selectedPhaseId]);
 
-  // Reset state when dialog opens
+  // Reset state when dialog opens, sync metadata from project (auto-fill like single export)
   useEffect(() => {
     if (isOpen) {
       setError("");
       setIsExporting(false);
+      const base = { ...project.idsMetadata };
+      if (project.name && base.title === undefined) base.title = project.name;
+      if (project.author && base.author === undefined) base.author = project.author;
+      if (project.description && base.description === undefined) base.description = project.description;
+      const phase = selectedPhaseId ? project.phases.find((p) => p.id === selectedPhaseId) : project.phases[0];
+      if (phase?.code && base.milestone === undefined) base.milestone = phase.code;
+      setIdsMetadata(base);
     }
-  }, [isOpen]);
+  }, [isOpen, project.idsMetadata, project.name, project.author, project.description, project.phases, selectedPhaseId]);
 
-  // Get objects with requirements for selected phase (for preview)
+  // Get objects with requirements for selected phase
   const objectsForPhase = useMemo(() => {
     if (!selectedPhaseId) return [];
     return getObjectsWithRequirementsForPhase(project, selectedPhaseId);
   }, [project, selectedPhaseId]);
 
-  // Filter classification nodes by search
-  const filteredNodes = useMemo(() => {
-    if (!classification) return [];
-    if (!search.trim()) return classification.nodes;
-    
-    const filterNode = (node: ClassificationNode): ClassificationNode | null => {
-      const matchesSearch = 
-        node.code.toLowerCase().includes(search.toLowerCase()) ||
-        node.description.toLowerCase().includes(search.toLowerCase());
-      
-      const filteredChildren = node.children
-        .map(filterNode)
-        .filter((n): n is ClassificationNode => n !== null);
-      
-      if (matchesSearch || filteredChildren.length > 0) {
-        return { ...node, children: filteredChildren };
-      }
-      return null;
-    };
-    
-    return classification.nodes
-      .map(filterNode)
-      .filter((n): n is ClassificationNode => n !== null);
-  }, [classification, search]);
+  // Filter objects by search (code or description)
+  const filteredObjects = useMemo(() => {
+    if (!search.trim()) return objectsForPhase;
+    const q = search.toLowerCase();
+    return objectsForPhase.filter(
+      (obj) =>
+        obj.code.toLowerCase().includes(q) ||
+        (obj.description || "").toLowerCase().includes(q)
+    );
+  }, [objectsForPhase, search]);
+
+  // Auto-select all objects when phase changes
+  useEffect(() => {
+    if (isOpen && selectedPhaseId) {
+      const objs = getObjectsWithRequirementsForPhase(project, selectedPhaseId);
+      setSelectedObjects(new Set(objs.map((o) => o.code)));
+    }
+  }, [isOpen, selectedPhaseId, project]);
 
   const handleToggleObject = (code: string) => {
     setSelectedObjects((prev) => {
       const next = new Set(prev);
-      if (next.has(code)) {
-        next.delete(code);
-        // Also remove phase selection
-        setObjectPhases((prevPhases) => {
-          const nextPhases = new Map(prevPhases);
-          nextPhases.delete(code);
-          return nextPhases;
-        });
-      } else {
-        next.add(code);
-        // Initialize with all phases selected
-        setObjectPhases((prevPhases) => {
-          const nextPhases = new Map(prevPhases);
-          nextPhases.set(code, new Set(project.phases.map((p) => p.id)));
-          return nextPhases;
-        });
-      }
-      return next;
-    });
-  };
-
-  const handleTogglePhase = (objectCode: string, phaseId: string) => {
-    setObjectPhases((prev) => {
-      const next = new Map(prev);
-      const phases = new Set(next.get(objectCode) || []);
-      if (phases.has(phaseId)) {
-        phases.delete(phaseId);
-      } else {
-        phases.add(phaseId);
-      }
-      next.set(objectCode, phases);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
       return next;
     });
   };
 
   const handleSelectAll = () => {
-    if (!classification) return;
-    const leaves = collectLeaves(classification.nodes);
-    const objectCodes = leaves
-      .filter((leaf) => project.objects[leaf.code])
-      .map((leaf) => leaf.code);
-    
-    setSelectedObjects(new Set(objectCodes));
-    const newPhases = new Map<string, Set<string>>();
-    objectCodes.forEach((code) => {
-      newPhases.set(code, new Set(project.phases.map((p) => p.id)));
-    });
-    setObjectPhases(newPhases);
+    setSelectedObjects(new Set(filteredObjects.map((o) => o.code)));
   };
 
   const handleDeselectAll = () => {
     setSelectedObjects(new Set());
-    setObjectPhases(new Map());
   };
 
   const toggleObjectExpand = (code: string) => {
@@ -568,103 +400,41 @@ export const IDSExportDialog: React.FC<Props> = ({
     });
   };
 
-  const handleExportByPhase = async () => {
-    if (!selectedPhaseId) return;
+  const sanitize = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
+  const occurrenceLabel = occurrenceFilter === "all" ? "Vše" : occurrenceFilter === "required" ? "Požadované" : occurrenceFilter === "prohibited" ? "Zakázané" : "Možné";
+
+  const handleExport = async () => {
+    if (!selectedPhaseId || selectedObjects.size === 0) {
+      setError("Vyberte fázi a alespoň jeden objekt");
+      return;
+    }
     setIsExporting(true);
     setError("");
 
     try {
+      const mergedMetadata: Partial<IdsMetadata> = {
+        ...idsMetadata,
+        milestone: idsMetadata.milestone ?? project.phases.find((p) => p.id === selectedPhaseId)?.code,
+      };
+      if (onUpdateProject) {
+        onUpdateProject({ idsMetadata: mergedMetadata as IdsMetadata });
+      }
       const ids = generateIDS({
         project,
         phaseId: selectedPhaseId,
+        objectCodes: Array.from(selectedObjects),
+        occurrenceFilter,
+        idsMetadata: mergedMetadata,
       });
-      
+
       const phase = project.phases.find((p) => p.id === selectedPhaseId);
-      const safeName = (project.name || "project")
-        .replace(/[<>:"/\\|?*]/g, "_")
-        .replace(/\s+/g, "_");
-      const filename = `${safeName}_${phase?.code || selectedPhaseId}.ids`;
-      
+      const filename = [
+        sanitize(project.name || "Projekt"),
+        sanitize(phase?.code ?? selectedPhaseId),
+        occurrenceLabel,
+      ].filter(Boolean).join("_") + ".ids";
+
       exportIDSFile(ids, filename);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Export se nezdařil");
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const handleExportByObjects = async () => {
-    if (selectedObjects.size === 0) {
-      setError("Vyberte alespoň jeden objekt");
-      return;
-    }
-
-    setIsExporting(true);
-    setError("");
-
-    try {
-      // Group by phase - create one IDS file per phase
-      const phaseFiles: Array<{ phaseId: string; objectCodes: string[] }> = [];
-      const phaseObjectMap = new Map<string, string[]>();
-
-      selectedObjects.forEach((objectCode) => {
-        const phases = objectPhases.get(objectCode) || new Set<string>();
-        phases.forEach((phaseId) => {
-          const objects = phaseObjectMap.get(phaseId) || [];
-          objects.push(objectCode);
-          phaseObjectMap.set(phaseId, objects);
-        });
-      });
-
-      phaseObjectMap.forEach((objectCodes, phaseId) => {
-        phaseFiles.push({ phaseId, objectCodes });
-      });
-
-      if (phaseFiles.length === 0) {
-        setError("Vyberte alespoň jednu fázi pro export");
-        return;
-      }
-
-      const files: Array<{ filename: string; content: string }> = [];
-      
-      for (const { phaseId, objectCodes } of phaseFiles) {
-        try {
-          const ids = generateIDS({
-            project,
-            phaseId,
-            objectCodes,
-          });
-          
-          const phase = project.phases.find((p) => p.id === phaseId);
-          const safeName = (project.name || "project")
-            .replace(/[<>:"/\\|?*]/g, "_")
-            .replace(/\s+/g, "_");
-          const filename = `${safeName}_${phase?.code || phaseId}.ids`;
-          
-          files.push({ filename, content: ids });
-        } catch (err) {
-          // Skip phases with no requirements
-          console.warn(`Skipping phase ${phaseId}:`, err);
-        }
-      }
-
-      if (files.length === 0) {
-        setError("Žádné požadavky k exportu pro vybrané kombinace");
-        return;
-      }
-
-      if (files.length === 1) {
-        // Single file - export directly
-        exportIDSFile(files[0].content, files[0].filename);
-      } else {
-        // Multiple files - export as ZIP
-        const safeName = (project.name || "project")
-          .replace(/[<>:"/\\|?*]/g, "_")
-          .replace(/\s+/g, "_");
-        await exportIDSZip(files, `${safeName}_IDS.zip`);
-      }
-      
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Export se nezdařil");
@@ -688,166 +458,182 @@ export const IDSExportDialog: React.FC<Props> = ({
         <div className="flex-shrink-0 border-b border-slate-200 px-6 py-4">
           <h2 className="text-lg font-semibold text-slate-800">Export IDS</h2>
           <p className="text-sm text-slate-500">
-            Vyberte způsob exportu informačních požadavků do formátu IDS
+            Vyberte fázi, výskyt a objekty. Metadata se doplní z údajů projektu.
           </p>
         </div>
 
-        {/* Mode tabs */}
-        <div className="flex-shrink-0 border-b border-slate-200 px-6">
-          <div className="flex gap-4">
-            <button
-              className={`border-b-2 px-1 py-3 text-sm font-medium ${
-                mode === "by-phase"
-                  ? "border-indigo-600 text-indigo-600"
-                  : "border-transparent text-slate-500 hover:text-slate-700"
-              }`}
-              onClick={() => setMode("by-phase")}
-            >
-              Export dle fáze
-            </button>
-            <button
-              className={`border-b-2 px-1 py-3 text-sm font-medium ${
-                mode === "by-objects"
-                  ? "border-indigo-600 text-indigo-600"
-                  : "border-transparent text-slate-500 hover:text-slate-700"
-              }`}
-              onClick={() => setMode("by-objects")}
-            >
-              Export dle objektů
-            </button>
-          </div>
+        {/* Metadata souboru IDS – auto-filled from project */}
+        <div className="flex-shrink-0 border-b border-slate-200 px-6 py-2">
+          <button
+            className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-indigo-600"
+            onClick={() => setMetadataExpanded((v) => !v)}
+          >
+            <span className={metadataExpanded ? "rotate-90" : ""}>▶</span>
+            Metadata souboru IDS
+          </button>
+          {metadataExpanded && (
+            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Název (title)</label>
+                <input
+                  type="text"
+                  value={idsMetadata.title ?? ""}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, title: e.target.value || undefined }))}
+                  placeholder={project.name}
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Copyright</label>
+                <input
+                  type="text"
+                  value={idsMetadata.copyright ?? ""}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, copyright: e.target.value || undefined }))}
+                  placeholder="Vlastník autorských práv"
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Verze (version)</label>
+                <input
+                  type="text"
+                  value={idsMetadata.version ?? ""}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, version: e.target.value || undefined }))}
+                  placeholder="1.0"
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Autor (author, e-mail) <span className="text-red-500">*</span></label>
+                <input
+                  type="email"
+                  value={idsMetadata.author ?? project.author ?? ""}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, author: e.target.value || undefined }))}
+                  placeholder="email@example.com"
+                  className={`w-full rounded border px-2 py-1 text-sm ${effectiveAuthor && !isAuthorValid(effectiveAuthor) ? "border-red-400" : "border-slate-300"}`}
+                />
+                {effectiveAuthor && !isAuthorValid(effectiveAuthor) && (
+                  <p className="text-[10px] text-red-600 mt-0.5">Autor musí být e-mail (např. jmeno@domena.cz)</p>
+                )}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Datum (date)</label>
+                <input
+                  type="date"
+                  value={idsMetadata.date ?? new Date().toISOString().split("T")[0]}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, date: e.target.value || undefined }))}
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Účel (purpose)</label>
+                <input
+                  type="text"
+                  value={idsMetadata.purpose ?? ""}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, purpose: e.target.value || undefined }))}
+                  placeholder="quantity take off, clash detection, coordination..."
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Popis (description)</label>
+                <textarea
+                  value={idsMetadata.description ?? project.description ?? ""}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, description: e.target.value || undefined }))}
+                  placeholder="Pro koho je IDS určen, proč byl vytvořen, na jaké projekty se vztahuje"
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm min-h-[60px]"
+                  rows={2}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-0.5">Milník (milestone)</label>
+                <input
+                  type="text"
+                  value={idsMetadata.milestone ?? (project.phases.find((p) => p.id === selectedPhaseId) ?? project.phases[0])?.code ?? ""}
+                  onChange={(e) => setIdsMetadata((m) => ({ ...m, milestone: e.target.value || undefined }))}
+                  placeholder={(project.phases.find((p) => p.id === selectedPhaseId) ?? project.phases[0])?.code ?? "Schematic Design, Construction..."}
+                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                  title="Automaticky z vybrané fáze"
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">
+                Metadata jednotlivých specifikací (name, identifier, description, instructions) doplňte v kartě „IDS náhled“ → „Metadata specifikace“ u každého objektu.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Content */}
         <div className="flex-1 overflow-hidden px-6 py-4">
-          {mode === "by-phase" && (
-            <div className="flex h-full flex-col gap-4">
-              {/* Phase selector and filters row */}
-              <div className="flex items-end gap-4 flex-wrap">
-                <div className="flex-1 min-w-[200px]">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Fáze
-                  </label>
-                  <select
-                    value={selectedPhaseId}
-                    onChange={(e) => setSelectedPhaseId(e.target.value)}
-                    className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  >
-                    {project.phases.map((phase) => (
-                      <option key={phase.id} value={phase.id}>
-                        {phase.code} - {phase.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+          <div className="flex h-full flex-col gap-4">
+            {/* Phase, Occurrence, View mode */}
+            <div className="flex items-end gap-4 flex-wrap">
+              <div className="flex-1 min-w-[200px]">
+                <label className="mb-1 block text-sm font-medium text-slate-700">Fáze</label>
+                <select
+                  value={selectedPhaseId}
+                  onChange={(e) => setSelectedPhaseId(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                >
+                  {project.phases.map((phase) => (
+                    <option key={phase.id} value={phase.id}>
+                      {phase.code} - {phase.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Výskyt
-                  </label>
-                  <select
-                    value={occurrenceFilter}
-                    onChange={(e) => setOccurrenceFilter(e.target.value as OccurrenceFilter)}
-                    className="rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  >
-                    <option value="all">Vše</option>
-                    <option value="required">Požadované</option>
-                    <option value="prohibited">Zakázané</option>
-                    <option value="optional">Možné</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">
-                    Zobrazení
-                  </label>
-                  <div className="flex rounded border border-slate-300 overflow-hidden">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Výskyt</label>
+                <div className="flex gap-2 flex-wrap">
+                  {(["all", "required", "prohibited", "optional"] as const).map((occ) => (
                     <button
-                      className={`px-3 py-2 text-sm ${
-                        viewMode === "human"
-                          ? "bg-indigo-600 text-white"
-                          : "bg-white text-slate-600 hover:bg-slate-50"
+                      key={occ}
+                      type="button"
+                      className={`px-3 py-1.5 text-xs font-medium rounded ${
+                        occurrenceFilter === occ
+                          ? occ === "all"
+                            ? "bg-slate-700 text-white"
+                            : occ === "required"
+                              ? "bg-green-600 text-white"
+                              : occ === "prohibited"
+                                ? "bg-red-600 text-white"
+                                : "bg-amber-600 text-white"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                       }`}
-                      onClick={() => setViewMode("human")}
+                      onClick={() => setOccurrenceFilter(occ)}
                     >
-                      Lidská řeč
+                      {occ === "all" ? "Vše" : occ === "required" ? "Požadované" : occ === "prohibited" ? "Zakázané" : "Možné"}
                     </button>
-                    <button
-                      className={`px-3 py-2 text-sm border-l border-slate-300 ${
-                        viewMode === "ids"
-                          ? "bg-indigo-600 text-white"
-                          : "bg-white text-slate-600 hover:bg-slate-50"
-                      }`}
-                      onClick={() => setViewMode("ids")}
-                    >
-                      IDS schéma
-                    </button>
-                  </div>
+                  ))}
                 </div>
               </div>
 
-              <div className="text-xs text-slate-500 bg-slate-100 rounded px-3 py-2">
-                Filtry jsou pouze pro náhled. Export vždy obsahuje všechny požadavky ve formátu IDS schéma.
-              </div>
-
-              {/* Objects preview with requirements */}
-              {selectedPhaseId && (
-                <div className="flex-1 overflow-hidden">
-                  <div className="mb-2 text-sm font-medium text-slate-700">
-                    Objekty s požadavky ({objectsForPhase.length})
-                  </div>
-                  <div className="h-full overflow-auto rounded border border-slate-200 bg-slate-50">
-                    {objectsForPhase.length === 0 ? (
-                      <div className="p-3 text-sm text-slate-500">
-                        Žádné objekty nemají požadavky pro tuto fázi
-                      </div>
-                    ) : (
-                      <div className="divide-y divide-slate-200">
-                        {objectsForPhase.map((obj) => (
-                          <div key={obj.code} className="bg-white">
-                            <button
-                              className="w-full px-3 py-2 flex items-center justify-between hover:bg-slate-50 text-left"
-                              onClick={() => toggleObjectExpand(obj.code)}
-                            >
-                              <div>
-                                <span className="font-medium text-sm text-slate-800">{obj.code}</span>
-                                <span className="text-sm text-slate-500 ml-2">{obj.description}</span>
-                                {obj.ifcEntity && (
-                                  <span className="ml-2 text-[10px] uppercase bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
-                                    {obj.ifcEntity}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-slate-400 text-xs">
-                                {expandedObjects.has(obj.code) ? "▼" : "▶"}
-                              </span>
-                            </button>
-                            {expandedObjects.has(obj.code) && (
-                              <div className="px-4 py-3 bg-slate-50 border-t border-slate-100">
-                                <RequirementsPreview
-                                  object={obj}
-                                  phaseId={selectedPhaseId}
-                                  occurrenceFilter={occurrenceFilter}
-                                  viewMode={viewMode}
-                                />
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Zobrazení</label>
+                <div className="flex rounded border border-slate-300 overflow-hidden">
+                  <button
+                    className={`px-3 py-2 text-sm ${viewMode === "human" ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                    onClick={() => setViewMode("human")}
+                  >
+                    Lidská řeč
+                  </button>
+                  <button
+                    className={`px-3 py-2 text-sm border-l border-slate-300 ${viewMode === "ids" ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                    onClick={() => setViewMode("ids")}
+                  >
+                    IDS schéma
+                  </button>
                 </div>
-              )}
+              </div>
             </div>
-          )}
 
-          {mode === "by-objects" && (
-            <div className="flex h-full flex-col gap-3">
-              <div className="flex items-center gap-2">
+            {/* Object selection with search */}
+            <div>
+              <div className="flex items-center gap-2 mb-2">
                 <input
                   type="text"
-                  placeholder="Hledat objekt..."
+                  placeholder="Filtrovat dle názvu..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
@@ -865,37 +651,72 @@ export const IDSExportDialog: React.FC<Props> = ({
                   Zrušit výběr
                 </button>
               </div>
-
-              <div className="text-xs text-slate-500">
-                Vyberte objekty a pro každý zvolte fáze k exportu. Soubory budou seskupeny dle fází.
-              </div>
-
-              <div className="flex-1 overflow-auto rounded border border-slate-200 bg-slate-50 p-2">
-                {!classification ? (
-                  <div className="text-sm text-slate-500">Není načtena klasifikace</div>
-                ) : filteredNodes.length === 0 ? (
-                  <div className="text-sm text-slate-500">Žádné výsledky</div>
-                ) : (
-                  filteredNodes.map((node) => (
-                    <ObjectTreeItem
-                      key={node.code}
-                      node={node}
-                      project={project}
-                      selectedObjects={selectedObjects}
-                      objectPhases={objectPhases}
-                      onToggleObject={handleToggleObject}
-                      onTogglePhase={handleTogglePhase}
-                      phases={project.phases}
-                    />
-                  ))
-                )}
-              </div>
-
-              <div className="text-sm text-slate-600">
-                Vybráno: {selectedObjects.size} objektů
+              <div className="text-xs text-slate-500 mb-2">
+                Vybráno: {selectedObjects.size} z {filteredObjects.length} objektů
               </div>
             </div>
-          )}
+
+            {/* Objects list with checkboxes and preview */}
+            {selectedPhaseId && (
+              <div className="flex-1 overflow-hidden">
+                <div className="h-full overflow-auto rounded border border-slate-200 bg-slate-50">
+                  {filteredObjects.length === 0 ? (
+                    <div className="p-3 text-sm text-slate-500">
+                      {objectsForPhase.length === 0
+                        ? "Žádné objekty nemají požadavky pro tuto fázi"
+                        : "Žádné výsledky pro zadaný filtr"}
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-slate-200">
+                      {filteredObjects.map((obj) => (
+                        <div key={obj.code} className="bg-white">
+                          <div className="flex items-start gap-2 px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selectedObjects.has(obj.code)}
+                              onChange={() => handleToggleObject(obj.code)}
+                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 mt-1"
+                            />
+                            <button
+                              className="flex-1 flex items-center justify-between hover:bg-slate-50 text-left min-w-0"
+                              onClick={() => toggleObjectExpand(obj.code)}
+                            >
+                              <div className="min-w-0">
+                                <span className="font-medium text-sm text-slate-800">{(obj.code || "").replace(/::/g, ".")}</span>
+                                {obj.description && (
+                                  <span className="text-sm text-slate-500 ml-2 truncate">{obj.description}</span>
+                                )}
+                                {obj.ifcEntity && (
+                                  <span className="ml-2 text-[10px] uppercase bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">
+                                    {obj.ifcEntity}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-slate-400 text-xs flex-shrink-0 ml-2">
+                                {expandedObjects.has(obj.code) ? "▼" : "▶"}
+                              </span>
+                            </button>
+                          </div>
+                          {expandedObjects.has(obj.code) && (
+                            <div className="px-4 py-3 bg-slate-50 border-t border-slate-100 pl-9">
+                              <RequirementsPreview
+                                object={obj}
+                                phaseId={selectedPhaseId}
+                                occurrenceFilter={occurrenceFilter}
+                                viewMode={viewMode}
+                                classificationSystemEntries={project.classificationSystemEntries ?? []}
+                                phases={project.phases}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Error */}
@@ -916,11 +737,12 @@ export const IDSExportDialog: React.FC<Props> = ({
           </button>
           <button
             className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
-            onClick={mode === "by-phase" ? handleExportByPhase : handleExportByObjects}
+            onClick={handleExport}
             disabled={
               isExporting ||
-              (mode === "by-phase" && !selectedPhaseId) ||
-              (mode === "by-objects" && selectedObjects.size === 0)
+              !isAuthorValid(effectiveAuthor) ||
+              !selectedPhaseId ||
+              selectedObjects.size === 0
             }
           >
             {isExporting ? "Exportuji..." : "Exportovat IDS"}

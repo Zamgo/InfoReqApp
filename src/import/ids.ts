@@ -790,6 +790,18 @@ export function mergeIdsIntoProject(
       ? (predefinedType ? `${entityName} – ${predefinedType}` : entityName).trim()
       : "";
     const description = fromApplicability || spec?.name || code;
+    const specMeta = (spec?.name || spec?.identifier || spec?.description || spec?.instructions)
+      ? {
+          name: spec?.name,
+          ifcVersion: (spec?.ifcVersion as "IFC2X3" | "IFC4" | "IFC4X3_ADD2") ?? undefined,
+          identifier: spec?.identifier,
+          description: spec?.description,
+          instructions: spec?.instructions,
+        }
+      : undefined;
+    const idsSpecMetadata = specMeta
+      ? { [`all|all`]: specMeta }
+      : undefined;
     objects[code] = {
       code,
       description,
@@ -799,15 +811,30 @@ export function mergeIdsIntoProject(
         : { mode: "NONE" },
       ifcEntityPhases: phaseIds,
       predefinedTypePhases: phaseIds,
+      idsSpecMetadata,
       requirements,
     };
   }
 
   const now = new Date().toISOString();
+  const info = parsed.info;
+  const importedIdsMetadata = (info.title || info.copyright || info.version || info.description || info.author || info.date || info.purpose || info.milestone)
+    ? {
+        title: info.title,
+        copyright: info.copyright,
+        version: info.version,
+        description: info.description,
+        author: info.author,
+        date: info.date,
+        purpose: info.purpose,
+        milestone: info.milestone,
+      }
+    : undefined;
   let project: Project;
   if (existingProject) {
     project = ensureProjectPhases({
       ...existingProject,
+      idsMetadata: importedIdsMetadata ?? existingProject.idsMetadata,
       classification: classificationData,
       classificationSystemEntries: updatedEntriesWithPrimary,
       primaryClassificationId: primaryId,
@@ -820,6 +847,7 @@ export function mergeIdsIntoProject(
       name: parsed.info.title || "Projekt z IDS",
       author: parsed.info.author ?? "",
       description: parsed.info.description ?? undefined,
+      idsMetadata: importedIdsMetadata,
       createdAt: now,
       updatedAt: now,
       ifcSchemaVersion: "IFC4X3",

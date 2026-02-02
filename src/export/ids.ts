@@ -4,8 +4,11 @@ import type {
   AttributeRequirement,
   PropertyRequirement,
   ClassificationRequirement,
+  ClassificationSystemEntry,
   MaterialRequirement,
   RelationRequirement,
+  IdsMetadata,
+  IdsSpecMetadata,
 } from "../project/types";
 
 const IDS_NAMESPACE = "http://standards.buildingsmart.org/IDS";
@@ -13,11 +16,51 @@ const XS_NAMESPACE = "http://www.w3.org/2001/XMLSchema";
 const XSI_NAMESPACE = "http://www.w3.org/2001/XMLSchema-instance";
 const IDS_SCHEMA_LOCATION = "http://standards.buildingsmart.org/IDS http://standards.buildingsmart.org/IDS/1.0/ids.xsd";
 
+type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
+
+/**
+ * Get metadata for a spec by phase+occurrence. Supports legacy single-object format.
+ */
+function getIdsSpecMetadataForPhaseOccurrence(
+  obj: ProjectObject,
+  phaseId: string,
+  occurrence: OccurrenceFilter
+): IdsSpecMetadata | undefined {
+  const map = obj.idsSpecMetadata;
+  if (!map || typeof map !== "object") return undefined;
+  const keys = Object.keys(map);
+  if (keys.length === 0) return undefined;
+  const isLegacy = !keys.some((k) => k.includes("|"));
+  if (isLegacy) return map as unknown as IdsSpecMetadata;
+  const key = `${phaseId}|${occurrence}`;
+  const direct = (map as Record<string, IdsSpecMetadata>)[key];
+  if (direct) return direct;
+  const fallbackOrder = [
+    `${phaseId}|required`,
+    `${phaseId}|all`,
+    `${phaseId}|optional`,
+    `${phaseId}|prohibited`,
+    `all|required`,
+    `all|all`,
+    ...keys.filter((k) => k.startsWith(`${phaseId}|`)),
+    ...keys.filter((k) => k.startsWith("all|")),
+  ];
+  for (const k of fallbackOrder) {
+    const m = (map as Record<string, IdsSpecMetadata>)[k];
+    if (m) return m;
+  }
+  return undefined;
+}
+
 interface IDSExportOptions {
   project: Project;
   phaseId: string;
   /** If provided, only export these object codes */
   objectCodes?: string[];
+  /** Filter requirements by occurrence. Default "all" */
+  occurrenceFilter?: OccurrenceFilter;
+  /** Override metadata for the IDS file (ids:info). Falls back to project.idsMetadata */
+  idsMetadata?: Partial<IdsMetadata>;
 }
 
 /**
@@ -288,27 +331,62 @@ const isValidProperty = (prop: PropertyRequirement): boolean => {
 };
 
 /**
+ * Filter requirements by occurrence
+ */
+const filterByOccurrence = <T extends { occurrence?: "required" | "prohibited" | "optional" }>(
+  items: T[],
+  filter: OccurrenceFilter
+): T[] => {
+  if (filter === "all") return items;
+  return items.filter((item) => (item.occurrence || "required") === filter);
+};
+
+/**
+ * Exclude IFC classification system – IFC třídění je už v entitě a predefined type, neexportovat jako klasifikaci
+ */
+const excludeIfcClassifications = (
+  items: ClassificationRequirement[],
+  classificationSystemEntries: ClassificationSystemEntry[]
+): ClassificationRequirement[] => {
+  return items.filter((cls) => {
+    if (!cls.systemEntryId) return true; // Bez systemEntryId ponechat (legacy)
+    const entry = classificationSystemEntries.find((e) => e.id === cls.systemEntryId);
+    return !entry?.isIfcSystem;
+  });
+};
+
+/**
  * Generate a specification element for a single object
  */
-const generateSpecification = (obj: ProjectObject, phaseId: string, phaseName: string): string | null => {
+const generateSpecification = (
+  obj: ProjectObject,
+  phaseId: string,
+  phaseName: string,
+  phaseCode: string,
+  occurrenceFilter: OccurrenceFilter,
+  classificationSystemEntries: ClassificationSystemEntry[]
+): string | null => {
   // Filter requirements for this phase
   const attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute && r.attribute !== "PredefinedType");
   const properties = obj.requirements.properties.filter((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r));
-  const classifications = obj.requirements.classifications.filter((r) => requirementAppliesToPhase(r, phaseId));
+  const classificationsRaw = obj.requirements.classifications.filter((r) => requirementAppliesToPhase(r, phaseId));
+  const classifications = excludeIfcClassifications(classificationsRaw, classificationSystemEntries);
   const relations = obj.requirements.relations.filter((r) => requirementAppliesToPhase(r, phaseId));
   const materials = obj.requirements.materials.filter((r) => requirementAppliesToPhase(r, phaseId));
-  
-  // Split by applicability (isApplicability = true goes to applicability section)
+
+  // Split by applicability first (applicability items are never filtered by occurrence)
   const applicabilityClassifications = classifications.filter((c) => c.isApplicability || c.readOnly);
-  const requirementClassifications = classifications.filter((c) => !c.isApplicability && !c.readOnly);
   const applicabilityAttributes = attributes.filter((a) => a.isApplicability);
-  const requirementAttributes = attributes.filter((a) => !a.isApplicability);
   const applicabilityProperties = properties.filter((p) => p.isApplicability);
-  const requirementProperties = properties.filter((p) => !p.isApplicability);
   const applicabilityRelations = relations.filter((r) => r.isApplicability);
-  const requirementRelations = relations.filter((r) => !r.isApplicability);
   const applicabilityMaterials = materials.filter((m) => m.isApplicability);
-  const requirementMaterials = materials.filter((m) => !m.isApplicability);
+
+  // Filter REQUIREMENT items by occurrence (applicability stays as-is)
+  const requirementClassifications = filterByOccurrence(classifications.filter((c) => !c.isApplicability && !c.readOnly), occurrenceFilter);
+  const requirementAttributes = filterByOccurrence(attributes.filter((a) => !a.isApplicability), occurrenceFilter);
+  const requirementProperties = filterByOccurrence(properties.filter((p) => !p.isApplicability), occurrenceFilter);
+  const requirementRelations = filterByOccurrence(relations.filter((r) => !r.isApplicability), occurrenceFilter);
+  const requirementMaterials = filterByOccurrence(materials.filter((m) => !m.isApplicability), occurrenceFilter);
   
   // If no entity, skip this specification (entity is required for applicability)
   if (!obj.ifcEntity) {
@@ -333,11 +411,27 @@ const generateSpecification = (obj: ProjectObject, phaseId: string, phaseName: s
     return null;
   }
   
-  const specName = `${obj.code} - ${obj.description}`;
-  const specDescription = `Požadavky pro fázi ${phaseName}`;
+  const meta = getIdsSpecMetadataForPhaseOccurrence(obj, phaseId, occurrenceFilter);
+  const sanitizeForSpec = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
+  const occurrenceLabel = occurrenceFilter === "all" ? "Vše" : occurrenceFilter === "required" ? "Požadované" : occurrenceFilter === "prohibited" ? "Zakázané" : "Možné";
+  const derivedSpecName = [
+    sanitizeForSpec((obj.code || obj.description || "").replace(/::/g, ".")),
+    sanitizeForSpec(phaseCode),
+    occurrenceLabel,
+  ].filter(Boolean).join("_");
+  const specName = meta?.name ?? derivedSpecName;
+  const specDescription = meta?.description ?? `Požadavky pro fázi ${phaseName}`;
+  const ifcVersion = "IFC4X3_ADD2";
+  const specAttrs = [
+    `name="${escapeXml(specName)}"`,
+    `ifcVersion="${ifcVersion}"`,
+    `description="${escapeXml(specDescription)}"`,
+    meta?.identifier ? `identifier="${escapeXml(meta.identifier)}"` : "",
+    meta?.instructions ? `instructions="${escapeXml(meta.instructions)}"` : "",
+  ].filter(Boolean).join(" ");
   
   const lines: string[] = [];
-  lines.push(`    <ids:specification name="${escapeXml(specName)}" ifcVersion="IFC4X3_ADD2" description="${escapeXml(specDescription)}">`);
+  lines.push(`    <ids:specification ${specAttrs}>`);
   
   // Applicability section
   lines.push(`      <ids:applicability minOccurs="1" maxOccurs="unbounded">`);
@@ -416,10 +510,23 @@ export const generateIDS = (options: IDSExportOptions): string => {
     objectsToExport = objectsToExport.filter((obj) => objectCodes.includes(obj.code));
   }
   
-  // Generate specifications
-  const specifications = objectsToExport
-    .map((obj) => generateSpecification(obj, phaseId, phase.name))
-    .filter((spec): spec is string => spec !== null);
+  const occurrenceFilter = options.occurrenceFilter ?? "all";
+  const phaseCode = phase.code ?? phaseId;
+
+  // Při exportu "Vše" vytváříme oddělenou specifikaci pro každý typ výskytu (požadované, zakázané, možné)
+  const occurrenceTypes: OccurrenceFilter[] =
+    occurrenceFilter === "all"
+      ? (["required", "prohibited", "optional"] as const)
+      : [occurrenceFilter];
+
+  const classificationSystemEntries = project.classificationSystemEntries ?? [];
+  const specifications: string[] = [];
+  for (const obj of objectsToExport) {
+    for (const occ of occurrenceTypes) {
+      const spec = generateSpecification(obj, phaseId, phase.name, phaseCode, occ, classificationSystemEntries);
+      if (spec) specifications.push(spec);
+    }
+  }
   
   if (specifications.length === 0) {
     throw new Error(`Žádné požadavky pro fázi "${phase.name}"`);
@@ -428,21 +535,30 @@ export const generateIDS = (options: IDSExportOptions): string => {
   // Format date
   const today = new Date().toISOString().split("T")[0];
   
+  // Merge metadata: options override > project.idsMetadata. Bez samovolného doplňování.
+  const fileMeta = options.idsMetadata ?? project.idsMetadata ?? {};
+  const title = fileMeta.title ?? "";
+  const description = fileMeta.description;
+  const author = fileMeta.author ?? project.author;
+  const date = fileMeta.date ?? today;
+  const copyrightVal = fileMeta.copyright;
+  const version = fileMeta.version;
+  const purpose = fileMeta.purpose;
+  const milestone = fileMeta.milestone ?? "";
+  
   // Build IDS document with proper namespace declarations
   const lines: string[] = [];
   lines.push(`<?xml version="1.0" encoding="UTF-8"?>`);
   lines.push(`<ids:ids xmlns:ids="${IDS_NAMESPACE}" xmlns:xs="${XS_NAMESPACE}" xmlns:xsi="${XSI_NAMESPACE}" xsi:schemaLocation="${IDS_SCHEMA_LOCATION}">`);
   lines.push(`  <ids:info>`);
-  lines.push(`    <ids:title>${escapeXml(project.name)} - ${escapeXml(phase.name)}</ids:title>`);
-  if (project.description) {
-    lines.push(`    <ids:description>${escapeXml(project.description)}</ids:description>`);
-  }
-  if (project.author) {
-    lines.push(`    <ids:author>${escapeXml(project.author)}</ids:author>`);
-  }
-  lines.push(`    <ids:date>${today}</ids:date>`);
-  lines.push(`    <ids:purpose>Informační požadavky pro BIM model</ids:purpose>`);
-  lines.push(`    <ids:milestone>${escapeXml(phase.code)}</ids:milestone>`);
+  lines.push(`    <ids:title>${escapeXml(title)}</ids:title>`);
+  if (copyrightVal) lines.push(`    <ids:copyright>${escapeXml(copyrightVal)}</ids:copyright>`);
+  if (version) lines.push(`    <ids:version>${escapeXml(version)}</ids:version>`);
+  if (description) lines.push(`    <ids:description>${escapeXml(description)}</ids:description>`);
+  if (author) lines.push(`    <ids:author>${escapeXml(author)}</ids:author>`);
+  lines.push(`    <ids:date>${escapeXml(date)}</ids:date>`);
+  if (purpose) lines.push(`    <ids:purpose>${escapeXml(purpose)}</ids:purpose>`);
+  lines.push(`    <ids:milestone>${escapeXml(milestone)}</ids:milestone>`);
   lines.push(`  </ids:info>`);
   lines.push(`  <ids:specifications>`);
   

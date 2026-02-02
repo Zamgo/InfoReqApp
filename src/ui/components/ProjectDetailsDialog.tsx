@@ -37,8 +37,13 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
     }
   }, [project, isOpen]);
 
+  const isAuthorValid = (v: string) => {
+    const t = v.trim();
+    return t.length > 0 && /@[^@]*\.[^@]+/.test(t);
+  };
+
   const handleSave = () => {
-    if (!formData.name.trim()) return;
+    if (!formData.name.trim() || !isAuthorValid(formData.author)) return;
     onSave({
       name: formData.name.trim(),
       author: formData.author.trim() || undefined,
@@ -107,15 +112,22 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
             {/* Author */}
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">
-                Autor
+                Autor (e-mail) <span className="text-red-500">*</span>
               </label>
               <input
-                type="text"
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                type="email"
+                className={`w-full rounded border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                  formData.author.trim() && !isAuthorValid(formData.author)
+                    ? "border-red-400 focus:border-red-500 focus:ring-red-500"
+                    : "border-slate-300 focus:border-indigo-500 focus:ring-indigo-500"
+                }`}
                 value={formData.author}
                 onChange={(e) => setFormData({ ...formData, author: e.target.value })}
-                placeholder="Jméno autora"
+                placeholder="email@example.com"
               />
+              {!isAuthorValid(formData.author) && (
+                <p className="mt-1 text-xs text-red-600">Autor musí být e-mail (např. jmeno@domena.cz)</p>
+              )}
             </div>
 
             {/* Description */}
@@ -182,7 +194,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
           <button
             className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             onClick={handleSave}
-            disabled={!formData.name.trim()}
+            disabled={!formData.name.trim() || !isAuthorValid(formData.author)}
           >
             Uložit
           </button>
