@@ -5,6 +5,7 @@ import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject } from "
 import { PhaseManager } from "./PhaseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
+import { parseAuthoringValues } from "../../project/authoring";
 
 /** Pohled v hierarchii = jedno „dělení“ primárního namapovaného systému */
 type HierarchyViewMode = "classification" | "ifc" | "predefinedType" | `mapped:${string}`;
@@ -303,6 +304,16 @@ const TreeItem: React.FC<{
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
   const isSelected = selectedCode === node.code;
+  const obj = isLeaf ? objects?.[node.code] : undefined;
+  const src = obj?.copiedFrom ? objects?.[obj.copiedFrom] : undefined;
+  const isIncompleteCopy = !!(
+    isLeaf &&
+    obj?.copiedFrom &&
+    src &&
+    obj.ifcEntity === src.ifcEntity &&
+    ((obj.predefinedType?.mode === "ENUM" || obj.predefinedType?.mode === "USERDEFINED" ? obj.predefinedType?.value : undefined) ===
+      (src.predefinedType?.mode === "ENUM" || src.predefinedType?.mode === "USERDEFINED" ? src.predefinedType?.value : undefined))
+  );
   // Při primární klasifikaci (ne IFC) vždy název z node; při Třídění dle IFC z IFC entity nebo object.description
   const displayLabel =
     !isIfcPrimary && isLeaf
@@ -343,7 +354,7 @@ const TreeItem: React.FC<{
         <div className="flex-1">
           <div
             className={`flex cursor-pointer items-center justify-between rounded px-2 py-1 hover:bg-slate-100 ${
-              isSelected ? "bg-indigo-100 text-indigo-700" : "text-slate-800"
+              isIncompleteCopy ? "bg-red-100 text-red-800" : isSelected ? "bg-indigo-100 text-indigo-700" : "text-slate-800"
             }`}
             onClick={() => isLeaf && onSelectLeaf(node)}
             aria-label={isLeaf ? "Select leaf" : "Toggle"}
@@ -485,11 +496,14 @@ export const ClassificationPanel: React.FC<Props> = ({
             const pt = o?.predefinedType?.mode === "ENUM" ? o?.predefinedType?.value : undefined;
             return pt ? `${o?.ifcEntity ?? ""}::${pt}`.trim() : (o?.ifcEntity?.trim() ?? leaf.mappedValues?.[systemEntryId] ?? "");
           }
-          const fromObject = objects![leaf.code]?.authoringClassifications?.find(
-            (c) => c.systemEntryId === systemEntryId
-          )?.code;
-          if (fromObject != null && fromObject.trim() !== "") return fromObject.trim();
-          return leaf.mappedValues?.[systemEntryId] ?? "";
+          const fromObject = (objects![leaf.code]?.authoringClassifications ?? [])
+            .filter((c) => c.systemEntryId === systemEntryId)
+            .map((c) => c.code)
+            .filter((c) => c?.trim());
+          if (fromObject.length > 0) return fromObject[0].trim();
+          const raw = leaf.mappedValues?.[systemEntryId] ?? "";
+          const parsed = parseAuthoringValues(raw);
+          return parsed[0] ?? raw;
         };
         return isIfcSystem ? buildMappedIfcSystemTreeByValue(nodes, getValue) : buildMappedSystemTreeByValue(nodes, getValue);
       }

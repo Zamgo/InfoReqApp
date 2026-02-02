@@ -339,8 +339,8 @@ const createObjectsSheet = (
   const headerRow = sheet.addRow(headers);
   styleHeaderRow(headerRow);
 
-  const getAuthoringCode = (obj: ProjectObject, systemEntryId: string) =>
-    (obj.authoringClassifications ?? []).find((a) => a.systemEntryId === systemEntryId)?.code ?? "";
+  const getAuthoringCodes = (obj: ProjectObject, systemEntryId: string) =>
+    (obj.authoringClassifications ?? []).filter((a) => a.systemEntryId === systemEntryId).map((a) => a.code).filter((c) => c?.trim());
 
   const objectList = Object.values(objects);
   objectList.forEach((obj, index) => {
@@ -353,7 +353,7 @@ const createObjectsSheet = (
       obj.ifcEntity,
       obj.predefinedType.mode,
       obj.predefinedType.value || "",
-      ...authoringEntries.map((e) => getAuthoringCode(obj, e.id)),
+      ...authoringEntries.map((e) => getAuthoringCodes(obj, e.id).join(", ")),
     ]);
     styleDataRow(row, index % 2 === 1);
   });

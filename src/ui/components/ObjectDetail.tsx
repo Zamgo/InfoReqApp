@@ -136,6 +136,8 @@ interface Props {
   /** Přidat vybranou entitu/PredefinedType do IFC hierarchie projektu (když není v hierarchii) */
   /** Přidá objekt (podle object.code) do IFC hierarchie – bez duplikátu, zůstane stejný objekt. */
   onAddToIfcHierarchy?: (objectCode: string) => void;
+  /** Zkopírovat objekt (včetně hierarchie a klasifikací) */
+  onCopyObject?: (objectCode: string) => void;
   /** Odstranit objekt z hierarchie, klasifikace a mapování */
   onDeleteObject?: (code: string) => void;
   /** Zamknout/odemknout objekt (zamčený nelze upravovat ani mazat) */
@@ -1458,8 +1460,16 @@ const IdsSingleExportDialog: React.FC<{
   );
 };
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onDeleteObject, onToggleLock }) => {
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onCopyObject, onDeleteObject, onToggleLock }) => {
   const isLocked = object.locked === true;
+  /** Zvýraznění červeně: zkopírovaný objekt má stále stejnou entitu a predefinedType jako zdroj */
+  const isIncompleteCopy = useMemo(() => {
+    if (!object.copiedFrom || !project?.objects[object.copiedFrom]) return false;
+    const src = project.objects[object.copiedFrom];
+    const srcPt = src.predefinedType?.mode === "ENUM" || src.predefinedType?.mode === "USERDEFINED" ? src.predefinedType?.value : undefined;
+    const objPt = object.predefinedType?.mode === "ENUM" || object.predefinedType?.mode === "USERDEFINED" ? object.predefinedType?.value : undefined;
+    return object.ifcEntity === src.ifcEntity && objPt === srcPt;
+  }, [object.copiedFrom, object.ifcEntity, object.predefinedType, project?.objects]);
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [idsSubTab, setIdsSubTab] = useState<IdsSubTabKey>("readable");
   const [isExportIdsDialogOpen, setIsExportIdsDialogOpen] = useState(false);
@@ -1472,6 +1482,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [enumDraftByAttrId, setEnumDraftByAttrId] = useState<Record<string, string>>({});
   const [enumDraftByMatId, setEnumDraftByMatId] = useState<Record<string, string>>({});
   const [showRelationHelpModal, setShowRelationHelpModal] = useState(false);
+  /** Počet prázdných slotů pro třídění autorských nástrojů (přidáno přes +) – klíč = systemEntryId */
+  const [extraAuthoringSlots, setExtraAuthoringSlots] = useState<Record<string, number>>({});
 
   const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
   const selectedEntity = object.ifcEntity ? schema?.entities[object.ifcEntity] : undefined;
@@ -2683,7 +2695,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Název objektu: při primárním IFC = Entita.PredefinedType; při klasifikačním systému = název z klasifikace */}
-      <div className="border-b border-indigo-200 bg-gradient-to-r from-indigo-50 to-white px-4 py-3">
+      <div className={`border-b px-4 py-3 ${isIncompleteCopy ? "border-red-300 bg-red-50" : "border-indigo-200 bg-gradient-to-r from-indigo-50 to-white"}`}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="h-8 w-1 flex-shrink-0 rounded-full bg-indigo-500"></div>
@@ -2697,8 +2709,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 Zamčeno
               </span>
             )}
+            {isIncompleteCopy && (
+              <span className="flex-shrink-0 rounded bg-red-200 px-2 py-0.5 text-xs font-medium text-red-800">
+                Neúplná kopie – změňte entitu nebo typ
+              </span>
+            )}
           </div>
           <div className="flex flex-shrink-0 items-center gap-1">
+            {onCopyObject && !isLocked && (
+              <button
+                type="button"
+                onClick={() => onCopyObject(object.code)}
+                className="rounded p-2 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                title="Zkopírovat objekt (včetně hierarchie a klasifikací)"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+              </button>
+            )}
             {onToggleLock && (
               <button
                 type="button"
@@ -2927,16 +2956,53 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             const authoringEntries = authoringSystemIds
               .map((id) => classificationSystemEntries.find((e) => e.id === id))
               .filter((e): e is ClassificationSystemEntry => !!e && effectiveKind(e) === "authoring");
-            const getAuthoringCode = (systemEntryId: string) => {
-              const fromObject = (object.authoringClassifications ?? []).find((a) => a.systemEntryId === systemEntryId)?.code ?? "";
-              if (fromObject) return fromObject;
-              return node.mappedValues?.[systemEntryId] ?? "";
+            const getAuthoringCodes = (systemEntryId: string): string[] => {
+              const fromObject = (object.authoringClassifications ?? []).filter((a) => a.systemEntryId === systemEntryId).map((a) => a.code).filter((c) => c?.trim());
+              if (fromObject.length > 0) return fromObject;
+              const fromNode = node.mappedValues?.[systemEntryId]?.trim();
+              return fromNode ? [fromNode] : [];
             };
-            const setAuthoringCode = (systemEntryId: string, code: string) => {
+            const setAuthoringCodes = (systemEntryId: string, newCodes: string[]) => {
               const current = object.authoringClassifications ?? [];
               const rest = current.filter((a) => a.systemEntryId !== systemEntryId);
-              const next = code ? [...rest, { systemEntryId, code }] : rest;
+              const next = [...rest, ...newCodes.filter((c) => c?.trim()).map((code) => ({ systemEntryId, code }))];
               updateObject({ authoringClassifications: next.length ? next : undefined });
+            };
+            const setAuthoringCodeAt = (systemEntryId: string, index: number, code: string) => {
+              const codes = getAuthoringCodes(systemEntryId);
+              const newCodes = [...codes];
+              if (code.trim()) {
+                if (index < newCodes.length) newCodes[index] = code;
+                else newCodes.push(code);
+              } else if (index < newCodes.length) {
+                newCodes.splice(index, 1);
+              }
+              setAuthoringCodes(systemEntryId, newCodes);
+            };
+            const removeAuthoringCodeAt = (systemEntryId: string, index: number) => {
+              const codes = getAuthoringCodes(systemEntryId);
+              const newCodes = codes.filter((_, i) => i !== index);
+              setAuthoringCodes(systemEntryId, newCodes);
+            };
+            const addAuthoringSlot = (systemEntryId: string) => {
+              setExtraAuthoringSlots((prev) => ({ ...prev, [systemEntryId]: (prev[systemEntryId] ?? 0) + 1 }));
+            };
+            const removeExtraAuthoringSlot = (systemEntryId: string) => {
+              setExtraAuthoringSlots((prev) => ({ ...prev, [systemEntryId]: Math.max(0, (prev[systemEntryId] ?? 0) - 1) }));
+            };
+            const handleAuthoringChange = (systemEntryId: string, idx: number, code: string) => {
+              const values = getAuthoringCodes(systemEntryId);
+              const extraCount = extraAuthoringSlots[systemEntryId] ?? 0;
+              if (idx >= values.length && idx < values.length + extraCount) {
+                if (code.trim()) {
+                  setAuthoringCodes(systemEntryId, [...values, code]);
+                  removeExtraAuthoringSlot(systemEntryId);
+                } else {
+                  removeExtraAuthoringSlot(systemEntryId);
+                }
+              } else {
+                setAuthoringCodeAt(systemEntryId, idx, code);
+              }
             };
             return (
               <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
@@ -2944,28 +3010,52 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   Třídění autorských nástrojů
                 </div>
                 <p className="mb-2 text-xs text-slate-500">
-                  Klasifikace dle autorského nástroje (např. Kategorie RVT). Nepoužívá se v IFC/IDS.
+                  Klasifikace dle autorského nástroje (např. Kategorie RVT). Nepoužívá se v IFC/IDS. Můžete přiřadit více hodnot.
                 </p>
                 {authoringEntries.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {authoringEntries.map((entry) => {
                       const codes = entry.nodes ? collectLeaves(entry.nodes).map((n) => n.code) : [];
-                      const value = getAuthoringCode(entry.id);
+                      const values = getAuthoringCodes(entry.id);
+                      const extraCount = extraAuthoringSlots[entry.id] ?? 0;
+                      const slots = [...values, ...Array(extraCount).fill("")];
                       return (
-                        <div key={entry.id} className="flex flex-wrap items-center gap-2">
-                          <label className="min-w-[100px] text-xs font-medium text-slate-600">{entry.name}</label>
-                          <select
-                            className="min-w-[140px] max-w-[220px] rounded border border-slate-300 px-2 py-1 text-sm"
-                            value={value}
-                            onChange={(e) => setAuthoringCode(entry.id, e.target.value)}
-                          >
-                            <option value="">— Nevybráno</option>
-                            {codes.map((c) => (
-                              <option key={c} value={c}>
-                                {c}
-                              </option>
+                        <div key={entry.id} className="space-y-1.5">
+                          <label className="block text-xs font-medium text-slate-600">{entry.name}</label>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {slots.map((value, idx) => (
+                              <div key={idx} className="flex items-center gap-1">
+                                <select
+                                  className="min-w-[140px] max-w-[220px] rounded border border-slate-300 px-2 py-1 text-sm"
+                                  value={value}
+                                  onChange={(e) => handleAuthoringChange(entry.id, idx, e.target.value)}
+                                >
+                                  <option value="">— Nevybráno</option>
+                                  {codes.map((c) => (
+                                    <option key={c} value={c}>
+                                      {c}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                                  onClick={() => (idx < values.length ? removeAuthoringCodeAt(entry.id, idx) : removeExtraAuthoringSlot(entry.id))}
+                                  title="Odebrat hodnotu"
+                                >
+                                  ×
+                                </button>
+                              </div>
                             ))}
-                          </select>
+                            <button
+                              type="button"
+                              className="flex h-8 min-w-[2rem] items-center justify-center rounded border border-dashed border-slate-300 text-slate-500 hover:border-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                              onClick={() => addAuthoringSlot(entry.id)}
+                              title="Přidat hodnotu"
+                            >
+                              +
+                            </button>
+                          </div>
                         </div>
                       );
                     })}

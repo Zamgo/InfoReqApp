@@ -4,6 +4,7 @@ import type { ClassificationSystemEntry } from "../../project/types";
 import type { SchemaIndex } from "../../schema/types";
 import { collectLeaves } from "../../classification/parser";
 import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
+import { parseAuthoringValues, joinAuthoringValues } from "../../project/authoring";
 
 interface Props {
   system: ClassificationSystemEntry;
@@ -183,6 +184,39 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
       return next;
     });
   };
+
+  /** Pro autor. nástroje: více hodnot (jen úroveň 2). valueIdx může být index existující hodnoty nebo index prázdného slotu pro přidání. */
+  const handleAuthoringMappedChange = (index: number, systemId: string, valueIdx: number, value: string) => {
+    const actualIndex = search.trim()
+      ? rows.findIndex((r) => r.code === filteredRows[index].code)
+      : index;
+    setRows((prev) => {
+      const next = [...prev];
+      const row = next[actualIndex];
+      const vals = parseAuthoringValues(row.mappedValues?.[systemId]);
+      let newVals: string[];
+      if (value.trim()) {
+        if (valueIdx < vals.length) {
+          newVals = [...vals];
+          newVals[valueIdx] = value;
+        } else {
+          newVals = [...vals, value];
+        }
+      } else {
+        if (valueIdx < vals.length) {
+          newVals = vals.filter((_, i) => i !== valueIdx);
+        } else {
+          newVals = vals;
+        }
+      }
+      next[actualIndex] = {
+        ...row,
+        mappedValues: { ...(row.mappedValues ?? {}), [systemId]: joinAuthoringValues(newVals) },
+      };
+      return next;
+    });
+  };
+
 
   const handleAddMappedSystem = (systemId: string) => {
     setMappedSystemIds((prev) => [...prev, systemId]);
@@ -575,15 +609,20 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                           </button>
                         </div>
                         {canBeAuthoringTool ? (
-                          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-normal normal-case text-slate-500">
-                            <input
-                              type="checkbox"
-                              checked={isAuthoringTool}
-                              onChange={() => toggleAuthoringTool(entry.id)}
-                              className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                            />
-                            <span>Třídění nástrojů</span>
-                          </label>
+                          <>
+                            <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-normal normal-case text-slate-500">
+                              <input
+                                type="checkbox"
+                                checked={isAuthoringTool}
+                                onChange={() => toggleAuthoringTool(entry.id)}
+                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                              <span>Třídění nástrojů</span>
+                            </label>
+                            <span className="text-[10px] text-slate-400" title="Více kategorií lze přidat jen na úrovni 2 (kde je PredefinedType)">
+                              Pouze úroveň 2
+                            </span>
+                          </>
                         ) : (
                           <span className="text-[11px] font-normal normal-case text-slate-400" title="Pro třídění nástrojů lze použít jen systémy typu Autorský nástroj">
                             Třídění nástrojů —
@@ -891,6 +930,47 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                             <span className="text-sm text-slate-700">{typePart?.trim() || "NOTDEFINED"}</span>
                           </td>,
                         ];
+                      }
+                      const isAuthoring = authoringToolSystemIds.includes(entry.id);
+                      const vals = isAuthoring ? [...parseAuthoringValues(value), ""] : [value || ""];
+                      if (isAuthoring && row.level !== 2) {
+                        return (
+                          <td key={entry.id} className="border border-slate-200 px-1 py-1">
+                            <span className="block px-2 py-0.5 text-center text-slate-300 text-sm">—</span>
+                          </td>
+                        );
+                      }
+                      if (isAuthoring) {
+                        return (
+                          <td key={entry.id} className="border border-slate-200 px-1 py-1">
+                            <div className="flex flex-wrap items-center gap-1">
+                              {vals.map((v, vi) => (
+                                <div key={vi} className="flex items-center gap-0.5">
+                                  <select
+                                    className="min-w-[100px] max-w-[160px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    value={v}
+                                    onChange={(e) => handleAuthoringMappedChange(index, entry.id, vi, e.target.value)}
+                                  >
+                                    <option value="">—</option>
+                                    {codes.map((c) => (
+                                      <option key={c} value={c}>{c}</option>
+                                    ))}
+                                  </select>
+                                  {vi < vals.length - 1 ? (
+                                    <button
+                                      type="button"
+                                      className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 text-xs"
+                                      onClick={() => handleAuthoringMappedChange(index, entry.id, vi, "")}
+                                      title="Odebrat"
+                                    >
+                                      ×
+                                    </button>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </td>
+                        );
                       }
                       return (
                         <td key={entry.id} className="border border-slate-200 px-1 py-1">

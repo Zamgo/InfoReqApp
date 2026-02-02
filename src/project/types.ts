@@ -193,6 +193,8 @@ export interface ProjectObject {
   description: string;
   /** Zamčený objekt – nelze upravovat ani mazat */
   locked?: boolean;
+  /** Kód zdrojového objektu, ze kterého byl tento zkopírován – pro zvýraznění neúplné kopie */
+  copiedFrom?: string;
   /** Popis objektu – pouze pro Excel export, ne do IDS */
   popis?: string;
   /** Poznámka k objektu – pouze pro Excel export, ne do IDS */

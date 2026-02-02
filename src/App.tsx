@@ -6,7 +6,7 @@ import { SettingsDialog } from "./ui/components/SettingsDialog";
 import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
-import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode } from "./classification/parser";
+import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode, addNodeAsSibling, updateLeafMappedValue } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import {
   buildClassificationFromSchema,
@@ -33,6 +33,7 @@ import { ENUM_CODELIST_ID_KEY, formatEnumValues } from "./project/enumeration";
 import { exportExcelFile } from "./export/excel";
 import "./index.css";
 import { makeId } from "./utils/id";
+import { parseAuthoringValues, joinAuthoringValues } from "./project/authoring";
 
 const applyCodeListPropagation = (project: Project, list: CodeList): Project => {
   // Update all properties that are linked to this code list
@@ -174,6 +175,36 @@ const AppInner: React.FC = () => {
     return { entity: entity?.trim() ?? "", predefinedType: pt || undefined };
   }, []);
 
+  /** Propaguje mapování autorských nástrojů (mappedValues) z primárního systému do object.authoringClassifications. */
+  const propagateAuthoringMappingToObjects = useCallback((proj: Project): Project => {
+    const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    const authoringIds = (primary?.authoringToolSystemIds?.length ? primary.authoringToolSystemIds : primary?.mappedSystemIds) ?? [];
+    const authEntries = authoringIds
+      .map((sid) => (proj.classificationSystemEntries ?? []).find((e) => e.id === sid))
+      .filter((e): e is ClassificationSystemEntry => !!e && (e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification")) === "authoring");
+    if (!primary?.nodes || authEntries.length === 0) return proj;
+
+    let changed = false;
+    const nextObjects: Project["objects"] = { ...proj.objects };
+    for (const [objCode, obj] of Object.entries(nextObjects)) {
+      const leaf = findNodeByCode(primary.nodes, objCode);
+      if (!leaf) continue;
+      const nextAuth: NonNullable<ProjectObject["authoringClassifications"]> = [];
+      for (const entry of authEntries) {
+        const vals = parseAuthoringValues(leaf.mappedValues?.[entry.id]);
+        vals.forEach((code) => nextAuth.push({ systemEntryId: entry.id, code }));
+      }
+      const currAuth = obj.authoringClassifications ?? [];
+      const currMatch = currAuth.length === nextAuth.length && nextAuth.every((a) => currAuth.some((c) => c.systemEntryId === a.systemEntryId && c.code === a.code));
+      if (!currMatch) {
+        nextObjects[objCode] = { ...obj, authoringClassifications: nextAuth.length ? nextAuth : undefined };
+        changed = true;
+      }
+    }
+    if (!changed) return proj;
+    return { ...proj, objects: nextObjects, updatedAt: new Date().toISOString() };
+  }, []);
+
   /** Propaguje IFC mapování z primárního klasifikačního systému do objektů. */
   const propagateMappingToObjects = useCallback((proj: Project): Project => {
     const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
@@ -215,7 +246,8 @@ const AppInner: React.FC = () => {
     const stored = loadProjectFromStorage();
     if (stored) {
       const migrated = migrateProject(stored);
-      const withPropagation = propagateMappingToObjects(migrated);
+      let withPropagation = propagateMappingToObjects(migrated);
+      withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       setProject(withPropagation);
       setClassification(withPropagation.classification);
       const leaves = collectLeaves(withPropagation.classification.nodes);
@@ -225,7 +257,7 @@ const AppInner: React.FC = () => {
       }
     }
     // Bez uloženého projektu zůstane prázdný stav – uživatel si sám nahraje klasifikaci.
-  }, [propagateMappingToObjects]);
+  }, [propagateMappingToObjects, propagateAuthoringMappingToObjects]);
 
   const selectedNode = useMemo<ClassificationNode | undefined>(() => {
     if (!classification || !selectedCode) return undefined;
@@ -560,11 +592,20 @@ const AppInner: React.FC = () => {
         currentCodes.delete(obj.code);
         currentCodes.add(newCode);
         const data = buildClassificationFromSchemaFiltered(schemaIndex, currentCodes);
+        let dataNodes = data.nodes;
+        const authoringIds = (ifcEntry.authoringToolSystemIds?.length ? ifcEntry.authoringToolSystemIds : ifcEntry.mappedSystemIds) ?? [];
+        const authEntries = authoringIds
+          .map((id) => (project.classificationSystemEntries ?? []).find((e) => e.id === id))
+          .filter((e): e is ClassificationSystemEntry => !!e && (e.systemKind ?? "classification") === "authoring");
+        for (const entry of authEntries) {
+          const codes = (updatedObj.authoringClassifications ?? []).filter((a) => a.systemEntryId === entry.id).map((a) => a.code).filter((c) => c?.trim());
+          dataNodes = updateLeafMappedValue(dataNodes, newCode, entry.id, joinAuthoringValues(codes));
+        }
         nextEntries = nextEntries.map((e) =>
-          e.id === ifcEntry.id ? { ...e, nodes: data.nodes, hash: data.hash } : e
+          e.id === ifcEntry.id ? { ...e, nodes: dataNodes, hash: data.hash } : e
         );
         if (ifcEntry.isPrimary) {
-          nextClassification = { nodes: data.nodes, sourceName: data.sourceName, hash: data.hash };
+          nextClassification = { nodes: dataNodes, sourceName: data.sourceName, hash: data.hash };
           setClassification(nextClassification);
         }
       }
@@ -589,6 +630,35 @@ const AppInner: React.FC = () => {
       objects: { ...project.objects, [obj.code]: obj },
       updatedAt: new Date().toISOString(),
     };
+
+    // Propagace autor. nástrojů zpět do namapované klasifikace (node.mappedValues)
+    const authoringSystemIds = (primaryEntry?.authoringToolSystemIds?.length
+      ? primaryEntry.authoringToolSystemIds
+      : primaryEntry?.mappedSystemIds) ?? [];
+    const authoringEntries = authoringSystemIds
+      .map((id) => (project.classificationSystemEntries ?? []).find((e) => e.id === id))
+      .filter((e): e is ClassificationSystemEntry => !!e && (e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification")) === "authoring");
+    if (primaryEntry?.nodes && authoringEntries.length > 0) {
+      let nextNodes = primaryEntry.nodes;
+      for (const entry of authoringEntries) {
+        const codes = (obj.authoringClassifications ?? []).filter((a) => a.systemEntryId === entry.id).map((a) => a.code).filter((c) => c?.trim());
+        const val = joinAuthoringValues(codes);
+        nextNodes = updateLeafMappedValue(nextNodes, obj.code, entry.id, val);
+      }
+      next = {
+        ...next,
+        classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
+          e.id === primaryEntry.id ? { ...e, nodes: nextNodes } : e
+        ),
+        classification: project.classification && project.classification.nodes === primaryEntry.nodes
+          ? { ...project.classification, nodes: nextNodes }
+          : next.classification,
+      };
+      if (project.classification && project.classification.nodes === primaryEntry.nodes) {
+        setClassification({ ...project.classification, nodes: nextNodes });
+      }
+    }
+
     updateProjectWithHistory(next);
     if (selectedObject && selectedObject.code === obj.code) {
       setSelectedObject(obj);
@@ -599,14 +669,16 @@ const AppInner: React.FC = () => {
     try {
       const imported = await importProjectFile(file);
       const migrated = migrateProject(imported);
+      let withPropagation = propagateMappingToObjects(migrated);
+      withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       // Reset history for imported project
-      historyRef.current = [JSON.parse(JSON.stringify(migrated))];
+      historyRef.current = [JSON.parse(JSON.stringify(withPropagation))];
       historyIndexRef.current = 0;
-      setProject(migrated);
-      setClassification(migrated.classification);
-      const leaves = collectLeaves(migrated.classification.nodes);
+      setProject(withPropagation);
+      setClassification(withPropagation.classification);
+      const leaves = collectLeaves(withPropagation.classification.nodes);
       setSelectedCode(leaves[0]?.code);
-      saveProjectToStorage(migrated);
+      saveProjectToStorage(withPropagation);
       setStatus("Projekt importován");
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Import se nezdařil");
@@ -825,7 +897,26 @@ const AppInner: React.FC = () => {
         return filtered.length === e.authoringToolSystemIds.length ? e : { ...e, authoringToolSystemIds: filtered.length ? filtered : undefined };
       });
     }
-    
+    // Když systém přejde na „Autorský nástroj“ a je v mappedSystemIds primárního, přidat ho do authoringToolSystemIds
+    if (updates.systemKind === "authoring") {
+      nextEntries = nextEntries.map((e) => {
+        if (!e.isPrimary || !e.mappedSystemIds?.includes(id)) return e;
+        const current = e.authoringToolSystemIds ?? [];
+        if (current.includes(id)) return e;
+        return { ...e, authoringToolSystemIds: [...current, id] };
+      });
+    }
+    // Když se změní authoringToolSystemIds u primárního, nastavit systemKind="authoring" u systémů v seznamu
+    if (updates.authoringToolSystemIds && (nextEntries.find((e) => e.id === id)?.isPrimary ?? project.classificationSystemEntries?.find((e) => e.id === id)?.isPrimary)) {
+      const newIds = new Set(updates.authoringToolSystemIds);
+      nextEntries = nextEntries.map((e) => {
+        if (newIds.has(e.id) && (e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification")) !== "authoring") {
+          return { ...e, systemKind: "authoring" as const };
+        }
+        return e;
+      });
+    }
+
     if (updates.isPrimary === true) {
       nextEntries = nextEntries.map((e) =>
         e.id !== id ? { ...e, isPrimary: false } : e
@@ -864,6 +955,10 @@ const AppInner: React.FC = () => {
     // Po uložení mapování primárního systému propagovat IFC hodnoty do objektů
     if (updatedEntry?.isPrimary && updates.nodes) {
       next = propagateMappingToObjects(next);
+    }
+    // Po uložení mapování primárního systému propagovat autor. nástroje (mappedValues) do object.authoringClassifications
+    if (updatedEntry?.isPrimary && (updates.nodes || updates.authoringToolSystemIds)) {
+      next = propagateAuthoringMappingToObjects(next);
     }
     updateProjectWithHistory(next);
   };
@@ -1090,6 +1185,85 @@ const AppInner: React.FC = () => {
       }
     },
     [project, selectedObject],
+  );
+
+  const onCopyObject = useCallback(
+    (sourceCode: string) => {
+      if (!project || !schemaIndex) return;
+      const source = project.objects[sourceCode];
+      if (!source) return;
+      const primary = (project.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+      const primaryNodes = primary?.nodes ?? [];
+      const shortId = makeId().slice(0, 8);
+
+      const isIfcPrimary = primary?.isIfcSystem === true;
+      const newCode = `${sourceCode}-copy-${shortId}`;
+
+      const newObj: ProjectObject = {
+        ...JSON.parse(JSON.stringify(source)),
+        code: newCode,
+        copiedFrom: sourceCode,
+        locked: false,
+      };
+
+      const nextObjects = { ...project.objects, [newCode]: newObj };
+      let next: Project = {
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      };
+
+      if (primary && primaryNodes.length > 0) {
+        if (isIfcPrimary) {
+          const currentCodes = new Set(collectLeaves(primaryNodes).map((n) => n.code));
+          currentCodes.add(newCode);
+          const data = buildClassificationFromSchemaFiltered(schemaIndex, currentCodes);
+          next = {
+            ...next,
+            classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
+              e.id === primary.id ? { ...e, nodes: data.nodes, hash: data.hash } : e
+            ),
+          };
+          if (primary.isPrimary) {
+            next.classification = { nodes: data.nodes, sourceName: data.sourceName, hash: data.hash };
+            setClassification(next.classification);
+          }
+        } else {
+          const sourceNode = findNodeByCode(primaryNodes, sourceCode);
+          const newNode: ClassificationNode = sourceNode
+            ? {
+              ...sourceNode,
+              code: newCode,
+              description: newObj.description || newCode,
+              children: [],
+            }
+            : {
+              code: newCode,
+              description: newObj.description || newCode,
+              level: 2,
+              children: [],
+            };
+          const newNodes = addNodeAsSibling(primaryNodes, sourceCode, newNode);
+          next = {
+            ...next,
+            classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
+              e.id === primary.id ? { ...e, nodes: newNodes } : e
+            ),
+            classification: project.classification
+              ? { ...project.classification, nodes: newNodes }
+              : project.classification,
+          };
+          setClassification(next.classification);
+        }
+      }
+
+      updateProjectWithHistory(next);
+      setSelectedCode(newCode);
+      setSelectedObject(newObj);
+      setStatus(`Objekt zkopírován: ${newCode}`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project, schemaIndex],
   );
 
   const canUndo = () => {
@@ -1433,6 +1607,7 @@ const AppInner: React.FC = () => {
               project={project}
               onSaveEnumAsCodeList={onSaveEnumAsCodeList}
               onAddToIfcHierarchy={onAddToIfcHierarchy}
+              onCopyObject={onCopyObject}
               onDeleteObject={onDeleteObject}
               onToggleLock={onToggleLockObject}
             />

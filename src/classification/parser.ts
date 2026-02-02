@@ -162,6 +162,32 @@ export const flattenNodesToRows = (nodes: ClassificationNode[]): ClassificationN
   return result;
 };
 
+/** Přidá nový list jako sourozence uzlu se zadaným code; vrací nový strom (imutabilně). */
+export const addNodeAsSibling = (
+  nodes: ClassificationNode[],
+  siblingCode: string,
+  newNode: ClassificationNode,
+): ClassificationNode[] => {
+  const idx = nodes.findIndex((n) => n.code === siblingCode);
+  if (idx >= 0) {
+    const result = [...nodes];
+    result.splice(idx + 1, 0, newNode);
+    return result;
+  }
+  return nodes.map((node) => {
+    if (node.children.length > 0) {
+      const childIdx = node.children.findIndex((c) => c.code === siblingCode);
+      if (childIdx >= 0) {
+        const newChildren = [...node.children];
+        newChildren.splice(childIdx + 1, 0, newNode);
+        return { ...node, children: newChildren };
+      }
+      return { ...node, children: addNodeAsSibling(node.children, siblingCode, newNode) };
+    }
+    return node;
+  });
+};
+
 /** Odstraní list (uzel bez dětí) se zadaným code ze stromu; vrací nový strom (imutabilně). Prázdné větve se odstraňují. */
 export const removeNodeByCode = (
   nodes: ClassificationNode[],
