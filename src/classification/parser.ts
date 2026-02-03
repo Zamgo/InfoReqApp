@@ -119,6 +119,21 @@ export const findNodeByCode = (
   return undefined;
 };
 
+/** Vrátí cestu od kořene k uzlu se zadaným kódem (včetně uzlu). */
+export const getPathToNode = (
+  nodes: ClassificationNode[],
+  code: string,
+  path: ClassificationNode[] = []
+): ClassificationNode[] | null => {
+  for (const node of nodes) {
+    const currentPath = [...path, node];
+    if (node.code === code) return currentPath;
+    const found = getPathToNode(node.children, code, currentPath);
+    if (found) return found;
+  }
+  return null;
+};
+
 export const filterTree = (
   nodes: ClassificationNode[],
   query: string,

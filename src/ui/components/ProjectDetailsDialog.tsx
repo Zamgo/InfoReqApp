@@ -8,10 +8,15 @@ interface Props {
   onSave: (updates: Partial<Project>) => void;
 }
 
+const DEFAULT_IFC_DOC_URL = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/";
+const DEFAULT_MVD_DATABASE_URL = "https://technical.buildingsmart.org/standards/ifc/mvd/mvd-database/";
+
 interface FormData {
   name: string;
   author: string;
   description: string;
+  ifcDocumentationUrl: string;
+  modelDefinitionViewMvd: string;
 }
 
 export const ProjectDetailsDialog: React.FC<Props> = ({
@@ -24,6 +29,8 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
     name: project.name || "",
     author: project.author || "",
     description: project.description || "",
+    ifcDocumentationUrl: project.ifcDocumentationUrl || DEFAULT_IFC_DOC_URL,
+    modelDefinitionViewMvd: project.modelDefinitionViewMvd || "Reference View",
   });
 
   // Reset form when project changes or dialog opens
@@ -33,6 +40,8 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
         name: project.name || "",
         author: project.author || "",
         description: project.description || "",
+        ifcDocumentationUrl: project.ifcDocumentationUrl || DEFAULT_IFC_DOC_URL,
+        modelDefinitionViewMvd: project.modelDefinitionViewMvd || "Reference View",
       });
     }
   }, [project, isOpen]);
@@ -48,6 +57,8 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
       name: formData.name.trim(),
       author: formData.author.trim() || undefined,
       description: formData.description.trim() || undefined,
+      ifcDocumentationUrl: formData.ifcDocumentationUrl.trim() || undefined,
+      modelDefinitionViewMvd: formData.modelDefinitionViewMvd.trim() || undefined,
     });
     onClose();
   };
@@ -159,6 +170,50 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
               <p className="mt-1 text-xs text-slate-500">
                 Verze IFC schématu nelze změnit
               </p>
+              <a
+                href={formData.ifcDocumentationUrl || DEFAULT_IFC_DOC_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+              >
+                IFC dokumentace ↗
+              </a>
+            </div>
+
+            {/* IFC Documentation URL (editable for future schema changes) */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                URL IFC dokumentace
+              </label>
+              <input
+                type="url"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                value={formData.ifcDocumentationUrl}
+                onChange={(e) => setFormData({ ...formData, ifcDocumentationUrl: e.target.value })}
+                placeholder={DEFAULT_IFC_DOC_URL}
+              />
+            </div>
+
+            {/* Model View Definition (MVD) */}
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Model View Definition (MVD)
+              </label>
+              <input
+                type="text"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                value={formData.modelDefinitionViewMvd}
+                onChange={(e) => setFormData({ ...formData, modelDefinitionViewMvd: e.target.value })}
+                placeholder="Reference View"
+              />
+              <a
+                href={DEFAULT_MVD_DATABASE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+              >
+                MVD databáze buildingSMART ↗
+              </a>
             </div>
 
             {/* Dates (read-only info) */}

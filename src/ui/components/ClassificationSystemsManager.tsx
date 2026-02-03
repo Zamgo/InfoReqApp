@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { lazy, startTransition, Suspense, useMemo, useState } from "react";
 import type { ClassificationSystemEntry } from "../../project/types";
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
@@ -8,9 +8,10 @@ const BASE = typeof import.meta !== "undefined" && import.meta.env?.BASE_URL ? i
 const SAMPLE_CLASSIFICATION_URL = `${BASE}Vzorový_KS.xlsx`;
 const SAMPLE_MAPPING_URL = `${BASE}Vzorový_KS_mapování.xlsx`;
 import { makeId } from "../../utils/id";
-import { ClassificationEditor } from "./ClassificationEditor";
 import { IfcEntitySelectorDialog } from "./IfcEntitySelectorDialog";
 import { MappingEditorDialog } from "./MappingEditorDialog";
+
+const ClassificationEditor = lazy(() => import("./ClassificationEditor").then((m) => ({ default: m.ClassificationEditor })));
 
 /** Add empty mapped value for systemId to every node */
 function addMappedValueToNodes(nodes: ClassificationNode[], systemId: string): ClassificationNode[] {
@@ -365,14 +366,28 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
 
       {/* Classification Editor Modal – tabulka s úpravou systému, mapováním, přidáním řádků a úrovněmi (pro primární IFC i ne-IFC) */}
       {editingSystem && (
-        <ClassificationEditor
-          system={editingSystem}
-          allSystems={systems}
-          onSave={handleSaveEdit}
-          onClose={handleCloseEditor}
-          hideMapButton={!isMappedEntry(editingSystem)}
-          schemaIndex={schemaIndex}
-        />
+        <Suspense
+          fallback={
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="rounded-lg bg-white px-8 py-6 shadow-xl">
+                <div className="flex items-center gap-3">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+                  <span className="text-sm text-slate-600">Načítání editoru…</span>
+                </div>
+              </div>
+            </div>
+          }
+        >
+          <ClassificationEditor
+            system={editingSystem}
+            allSystems={systems}
+            onSave={handleSaveEdit}
+            onClose={handleCloseEditor}
+            hideMapButton={!isMappedEntry(editingSystem)}
+            schemaIndex={schemaIndex}
+            onUpdateOtherSystem={(id, updates) => onUpdate(id, updates)}
+          />
+        </Suspense>
       )}
     </div>
   );
@@ -394,7 +409,20 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                           value={kind}
                           onChange={(e) => {
                             const v = e.target.value as "authoring" | "classification";
-                            if (v === "authoring" || v === "classification") onUpdate(sys.id, { systemKind: v });
+                            if (v === "authoring" || v === "classification") {
+                              onUpdate(sys.id, { systemKind: v });
+                              if (primarySystem && sys.id !== primarySystem.id) {
+                                const isMapped = primarySystem.mappedSystemIds?.includes(sys.id);
+                                if (isMapped) {
+                                  const curr = primarySystem.authoringToolSystemIds ?? [];
+                                  if (v === "authoring" && !curr.includes(sys.id)) {
+                                    onUpdate(primarySystem.id, { authoringToolSystemIds: [...curr, sys.id] });
+                                  } else if (v === "classification" && curr.includes(sys.id)) {
+                                    onUpdate(primarySystem.id, { authoringToolSystemIds: curr.filter((id) => id !== sys.id) });
+                                  }
+                                }
+                              }
+                            }
                           }}
                           title={kind === "classification" ? "Zobrazí se v požadavcích na klasifikaci" : "Pouze pro třídění (autorský nástroj)"}
                         >
@@ -443,7 +471,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                           <button
                             type="button"
                             className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
-                            onClick={() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] })}
+                            onClick={() => startTransition(() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] }))}
                             disabled={!sys.nodes || collectLeaves(sys.nodes).length === 0}
                             title="Upravit systém a mapování"
                           >
@@ -452,7 +480,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                         ) : (
                           <button
                             className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50"
-                            onClick={() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] })}
+                            onClick={() => startTransition(() => setEditingSystem({ ...sys, nodes: sys.nodes ?? [] }))}
                             title="Upravit klasifikaci"
                           >
                             Upravit

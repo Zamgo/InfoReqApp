@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ClassificationNode } from "../../classification/types";
 import type { ClassificationSystemEntry } from "../../project/types";
 import type { SchemaIndex } from "../../schema/types";
@@ -15,6 +16,8 @@ interface Props {
   hideMapButton?: boolean;
   /** IFC schéma – pro dropdowny entity/predefined type u namapovaného IFC a při přidání řádku v IFC systému */
   schemaIndex?: SchemaIndex | null;
+  /** Aktualizace jiného systému (např. systemKind při zaškrtnutí Třídění nástrojů) – pro synchronizaci s tabulkou */
+  onUpdateOtherSystem?: (id: string, updates: Partial<ClassificationSystemEntry>) => void;
 }
 
 interface FlatNode {
@@ -80,7 +83,7 @@ const getLeafCodes = (entry: ClassificationSystemEntry): string[] => {
   return leaves.map((n) => n.code);
 };
 
-export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [], onSave, onClose, hideMapButton, schemaIndex }) => {
+export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [], onSave, onClose, hideMapButton, schemaIndex, onUpdateOtherSystem }) => {
   const initialFlat = useMemo(() => flattenNodes(system.nodes || []), [system.nodes]);
   const [rows, setRows] = useState<FlatNode[]>(initialFlat);
   // Synchronizovat řádky při externí změně system.nodes (např. propagace z objektu v kartě Identifikační údaje)
@@ -88,6 +91,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
     setRows(flattenNodes(system.nodes || []));
   }, [system.nodes]);
   const [search, setSearch] = useState("");
+  const deferredSearch = useDeferredValue(search);
   const [mappedSystemIds, setMappedSystemIds] = useState<string[]>(system.mappedSystemIds ?? []);
   const [authoringToolSystemIds, setAuthoringToolSystemIds] = useState<string[]>(system.authoringToolSystemIds ?? []);
   const [showMapDropdown, setShowMapDropdown] = useState(false);
@@ -129,8 +133,8 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
   const [systemDescription, setSystemDescription] = useState(system.description || "");
 
   const filteredRows = useMemo(() => {
-    if (!search.trim()) return rows;
-    const q = search.toLowerCase();
+    if (!deferredSearch.trim()) return rows;
+    const q = deferredSearch.toLowerCase();
     return rows.filter(
       (r) =>
         r.code.toLowerCase().includes(q) ||
@@ -138,7 +142,122 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
         r.ifcEntity.toLowerCase().includes(q) ||
         r.predefinedType.toLowerCase().includes(q)
     );
-  }, [rows, search]);
+  }, [rows, deferredSearch]);
+
+  /** Předpočítaný parentEntity pro každý řádek (IFC level 2) – O(n) místo O(n²) */
+  const parentEntityMap = useMemo(() => {
+    const map = new Map<number, string>();
+    let lastL1Entity = "";
+    filteredRows.forEach((r, i) => {
+      if (r.level === 1) lastL1Entity = r.ifcEntity || "";
+      else if (r.level === 2) map.set(i, lastL1Entity);
+    });
+    return map;
+  }, [filteredRows]);
+
+  /** Předpočítané listy – Set klíčů "code|level" pro O(1) lookup */
+  const leafRowKeys = useMemo(() => {
+    const set = new Set<string>();
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const key = `${r.code}|${r.level}`;
+      if (i === rows.length - 1 || rows[i + 1].level <= r.level) set.add(key);
+    }
+    return set;
+  }, [rows]);
+
+  const isLeaf = useCallback(
+    (row: FlatNode) => leafRowKeys.has(`${row.code}|${row.level}`),
+    [leafRowKeys]
+  );
+
+  /** Kódy listů pro namapované systémy – cache */
+  const leafCodesByEntry = useMemo(() => {
+    const map = new Map<string, string[]>();
+    mappedEntries.forEach((e) => {
+      map.set(e.id, getLeafCodes(e));
+    });
+    return map;
+  }, [mappedEntries]);
+
+  const getCodesForEntry = useCallback(
+    (entryId: string) => leafCodesByEntry.get(entryId) ?? [],
+    [leafCodesByEntry]
+  );
+
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const ROW_HEIGHT = 36;
+
+  /** Konfigurace sloupců pro šířky a resize – index odpovídá pořadí v tabulce */
+  const columnConfig = useMemo(() => {
+    const cols: { key: string; defaultWidth: number }[] = [];
+    if (isIfcSystem) {
+      cols.push({ key: "level", defaultWidth: 80 });
+      cols.push({ key: "entity", defaultWidth: 180 });
+      cols.push({ key: "predefined", defaultWidth: 140 });
+    } else {
+      cols.push({ key: "code", defaultWidth: 120 });
+      cols.push({ key: "desc", defaultWidth: 180 });
+      cols.push({ key: "level", defaultWidth: 80 });
+      if (!isPure) {
+        cols.push({ key: "ifcEntity", defaultWidth: 140 });
+        cols.push({ key: "ifcType", defaultWidth: 120 });
+      }
+    }
+    mappedEntries.forEach((e) => {
+      if (e.isIfcSystem) {
+        cols.push({ key: `${e.id}-entity`, defaultWidth: 140 });
+        cols.push({ key: `${e.id}-type`, defaultWidth: 100 });
+      } else {
+        cols.push({ key: e.id, defaultWidth: 140 });
+      }
+    });
+    cols.push({ key: "actions", defaultWidth: 100 });
+    return cols;
+  }, [isIfcSystem, isPure, mappedEntries]);
+
+  const [colWidths, setColWidths] = useState<Record<number, number>>({});
+  const getColWidth = (colIndex: number) => colWidths[colIndex] ?? columnConfig[colIndex]?.defaultWidth ?? 100;
+  const totalTableWidth = useMemo(
+    () => columnConfig.reduce((s, _, i) => s + (colWidths[i] ?? columnConfig[i]?.defaultWidth ?? 100), 0),
+    [columnConfig, colWidths]
+  );
+
+  const [resizingCol, setResizingCol] = useState<number | null>(null);
+  const resizingStartX = useRef(0);
+  const resizingStartW = useRef(0);
+  useEffect(() => {
+    if (resizingCol === null) return;
+    const prevCursor = document.body.style.cursor;
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    const onMove = (e: MouseEvent) => {
+      const delta = e.clientX - resizingStartX.current;
+      const newW = Math.max(50, resizingStartW.current + delta);
+      setColWidths((prev) => ({ ...prev, [resizingCol]: newW }));
+    };
+    const onUp = () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      setResizingCol(null);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevUserSelect;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [resizingCol]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: filteredRows.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 20,
+  });
 
   // Count items per level
   const levelCounts = useMemo(() => {
@@ -241,9 +360,11 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
   };
 
   const toggleAuthoringTool = (systemId: string) => {
+    const willBeAuthoring = !authoringToolSystemIds.includes(systemId);
     setAuthoringToolSystemIds((prev) =>
       prev.includes(systemId) ? prev.filter((id) => id !== systemId) : [...prev, systemId]
     );
+    onUpdateOtherSystem?.(systemId, { systemKind: willBeAuthoring ? "authoring" : "classification" });
   };
 
   const handleAddRow = () => {
@@ -274,7 +395,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
     const hasTypes = types.length > 0;
     const typeValue = hasTypes && addIfcPredefinedType ? addIfcPredefinedType : undefined;
     const codeLeaf = hasTypes ? `${addIfcEntity}::${typeValue ?? "NOTDEFINED"}` : addIfcEntity;
-    const descLeaf = typeValue ? typeValue : (hasTypes ? "Není definováno" : addIfcEntity);
+    const descLeaf = typeValue ? typeValue : (hasTypes ? "NOTDEFINED" : addIfcEntity);
 
     setRows((prev) => {
       const entityRowIndex = prev.findIndex((r) => r.level === 1 && r.ifcEntity === addIfcEntity);
@@ -374,7 +495,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-lg bg-white shadow-xl">
+      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
@@ -505,10 +626,21 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
           )}
         </div>
 
-        {/* Table */}
-        <div className="flex-1 overflow-auto p-4">
-          <table className="min-w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-slate-50">
+        {/* Table – hlavička mimo scroll, tělo scrolluje; horizontální scroll pro širokou tabulku */}
+        <div className="min-h-0 flex-1 flex flex-col p-4">
+          <div className="overflow-x-auto overflow-y-hidden flex-1 min-h-0 flex flex-col">
+            <div className="flex flex-col min-h-0 flex-1" style={{ minWidth: totalTableWidth }}>
+              {/* Hlavička – mimo scroll kontejner, vždy nahoře */}
+              <table
+                className="flex-shrink-0 border-collapse text-sm"
+                style={{ tableLayout: "fixed", width: totalTableWidth }}
+              >
+                <colgroup>
+                  {columnConfig.map((_, i) => (
+                    <col key={i} style={{ width: getColWidth(i) }} />
+                  ))}
+                </colgroup>
+                <thead className="bg-slate-50">
               {/* Nultý řádek – oddělení hlavních sloupců a namapovaných systémů */}
               <tr className="border-b border-slate-300">
                 <th
@@ -541,71 +673,83 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
               <tr>
                 {isIfcSystem ? (
                   <>
-                    <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 w-20">
-                      Úroveň
+                    <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <span className="block pr-1">Úroveň</span>
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(0); }} aria-hidden />
                     </th>
-                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                      IFC Entita
+                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <span className="block pr-1">IFC Entita</span>
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(1); }} aria-hidden />
                     </th>
-                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                      IFC PredefinedType
+                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <span className="block pr-1">IFC PredefinedType</span>
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(2); }} aria-hidden />
                     </th>
                   </>
                 ) : (
                   <>
-                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                      Kód
+                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <span className="block pr-1">Kód</span>
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(0); }} aria-hidden />
                     </th>
-                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                      Popis
+                    <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <span className="block pr-1">Popis</span>
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(1); }} aria-hidden />
                     </th>
-                    <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 w-20">
-                      Úroveň
+                    <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <span className="block pr-1">Úroveň</span>
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(2); }} aria-hidden />
                     </th>
                     {!isPure && (
                       <>
-                        <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                          IFC Entita
+                        <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                          <span className="block pr-1">IFC Entita</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(3); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(3); }} aria-hidden />
                         </th>
-                        <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                          IFC PredefinedType
+                        <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                          <span className="block pr-1">IFC PredefinedType</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(4); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(4); }} aria-hidden />
                         </th>
                       </>
                     )}
                   </>
                 )}
-                {mappedEntries.flatMap((entry) => {
+                {mappedEntries.flatMap((entry, mapIdx) => {
                   const isAuthoringTool = authoringToolSystemIds.includes(entry.id);
-                  const kind = effectiveSystemKind(entry);
-                  const canBeAuthoringTool = kind === "authoring";
+                  const canBeAuthoringTool = !entry.isIfcSystem;
+                  const baseCol = isIfcSystem ? 3 : (isPure ? 3 : 5);
+                  const entityCol = baseCol + mapIdx * (entry.isIfcSystem ? 2 : 1);
+                  const typeCol = entry.isIfcSystem ? entityCol + 1 : entityCol;
                   if (entry.isIfcSystem) {
                     return [
-                      <th key={`${entry.id}-entity`} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                        <div className="flex items-center justify-between gap-1">
+                      <th key={`${entry.id}-entity`} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                        <div className="flex items-center justify-between gap-1 pr-1">
                           <span>{entry.name} – IFC Entita</span>
                           <button
                             type="button"
-                            className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 shrink-0"
                             onClick={() => handleRemoveMappedSystem(entry.id)}
                             title="Odebrat mapování"
                           >
                             ×
                           </button>
                         </div>
+                        <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(entityCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(entityCol); }} aria-hidden />
                       </th>,
-                      <th key={`${entry.id}-type`} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                        {entry.name} – IFC PredefinedType
+                      <th key={`${entry.id}-type`} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                        <span className="block pr-1">{entry.name} – IFC PredefinedType</span>
+                        <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(typeCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(typeCol); }} aria-hidden />
                       </th>,
                     ];
                   }
                   return (
-                    <th key={entry.id} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600">
-                      <div className="flex flex-col gap-1">
+                    <th key={entry.id} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <div className="flex flex-col gap-1 pr-1">
                         <div className="flex items-center justify-between gap-1">
                           <span>{entry.name}</span>
                           <button
                             type="button"
-                            className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                            className="rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600 shrink-0"
                             onClick={() => handleRemoveMappedSystem(entry.id)}
                             title="Odebrat mapování"
                           >
@@ -623,34 +767,41 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                               />
                               <span>Třídění nástrojů</span>
                             </label>
-                            <span className="text-[10px] text-slate-400" title="Více kategorií lze přidat jen na úrovni 2 (kde je PredefinedType)">
-                              Pouze úroveň 2
+                            <span className="text-[10px] text-slate-400" title="Mapování se provádí na poslední úroveň primární klasifikace (listy stromu)">
+                              Pouze poslední úroveň
                             </span>
                           </>
                         ) : (
-                          <span className="text-[11px] font-normal normal-case text-slate-400" title="Pro třídění nástrojů lze použít jen systémy typu Autorský nástroj">
+                          <span className="text-[11px] font-normal normal-case text-slate-400" title="Pro třídění nástrojů nelze použít IFC systém">
                             Třídění nástrojů —
                           </span>
                         )}
                       </div>
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(entityCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(entityCol); }} aria-hidden />
                     </th>
                   );
                 })}
-                <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 w-28">
-                  Akce
+                <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 relative select-none" style={{ width: getColWidth(columnConfig.length - 1) }}>
+                  <span className="block pr-1">Akce</span>
+                  <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(columnConfig.length - 1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(columnConfig.length - 1); }} aria-hidden />
                 </th>
               </tr>
             </thead>
+          </table>
+          {/* Tělo tabulky – scroll kontejner; hlavička zůstává nahoře */}
+          <div ref={tableContainerRef} className="flex-1 min-h-0 overflow-y-auto">
+            <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: "relative", minWidth: totalTableWidth }}>
+          <table className="border-collapse text-sm" style={{ tableLayout: "fixed", width: totalTableWidth }}>
+            <colgroup>
+              {columnConfig.map((_, i) => (
+                <col key={i} style={{ width: getColWidth(i) }} />
+              ))}
+            </colgroup>
             <tbody>
-              {filteredRows.map((row, index) => {
-                // Pro úroveň 2: entita = stejná jako předchozí řádek úrovně 1 (jen PredefinedType se vybírá)
-                const parentEntity =
-                  row.level === 2
-                    ? (filteredRows
-                        .slice(0, index)
-                        .reverse()
-                        .find((r) => r.level === 1) as FlatNode | undefined)?.ifcEntity ?? row.ifcEntity
-                    : row.ifcEntity;
+              {rowVirtualizer.getVirtualItems().map((virtualRow, vi) => {
+                const index = virtualRow.index;
+                const row = filteredRows[index];
+                const parentEntity = row.level === 2 ? (parentEntityMap.get(index) ?? row.ifcEntity) : row.ifcEntity;
                 const indent = (row.level - 1) * 16;
                 const levelBg = row.level === 1 
                   ? "bg-slate-100/50" 
@@ -659,7 +810,14 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                     : "";
                 
                 return (
-                  <tr key={index} className={`hover:bg-indigo-50/30 ${levelBg}`}>
+                  <tr
+                    key={row.code + "|" + index}
+                    className={`hover:bg-indigo-50/30 ${levelBg}`}
+                    style={{
+                      height: `${virtualRow.size}px`,
+                      transform: `translate3d(0, ${virtualRow.start - vi * virtualRow.size}px, 0)`,
+                    }}
+                  >
                     {isIfcSystem ? (
                       <>
                         <td className="border border-slate-200 px-1 py-1 text-center">
@@ -716,7 +874,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                           ifcEntity: newEntity,
                                           predefinedType: opts.length ? "NOTDEFINED" : "",
                                           code: newEntity && opts.length ? `${newEntity}::NOTDEFINED` : newEntity,
-                                          description: opts.length ? "Není definováno" : newEntity,
+                                          description: opts.length ? "NOTDEFINED" : newEntity,
                                         };
                                       }
                                       return next;
@@ -755,7 +913,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                   onChange={(e) => {
                                     const newType = e.target.value;
                                     const newCode = `${entityForType}::${newType}`;
-                                    const newDesc = newType === "NOTDEFINED" ? "Není definováno" : newType;
+                                    const newDesc = newType === "NOTDEFINED" ? "NOTDEFINED" : newType;
                                     handleChangeRow(index, {
                                       ifcEntity: entityForType,
                                       predefinedType: newType,
@@ -862,7 +1020,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                       </>
                     )}
                     {mappedEntries.flatMap((entry) => {
-                      const codes = getLeafCodes(entry);
+                      const codes = getCodesForEntry(entry.id);
                       const value = row.mappedValues?.[entry.id] ?? "";
                       if (entry.isIfcSystem && schemaIndex) {
                         const [entityPart, typePart] = value.includes("::") ? value.split("::") : [value, ""];
@@ -937,7 +1095,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                       }
                       const isAuthoring = authoringToolSystemIds.includes(entry.id);
                       const vals = isAuthoring ? [...parseAuthoringValues(value), ""] : [value || ""];
-                      if (isAuthoring && row.level !== 2) {
+                      if (isAuthoring && !isLeaf(row)) {
                         return (
                           <td key={entry.id} className="border border-slate-200 px-1 py-1">
                             <span className="block px-2 py-0.5 text-center text-slate-300 text-sm">—</span>
@@ -1026,7 +1184,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
               {filteredRows.length === 0 && (
                 <tr>
                   <td
-                    colSpan={3 + (isIfcSystem ? 0 : (isPure ? 0 : 2)) + mappedEntries.reduce((s, e) => s + (e.isIfcSystem ? 2 : 1), 0) + 1}
+                    colSpan={columnConfig.length}
                     className="border border-slate-200 px-4 py-8 text-center text-slate-500"
                   >
                     {search.trim() ? "Žádné výsledky" : "Klasifikace je prázdná. Přidejte první položku."}
@@ -1035,6 +1193,10 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
               )}
             </tbody>
           </table>
+          </div>
+          </div>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}

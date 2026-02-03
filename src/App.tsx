@@ -28,6 +28,7 @@ import {
   saveProjectToStorage,
 } from "./project/storage";
 import { parseIdsXml, mergeIdsIntoProject } from "./import/ids";
+import { importProjectFromExcel } from "./import/excel";
 import { ensurePhaseList, ensureProjectPhases, removePhaseFromProject } from "./project/phases";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues } from "./project/enumeration";
 import { exportExcelFile } from "./export/excel";
@@ -78,6 +79,7 @@ const AppInner: React.FC = () => {
   const importMenuRef = useRef<HTMLDivElement>(null);
   const importJsonInputRef = useRef<HTMLInputElement>(null);
   const importIdsInputRef = useRef<HTMLInputElement>(null);
+  const importExcelInputRef = useRef<HTMLInputElement>(null);
   
   // Resizable panel state
   const [panelWidth, setPanelWidth] = useState<number>(() => {
@@ -741,6 +743,28 @@ const AppInner: React.FC = () => {
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Import se nezdařil");
     }
+  };
+
+  const onImportExcel = async (file: File) => {
+    setIsImportMenuOpen(false);
+    try {
+      const { project: imported, warnings } = await importProjectFromExcel(file);
+      const migrated = migrateProject(imported);
+      let withPropagation = propagateObjectAuthoringToNodes(migrated);
+      withPropagation = propagateMappingToObjects(withPropagation);
+      withPropagation = propagateAuthoringMappingToObjects(withPropagation);
+      historyRef.current = [JSON.parse(JSON.stringify(withPropagation))];
+      historyIndexRef.current = 0;
+      setProject(withPropagation);
+      setClassification(withPropagation.classification);
+      const leaves = collectLeaves(withPropagation.classification.nodes);
+      setSelectedCode(leaves[0]?.code);
+      saveProjectToStorage(withPropagation);
+      setStatus(warnings.length > 0 ? `Excel importován (${warnings.length} upozornění)` : "Excel importován");
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Import Excel se nezdařil");
+    }
+    if (importExcelInputRef.current) importExcelInputRef.current.value = "";
   };
 
   const onImportIds = async (file: File) => {
@@ -1538,12 +1562,22 @@ const AppInner: React.FC = () => {
                     </svg>
                     IDS
                   </label>
-                  <div className="flex items-center gap-2 px-4 py-2 text-sm text-slate-400 cursor-not-allowed" title="Připraveno k budoucímu doplnění">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <label className="flex cursor-pointer items-center gap-2 px-4 py-2 text-sm text-slate-700 hover:bg-slate-100">
+                    <input
+                      ref={importExcelInputRef}
+                      type="file"
+                      accept=".xlsx"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) void onImportExcel(file);
+                      }}
+                    />
+                    <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
-                    Excel (připraveno)
-                  </div>
+                    Excel
+                  </label>
                 </div>
               </div>
             )}

@@ -218,7 +218,7 @@ interface Props {
 const TAB_LABELS: Record<TabKey, string> = {
   attributes: "Atributy",
   properties: "Vlastnosti",
-  partOf: "Součástí",
+  partOf: "Součásti",
   material: "Materiál",
   classification: "Klasifikace",
   ids: "IDS náhled",
@@ -233,8 +233,8 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
   "IFCRELFILLSELEMENT",
 ];
 
-/** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, Datový typ, Omezení, Hodnota, Jednotka, Popis+Poznámka+Příklady, Fáze, Použitelnost, Akce */
-const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 540, 100, 50, 110];
+/** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, Datový typ, Omezení, Hodnota, Jednotka, URI, Popis+Poznámka+Příklady, Fáze, Použitelnost, Akce */
+const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 120, 180, 180, 180, 100, 50, 110];
 
 /** Všechny sloupce tabulky vlastností, které lze skrýt (index → label) */
 const PROPERTY_COLUMNS_HIDEABLE: Record<number, string> = {
@@ -245,15 +245,16 @@ const PROPERTY_COLUMNS_HIDEABLE: Record<number, string> = {
   4: "Omezení",
   5: "Hodnota",
   6: "Jednotka",
-  7: "Popis · Poznámka · Příklady",
-  8: "Fáze",
-  9: "Použitelnost",
-  10: "Akce",
+  7: "URI",
+  8: "Popis · Poznámka · Příklady",
+  9: "Fáze",
+  10: "Použitelnost",
+  11: "Akce",
 };
 
-/** Výchozí šířky sloupců: Atributy (12), Součástí (11), Materiál (11), Klasifikace (12) */
-const DEFAULT_ATTRIBUTE_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 100, 100, 100, 100, 50, 80];
-const DEFAULT_PARTOF_COL_WIDTHS = [40, 90, 180, 140, 160, 120, 100, 100, 100, 50, 80];
+/** Výchozí šířky sloupců: Atributy (13), Součásti (12), Materiál (11), Klasifikace (12) */
+const DEFAULT_ATTRIBUTE_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 120, 100, 100, 100, 100, 50, 80];
+const DEFAULT_PARTOF_COL_WIDTHS = [40, 90, 180, 140, 160, 120, 120, 100, 100, 100, 50, 80];
 const DEFAULT_MATERIAL_COL_WIDTHS = [40, 90, 95, 150, 100, 120, 100, 100, 100, 50, 80];
 const DEFAULT_CLASSIFICATION_COL_WIDTHS = [40, 100, 180, 95, 150, 100, 120, 100, 100, 100, 50, 80];
 
@@ -265,27 +266,29 @@ const ATTRIBUTE_COLUMNS_HIDEABLE: Record<number, string> = {
   3: "Datový typ",
   4: "Omezení",
   5: "Hodnota",
-  6: "Popis",
-  7: "Poznámka",
-  8: "Příklady",
-  9: "Fáze",
-  10: "Použitelnost",
-  11: "Akce",
+  6: "URI",
+  7: "Popis",
+  8: "Poznámka",
+  9: "Příklady",
+  10: "Fáze",
+  11: "Použitelnost",
+  12: "Akce",
 };
 
-/** Sloupce tabulky Součástí (index → label) */
+/** Sloupce tabulky Součásti (index → label) */
 const PARTOF_COLUMNS_HIDEABLE: Record<number, string> = {
   0: "Checkbox",
   1: "Výskyt",
   2: "Součást entity",
   3: "PredefinedType",
   4: "Vztah",
-  5: "Popis",
-  6: "Poznámka",
-  7: "Příklady",
-  8: "Fáze",
-  9: "Použitelnost",
-  10: "Akce",
+  5: "URI",
+  6: "Popis",
+  7: "Poznámka",
+  8: "Příklady",
+  9: "Fáze",
+  10: "Použitelnost",
+  11: "Akce",
 };
 
 /** Sloupce tabulky Materiál (index → label) */
@@ -356,7 +359,7 @@ Vztah IFCRELVOIDSELEMENT popisuje, že otvor (void) náleží určitému prvku.
 Vztah IFCRELFILLSELEMENT popisuje, jak prvek vyplňuje otvor a stává se jeho součástí.`;
 
 const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "FILLED", label: "Žádné" },
+  { value: "FILLED", label: "Jednoduchá hodnota" },
   { value: "ENUM", label: "Výčet" },
   { value: "PATTERN", label: "Vzor" },
   { value: "RANGE", label: "Ohraničení" },
@@ -375,7 +378,7 @@ const ATTRIBUTE_DATA_TYPES: Record<string, string> = {
 
 // Omezení pro atributy - stejné jako u vlastností
 const ATTRIBUTE_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "FILLED", label: "Žádné" },
+  { value: "FILLED", label: "Jednoduchá hodnota" },
   { value: "ENUM", label: "Výčet" },
   { value: "PATTERN", label: "Vzor" },
   { value: "RANGE", label: "Ohraničení" },
@@ -384,7 +387,7 @@ const ATTRIBUTE_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
 
 // Omezení pro materiály - stejná jako u ostatních karet
 const MATERIAL_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "FILLED", label: "Žádné" },
+  { value: "FILLED", label: "Jednoduchá hodnota" },
   { value: "ENUM", label: "Výčet" },
   { value: "PATTERN", label: "Vzor" },
   { value: "RANGE", label: "Ohraničení" },
@@ -1564,8 +1567,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       : undefined;
   const predefinedOptions = useMemo(() => {
     const values = selectedEntity?.predefinedTypeValues ?? [];
-    const ensureUserDefined = values.includes("USERDEFINED") ? values : [...values, "USERDEFINED"];
-    return ensureUserDefined.length ? ensureUserDefined : ["USERDEFINED"];
+    const withNotDefined = values.length ? ["NOTDEFINED", ...values] : [];
+    const ensureUserDefined = withNotDefined.includes("USERDEFINED") ? withNotDefined : [...withNotDefined, "USERDEFINED"];
+    return ensureUserDefined.length ? ensureUserDefined : ["NOTDEFINED", "USERDEFINED"];
   }, [selectedEntity]);
 
   // Třídění dle IFC entit (isIfcSystem) se v sekci Klasifikace nezobrazuje – entita a typ jsou v Identifikačních údajích
@@ -1652,7 +1656,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       const stored = localStorage.getItem("infoReqApp_hiddenPropertyColumns");
       if (stored) {
         const arr = JSON.parse(stored) as number[];
-        return new Set(arr.filter((i) => typeof i === "number" && i >= 0 && i <= 10));
+        return new Set(arr.filter((i) => typeof i === "number" && i >= 0 && i <= 11));
       }
     } catch {
       /* ignore */
@@ -1660,12 +1664,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     return new Set();
   });
   const [propertyColumnMenuOpen, setPropertyColumnMenuOpen] = useState(false);
-  /** Skryté sloupce pro Atributy, Součástí, Materiál, Klasifikace */
+  /** Skryté sloupce pro Atributy, Součásti, Materiál, Klasifikace */
   const [hiddenAttributeColumns, setHiddenAttributeColumns] = useState<Set<number>>(() =>
-    loadHiddenColumns("infoReqApp_hiddenAttributeColumns", 11)
+    loadHiddenColumns("infoReqApp_hiddenAttributeColumns", 12)
   );
   const [hiddenPartOfColumns, setHiddenPartOfColumns] = useState<Set<number>>(() =>
-    loadHiddenColumns("infoReqApp_hiddenPartOfColumns", 10)
+    loadHiddenColumns("infoReqApp_hiddenPartOfColumns", 11)
   );
   const [hiddenMaterialColumns, setHiddenMaterialColumns] = useState<Set<number>>(() =>
     loadHiddenColumns("infoReqApp_hiddenMaterialColumns", 10)
@@ -1990,8 +1994,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   }, [object]);
 
   const handlePredefinedChange = (value: string) => {
-    if (!value) {
-      updateObject({ predefinedType: { mode: "NONE" }, popis: "" });
+    if (!value || value === "NOTDEFINED") {
+      updateObject({ predefinedType: { mode: "ENUM", value: "NOTDEFINED" }, popis: "" });
       return;
     }
     if (value === "USERDEFINED") {
@@ -2315,7 +2319,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       }
     }
     
-    if (trimmed && !isGroupAllowed(guessedSource as PropertyRequirement["source"], trimmed)) return;
+    // Umožnit přepnutí na libovolnou skupinu – při neplatné volbě se zobrazí varování (isInvalidGroup)
     updateRequirements((reqs) => {
       reqs.properties = reqs.properties.map((p) => {
         if (groupKey(p.source, p.psetName) !== groupKeyValue) return p;
@@ -3053,8 +3057,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <label className="text-xs text-slate-600 shrink-0">PredefinedType</label>
-                <select className="min-w-[120px] max-w-[180px] rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "" : (object.predefinedType.mode === "USERDEFINED" ? "USERDEFINED" : object.predefinedType.value ?? "")} onChange={(e) => handlePredefinedChange(e.target.value)}>
-                  <option value="">-- Není definováno --</option>
+                <select className="min-w-[120px] max-w-[180px] rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "NOTDEFINED" : (object.predefinedType.mode === "USERDEFINED" ? "USERDEFINED" : object.predefinedType.value ?? "NOTDEFINED")} onChange={(e) => handlePredefinedChange(e.target.value)}>
                   {predefinedOptions.map((opt) => (
                     <option key={opt} value={opt}>
                       {opt}
@@ -3279,7 +3282,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   {object.requirements.attributes
                     .filter((a) => a.isApplicability && a.attribute !== "PredefinedType")
                     .map((attr) => {
-                      const constraintLabel = ATTRIBUTE_CONSTRAINT_OPTIONS.find(opt => opt.value === (attr.constraint ?? "FILLED"))?.label ?? "Vyplněno";
+                      const constraintLabel = ATTRIBUTE_CONSTRAINT_OPTIONS.find(opt => opt.value === (attr.constraint ?? "FILLED"))?.label ?? "Jednoduchá hodnota";
                       const attrPhases = attr.phases ?? phases.map(p => p.id);
                       return (
                         <div key={attr.id} className="rounded px-2 py-1.5 text-xs bg-white border border-slate-200">
@@ -3597,9 +3600,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <>
               <div className="text-xs text-slate-500">Ifc attributes (Name, Description, Tag ...)</div>
               <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
-                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenAttributeColumns.has(i)).reduce((s, i) => s + (attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i]), 0)) }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenAttributeColumns.has(i)).reduce((s, i) => s + (attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i]), 0)) }}>
                   <colgroup>
-                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenAttributeColumns.has(i)).map((i) => (
+                    {[0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenAttributeColumns.has(i)).map((i) => (
                       <col key={i} style={{ width: attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i] }} />
                     ))}
                   </colgroup>
@@ -3646,41 +3649,47 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       )}
                       {!hiddenAttributeColumns.has(6) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Popis</span>
+                          <span className="block pr-1">URI</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[6] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[6]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(7) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Poznámka</span>
+                          <span className="block pr-1">Popis</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[7] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[7]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(8) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Příklady</span>
+                          <span className="block pr-1">Poznámka</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[8] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[8]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(9) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Fáze</span>
+                          <span className="block pr-1">Příklady</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[9] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(10) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Fáze</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[10] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[10]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(11) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
                             <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[10] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[11] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenAttributeColumns.has(11) && (
+                      {!hiddenAttributeColumns.has(12) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[11] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[12] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[12]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -3988,20 +3997,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           )}
                           {!hiddenAttributeColumns.has(6) && (
                             <td className="px-2 py-2">
-                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.popis ?? ""} onChange={(e) => updateAttributeField(attr.id, { popis: e.target.value })} placeholder="Popis" />
+                              <input type="text" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.uri ?? ""} onChange={(e) => updateAttributeField(attr.id, { uri: e.target.value })} placeholder="URI" />
                             </td>
                           )}
                           {!hiddenAttributeColumns.has(7) && (
                             <td className="px-2 py-2">
-                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.note ?? ""} onChange={(e) => updateAttributeField(attr.id, { note: e.target.value })} placeholder="Poznámka" />
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.popis ?? ""} onChange={(e) => updateAttributeField(attr.id, { popis: e.target.value })} placeholder="Popis" />
                             </td>
                           )}
                           {!hiddenAttributeColumns.has(8) && (
                             <td className="px-2 py-2">
-                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.priklady ?? ""} onChange={(e) => updateAttributeField(attr.id, { priklady: e.target.value })} placeholder="Příklady" />
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.note ?? ""} onChange={(e) => updateAttributeField(attr.id, { note: e.target.value })} placeholder="Poznámka" />
                             </td>
                           )}
                           {!hiddenAttributeColumns.has(9) && (
+                            <td className="px-2 py-2">
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={attr.priklady ?? ""} onChange={(e) => updateAttributeField(attr.id, { priklady: e.target.value })} placeholder="Příklady" />
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(10) && (
                             <td className="px-2 py-2">
                             <PhaseSelector
                               phases={phases}
@@ -4010,12 +4024,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             />
                             </td>
                           )}
-                          {!hiddenAttributeColumns.has(10) && (
+                          {!hiddenAttributeColumns.has(11) && (
                             <td className="px-2 py-2 text-center">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={attr.isApplicability ?? false} onChange={(e) => updateAttributeField(attr.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
                             </td>
                           )}
-                          {!hiddenAttributeColumns.has(11) && (
+                          {!hiddenAttributeColumns.has(12) && (
                             <td className="px-2 py-2 text-right">
                               <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("attributes", attr.id)}>Odebrat</button>
                             </td>
@@ -4331,13 +4345,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             className="text-sm table-fixed"
                             style={{
                               tableLayout: "fixed",
-                              minWidth: Math.max(120, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                              minWidth: Math.max(120, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
                                 .filter((i) => !hiddenPropertyColumns.has(i))
                                 .reduce((sum, i) => sum + (propertyTableColWidths[i] ?? DEFAULT_PROPERTY_COL_WIDTHS[i]), 0)),
                             }}
                           >
                             <colgroup>
-                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
                                 .filter((i) => !hiddenPropertyColumns.has(i))
                                 .map((i) => (
                                   <col key={i} style={{ width: propertyTableColWidths[i] ?? DEFAULT_PROPERTY_COL_WIDTHS[i] }} />
@@ -4391,6 +4405,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(7) && (
+                                  <th className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">URI</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(8) && (
                                   <th className="px-2 py-2 relative select-none" colSpan={3}>
                                     <div className="flex items-center gap-1 pr-1">
                                       <span>Popis</span>
@@ -4401,13 +4421,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       )}
                                       <span>· Poznámka · Příklady</span>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
                                   </th>
                                 )}
-                                {!hiddenPropertyColumns.has(8) && (
+                                {!hiddenPropertyColumns.has(9) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Fáze</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[11] ?? DEFAULT_PROPERTY_COL_WIDTHS[11]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(9) && (
@@ -4416,21 +4436,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       <span>Použitelnost</span>
                                       <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[9] ?? DEFAULT_PROPERTY_COL_WIDTHS[9]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[12] ?? DEFAULT_PROPERTY_COL_WIDTHS[12]; }} aria-hidden />
                                   </th>
                                 )}
-                                {!hiddenPropertyColumns.has(10) && (
+                                {!hiddenPropertyColumns.has(11) && (
                                   <th className="px-2 py-2 text-right relative select-none">
                                     <span className="block pr-1">Akce</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[10] ?? DEFAULT_PROPERTY_COL_WIDTHS[10]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 13 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[13] ?? DEFAULT_PROPERTY_COL_WIDTHS[13]; }} aria-hidden />
                                   </th>
                                 )}
                               </tr>
                             </thead>
                             <tbody>
-                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].every((i) => hiddenPropertyColumns.has(i)) ? (
+                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].every((i) => hiddenPropertyColumns.has(i)) ? (
                                 <tr>
-                                  <td colSpan={11} className="px-4 py-6 text-center text-sm text-slate-500">
+                                  <td colSpan={14} className="px-4 py-6 text-center text-sm text-slate-500">
                                     Všechny sloupce jsou skryté. Zobrazte alespoň jeden v menu „Sloupce“.
                                   </td>
                                 </tr>
@@ -5098,6 +5118,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     </td>
                                   )}
                                   {!hiddenPropertyColumns.has(7) && (
+                                    <td className="px-2 py-2">
+                                      <input type="text" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={prop.uri ?? ""} onChange={(e) => updatePropertyField(prop.id, { uri: e.target.value })} placeholder="URI" />
+                                    </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(8) && (
                                     <td className="px-2 py-2" colSpan={3}>
                                     <div className="flex items-center gap-2 rounded-lg border-2 border-slate-300 bg-slate-50/50 p-2">
                                       <input 
@@ -5132,12 +5157,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     </div>
                                   </td>
                                   )}
-                                  {!hiddenPropertyColumns.has(8) && (
+                                  {!hiddenPropertyColumns.has(9) && (
                                     <td className="px-2 py-2">
                                     <PhaseSelector phases={phases} value={prop.phases} onChange={(ids) => updatePropertyField(prop.id, { phases: ids })} />
                                   </td>
                                   )}
-                                  {!hiddenPropertyColumns.has(9) && (
+                                  {!hiddenPropertyColumns.has(10) && (
                                     <td className="px-2 py-2 text-center">
                                       <input
                                         type="checkbox"
@@ -5148,7 +5173,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       />
                                     </td>
                                   )}
-                                  {!hiddenPropertyColumns.has(10) && (
+                                  {!hiddenPropertyColumns.has(11) && (
                                     <td className="px-2 py-2 text-right">
                                       <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("properties", prop.id)}>
                                         Odebrat
@@ -5342,9 +5367,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <>
               <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
               <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
-                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenPartOfColumns.has(i)).reduce((s, i) => s + (partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i]), 0)) }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenPartOfColumns.has(i)).reduce((s, i) => s + (partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i]), 0)) }}>
                   <colgroup>
-                    {[0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenPartOfColumns.has(i)).map((i) => (
+                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenPartOfColumns.has(i)).map((i) => (
                       <col key={i} style={{ width: partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i] }} />
                     ))}
                   </colgroup>
@@ -5382,26 +5407,32 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       )}
                       {!hiddenPartOfColumns.has(5) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Popis</span>
+                          <span className="block pr-1">URI</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[5] ?? DEFAULT_PARTOF_COL_WIDTHS[5]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(6) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Poznámka</span>
+                          <span className="block pr-1">Popis</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[6] ?? DEFAULT_PARTOF_COL_WIDTHS[6]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(7) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Příklady</span>
+                          <span className="block pr-1">Poznámka</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[7] ?? DEFAULT_PARTOF_COL_WIDTHS[7]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(8) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Fáze</span>
+                          <span className="block pr-1">Příklady</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[8] ?? DEFAULT_PARTOF_COL_WIDTHS[8]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(9) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Fáze</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[9] ?? DEFAULT_PARTOF_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(9) && (
@@ -5410,13 +5441,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <span>Použitelnost</span>
                             <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[9] ?? DEFAULT_PARTOF_COL_WIDTHS[9]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenPartOfColumns.has(10) && (
+                      {!hiddenPartOfColumns.has(11) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[11] ?? DEFAULT_PARTOF_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -5425,7 +5456,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     {object.requirements.relations.map((rel) => {
                       // Get predefined types for selected entity
                       const relEntityDef = rel.entityType ? schema?.entities[rel.entityType] : undefined;
-                      const relPredefinedOptions = relEntityDef?.predefinedTypeValues ?? [];
+                      const relPtValues = relEntityDef?.predefinedTypeValues ?? [];
+                      const relPredefinedOptions = relPtValues.length ? ["NOTDEFINED", ...relPtValues] : [];
                       
                       return (
                         <tr key={rel.id} className="border-t border-slate-200">
@@ -5463,7 +5495,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 // When entity changes, reset predefinedType
                                 updateRelationField(rel.id, { 
                                   entityType: e.target.value,
-                                  entityPredefinedType: "",
+                                  entityPredefinedType: "NOTDEFINED",
                                   // Also update legacy targetType for backwards compatibility
                                   targetType: e.target.value
                                 });
@@ -5482,11 +5514,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <td className="px-2 py-2">
                             <select
                               className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${!rel.entityType ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                              value={rel.entityPredefinedType ?? ""}
+                              value={rel.entityPredefinedType ?? "NOTDEFINED"}
                               onChange={(e) => updateRelationField(rel.id, { entityPredefinedType: e.target.value })}
                               disabled={!rel.entityType || relPredefinedOptions.length === 0}
                             >
-                              <option value="">-- Není definováno --</option>
                               {relPredefinedOptions.map((opt) => (
                                 <option key={opt} value={opt}>
                                   {opt}
@@ -5522,30 +5553,35 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           )}
                           {!hiddenPartOfColumns.has(5) && (
                             <td className="px-2 py-2">
-                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.popis ?? ""} onChange={(e) => updateRelationField(rel.id, { popis: e.target.value })} placeholder="Popis" />
+                              <input type="text" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.uri ?? ""} onChange={(e) => updateRelationField(rel.id, { uri: e.target.value })} placeholder="URI" />
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(6) && (
                             <td className="px-2 py-2">
-                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.note ?? ""} onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} placeholder="Poznámka k relaci" />
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.popis ?? ""} onChange={(e) => updateRelationField(rel.id, { popis: e.target.value })} placeholder="Popis" />
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(7) && (
                             <td className="px-2 py-2">
-                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.priklady ?? ""} onChange={(e) => updateRelationField(rel.id, { priklady: e.target.value })} placeholder="Příklady" />
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.note ?? ""} onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} placeholder="Poznámka k relaci" />
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(8) && (
                             <td className="px-2 py-2">
-                            <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
+                              <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.priklady ?? ""} onChange={(e) => updateRelationField(rel.id, { priklady: e.target.value })} placeholder="Příklady" />
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(9) && (
+                            <td className="px-2 py-2">
+                            <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(10) && (
                             <td className="px-2 py-2 text-center">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={rel.isApplicability ?? false} onChange={(e) => updateRelationField(rel.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(10) && (
+                          {!hiddenPartOfColumns.has(11) && (
                             <td className="px-2 py-2 text-right">
                               <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>Odebrat</button>
                             </td>
@@ -6426,7 +6462,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             }
                             disabled={cls.readOnly}
                           >
-                            <option value="FILLED">Žádné</option>
+                            <option value="FILLED">Jednoduchá hodnota</option>
                             <option value="ENUM">Výčet</option>
                             <option value="PATTERN">Vzor (regex)</option>
                           </select>

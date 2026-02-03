@@ -71,7 +71,7 @@ const PREDEFINED_TYPE_MAP: Record<string, string> = {
   PARTITIONING: "Příčka",
   ELEMENTEDWALL: "Elementovaná stěna",
   USERDEFINED: "Uživatelem definováno",
-  NOTDEFINED: "Není definováno",
+  NOTDEFINED: "NOTDEFINED",
   SINGLE: "Jednoduché",
   DOUBLE: "Dvojité",
   TRIPLE: "Trojité",

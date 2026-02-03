@@ -30,10 +30,10 @@ export function buildClassificationFromSchema(schema: SchemaIndex): Classificati
         children: [],
       });
     } else {
-      // Není definováno (NOTDEFINED) – pro objekty bez zvoleného PredefinedType
+      // NOTDEFINED – pro objekty bez zvoleného PredefinedType
       children.push({
         code: `${entityName}::NOTDEFINED`,
-        description: "Není definováno",
+        description: "NOTDEFINED",
         level: 2,
         ifcEntity: entityName,
         predefinedType: undefined,
@@ -117,7 +117,7 @@ export function buildClassificationFromSchemaFiltered(
       if (selectedCodes.has(`${entityName}::NOTDEFINED`)) {
         children.push({
           code: `${entityName}::NOTDEFINED`,
-          description: "Není definováno",
+          description: "NOTDEFINED",
           level: 2,
           ifcEntity: entityName,
           predefinedType: undefined,

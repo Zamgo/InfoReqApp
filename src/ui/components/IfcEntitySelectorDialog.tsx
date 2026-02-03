@@ -479,7 +479,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
                             checked={selectedCodes.has(`${entityName}::NOTDEFINED`)}
                             onChange={(e) => toggleCode(`${entityName}::NOTDEFINED`, e.target.checked)}
                           />
-                          <span className="text-slate-700">Není definováno</span>
+                          <span className="text-slate-700">NOTDEFINED</span>
                         </label>
                       </li>
                       {types.map((pt) => {

@@ -4,8 +4,8 @@ import type { ClassificationData, ClassificationNode } from "./types";
 const HEADER_KOD = "Kód";
 const HEADER_POPIS = "Popis";
 const HEADER_UROVEN = "Úroveň";
-const HEADER_IFC_ENTITA = "IFC Entita";
-const HEADER_IFC_PREDEFINED = "IFC PredefinedType";
+const HEADER_IFC_ENTITA = "IFC_entita";
+const HEADER_IFC_PREDEFINED = "IFC_predefinedType";
 
 /** Hodnota pro prázdné/nevyplněné buňky v importu */
 export const EMPTY_PLACEHOLDER = "nevyplněno";
@@ -128,7 +128,10 @@ export async function parseClassificationXlsx(
   }
 
   const firstRow = ws.getRow(1);
-  const idxCode = findColumnIndex(firstRow, HEADER_KOD);
+  const idxCode = Math.max(
+    findColumnIndex(firstRow, HEADER_KOD),
+    findColumnIndex(firstRow, "Třídící_kód")
+  );
   const idxPopis = findColumnIndex(firstRow, HEADER_POPIS);
   const idxUroven = findColumnIndex(firstRow, HEADER_UROVEN);
   const idxIfcEntity = findColumnIndex(firstRow, HEADER_IFC_ENTITA);
@@ -141,6 +144,8 @@ export async function parseClassificationXlsx(
   }
 
   const rows: Array<{ code: string; description: string; level: number; ifcEntity?: string; predefinedType?: string }> = [];
+  const seenCodes = new Set<string>();
+
   for (let r = 2; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
     const codeRaw = (row.getCell(idxCode + 1).value?.toString() ?? "").trim();
@@ -157,6 +162,24 @@ export async function parseClassificationXlsx(
     const ifcEntityRaw = idxIfcEntity >= 0 ? (row.getCell(idxIfcEntity + 1).value?.toString() ?? "").trim() : "";
     const predefinedRaw = idxPredefined >= 0 ? (row.getCell(idxPredefined + 1).value?.toString() ?? "").trim() : "";
 
+    // Doplnit chybějící nadřazené úrovně (např. ASR.KAN.01 → ASR, ASR.KAN)
+    if (code.includes(".") && !code.includes("::")) {
+      const parts = code.split(".");
+      for (let i = 1; i < parts.length; i++) {
+        const parentCode = parts.slice(0, i).join(".");
+        if (!seenCodes.has(parentCode)) {
+          seenCodes.add(parentCode);
+          rows.push({
+            code: parentCode,
+            description: "",
+            level: i + 1,
+            ifcEntity: undefined,
+            predefinedType: undefined,
+          });
+        }
+      }
+    }
+    seenCodes.add(code);
     rows.push({
       code,
       description,
@@ -165,6 +188,18 @@ export async function parseClassificationXlsx(
       predefinedType: predefinedRaw || undefined,
     });
   }
+
+  // Seřadit řádky: rodiče před dětmi (podle kódu a úrovně)
+  rows.sort((a, b) => {
+    if (a.level !== b.level) return a.level - b.level;
+    const aParts = a.code.split(".");
+    const bParts = b.code.split(".");
+    for (let i = 0; i < Math.min(aParts.length, bParts.length); i++) {
+      const cmp = (aParts[i] ?? "").localeCompare(bParts[i] ?? "");
+      if (cmp !== 0) return cmp;
+    }
+    return aParts.length - bParts.length;
+  });
 
   const roots: ClassificationNode[] = [];
   const stack: ClassificationNode[] = [];

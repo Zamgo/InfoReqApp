@@ -88,7 +88,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col rounded-lg bg-white shadow-xl">
+      <div className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg bg-white shadow-xl">
         {/* Header – stejný styl jako Úprava klasifikačního systému */}
         <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
           <div>
@@ -170,9 +170,9 @@ export const MappingEditorDialog: React.FC<Props> = ({
         </div>
 
         {/* Tabulka – primární systém vlevo (Kód, Popis, Úroveň s odsazením) + namapované systémy vpravo */}
-        <div className="flex-1 overflow-auto p-4">
+        <div className="min-h-0 flex-1 overflow-auto p-4">
           <table className="min-w-full border-collapse text-sm">
-            <thead className="sticky top-0 bg-slate-50">
+            <thead className="sticky top-0 z-10 bg-slate-50 shadow-sm">
               <tr className="border-b border-slate-300">
                 <th
                   colSpan={3}

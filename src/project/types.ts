@@ -29,6 +29,8 @@ export interface AttributeRequirement extends RequirementBase {
   value?: string;
   allowedValues?: string[];
   unit?: string;
+  /** URI reference */
+  uri?: string;
   /** Popis požadavku (před poznámkou) */
   popis?: string;
   note?: string;
@@ -50,6 +52,8 @@ export interface PropertyRequirement extends RequirementBase {
   /** Allowed values for ENUM constraint (e.g. from IDS restriction) */
   allowedValues?: string[];
   unit?: string;
+  /** URI reference */
+  uri?: string;
   /** Popis požadavku (před poznámkou) */
   popis?: string;
   note?: string;
@@ -77,6 +81,8 @@ export interface RelationRequirement extends RequirementBase {
   entityPredefinedType?: string;
   minCardinality?: number;
   maxCardinality?: number;
+  /** URI reference */
+  uri?: string;
   /** Popis požadavku (před poznámkou) */
   popis?: string;
   note?: string;
@@ -274,6 +280,10 @@ export interface Project {
   ifcSchemaVersion: "IFC4X3";
   /** Display version of IFC schema (e.g., "IFC 4.3 ADD2 TC1") */
   ifcSchemaVersionDisplay?: string;
+  /** URL dokumentace IFC schématu (např. https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/) */
+  ifcDocumentationUrl?: string;
+  /** Model View Definition (MVD), např. Reference View */
+  modelDefinitionViewMvd?: string;
   classification: ClassificationData;
   classifications: ClassificationSystem[];
   primaryClassificationId: string;

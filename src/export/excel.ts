@@ -4,7 +4,6 @@ import type {
   Phase,
   CodeList,
   ClassificationSystemEntry,
-  ProjectObject,
   AttributeRequirement,
   PropertyRequirement,
   RelationRequirement,
@@ -13,16 +12,18 @@ import type {
 } from "../project/types";
 import type { ClassificationNode } from "../classification/types";
 import { ENUM_CODELIST_ID_KEY } from "../project/enumeration";
+import { collectLeaves, getPathToNode, findNodeByCode } from "../classification/parser";
+
+/**
+ * Konvence pojmenování v exportu:
+ * - Prefix "Třídění_" s velkým T, zbytek malé (třídění)
+ * - Sloupce: Třídící_kód, Třídění_úroveň_1, Třídění_úroveň_2, Třídění_<systém>, Třídění_AN_<autorský nástroj>
+ * - Názvy listů klasifikací: KLASIFIKACE_<název> (např. KLASIFIKACE_ASR, KLASIFIKACE_Kategorie RVT)
+ */
 
 /**
  * Style constants for Excel formatting
  */
-const HEADER_FILL: ExcelJS.Fill = {
-  type: "pattern",
-  pattern: "solid",
-  fgColor: { argb: "FF4F46E5" }, // Indigo-600
-};
-
 const HEADER_FONT: Partial<ExcelJS.Font> = {
   bold: true,
   color: { argb: "FFFFFFFF" },
@@ -42,15 +43,70 @@ const CELL_BORDER: Partial<ExcelJS.Borders> = {
   right: { style: "thin", color: { argb: "FFE2E8F0" } },
 };
 
+/** Barvy pro sekce hlavičky Zdroj: Identifikační údaje, Další klasifikace, IFC entity, Požadavky */
+const HEADER_FILL_IDENTIFIKACNI: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FF16A34A" }, // Green-600 – Kód + hierarchie primární klasifikace
+};
+const HEADER_FILL_DALSI_KLASIFIKACE: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FF0D9488" }, // Teal-600 – další klasifikační systémy
+};
+const HEADER_FILL_AUTORSKE_NASTROJE: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FF7C3AED" }, // Violet-600 – třídění autorských nástrojů
+};
+const HEADER_FILL_IFC: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FF2563EB" }, // Blue-600
+};
+const HEADER_FILL_POZADAVKY: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FFEA580C" }, // Orange-600
+};
+const HEADER_FILL_PROJEKT: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FFDC2626" }, // Red-600
+};
+
 /**
- * Apply header styling to a row
+ * Apply section-colored header styling to Zdroj sheet row (1-based column indices)
+ * @param row Header row
+ * @param identifikacniColCount Kód + hierarchie primární klasifikace (zelená)
+ * @param dalsiKlasifikaceColCount Další klasifikační systémy (tyrkysová)
+ * @param autorskeNastrojeColCount Třídění autorských nástrojů (fialová)
+ * @param ifcColCount IFC_entita, IFC_predefinedType (modrá)
  */
-const styleHeaderRow = (row: ExcelJS.Row) => {
+const styleZdrojHeaderRow = (
+  row: ExcelJS.Row,
+  identifikacniColCount: number,
+  dalsiKlasifikaceColCount: number,
+  autorskeNastrojeColCount: number,
+  ifcColCount: number
+) => {
+  let colIndex = 1;
   row.eachCell((cell) => {
-    cell.fill = HEADER_FILL;
     cell.font = HEADER_FONT;
     cell.alignment = HEADER_ALIGNMENT;
     cell.border = CELL_BORDER;
+    if (colIndex <= identifikacniColCount) {
+      cell.fill = HEADER_FILL_IDENTIFIKACNI;
+    } else if (colIndex <= identifikacniColCount + dalsiKlasifikaceColCount) {
+      cell.fill = HEADER_FILL_DALSI_KLASIFIKACE;
+    } else if (colIndex <= identifikacniColCount + dalsiKlasifikaceColCount + autorskeNastrojeColCount) {
+      cell.fill = HEADER_FILL_AUTORSKE_NASTROJE;
+    } else if (colIndex <= identifikacniColCount + dalsiKlasifikaceColCount + autorskeNastrojeColCount + ifcColCount) {
+      cell.fill = HEADER_FILL_IFC;
+    } else {
+      cell.fill = HEADER_FILL_POZADAVKY;
+    }
+    colIndex++;
   });
   row.height = 28;
 };
@@ -73,6 +129,20 @@ const styleDataRow = (row: ExcelJS.Row, isAlternate: boolean = false) => {
 };
 
 /**
+ * Convert 1-based column index to Excel column letter (1=A, 27=AA, ...)
+ */
+const getColumnLetter = (col: number): string => {
+  let letter = "";
+  let c = col;
+  while (c > 0) {
+    const mod = (c - 1) % 26;
+    letter = String.fromCharCode(65 + mod) + letter;
+    c = Math.floor((c - 1) / 26);
+  }
+  return letter;
+};
+
+/**
  * Set column widths and freeze header row
  */
 const finalizeSheet = (sheet: ExcelJS.Worksheet, widths: number[]) => {
@@ -84,71 +154,62 @@ const finalizeSheet = (sheet: ExcelJS.Worksheet, widths: number[]) => {
 };
 
 /**
- * Format phases array as semicolon-separated string
- */
-const formatPhases = (phases?: string[]): string => {
-  if (!phases || phases.length === 0) return "";
-  return phases.join(";");
-};
-
-/**
- * Format boolean as ANO/NE
- */
-const formatBoolean = (value?: boolean): string => {
-  return value ? "ANO" : "NE";
-};
-
-/**
  * Create Sheet 1: PROJEKT (metadata)
+ * Bez ID a časů: Název, Autor, Popis, IFC_specifikace, IFC_dokumentace, Model_View_Definition_MVD. Červená hlavička.
  */
 const createProjectSheet = (workbook: ExcelJS.Workbook, project: Project) => {
   const sheet = workbook.addWorksheet("PROJEKT");
 
-  // Headers
   const headers = [
-    "projectId",
-    "name",
-    "author",
-    "description",
-    "ifcSchemaVersion",
-    "ifcSchemaVersionDisplay",
-    "primaryClassificationId",
-    "createdAt",
-    "updatedAt",
+    "Název",
+    "Autor",
+    "Popis",
+    "IFC_specifikace",
+    "IFC_dokumentace",
+    "Model_View_Definition_MVD",
   ];
   const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
+  headerRow.eachCell((cell) => {
+    cell.fill = HEADER_FILL_PROJEKT;
+    cell.font = HEADER_FONT;
+    cell.alignment = HEADER_ALIGNMENT;
+    cell.border = CELL_BORDER;
+  });
+  headerRow.height = 28;
 
-  // Data
+  const ifcSchema = project.ifcSchemaVersionDisplay || project.ifcSchemaVersion || "";
   const dataRow = sheet.addRow([
-    project.projectId,
     project.name,
     project.author || "",
     project.description || "",
-    project.ifcSchemaVersion,
-    project.ifcSchemaVersionDisplay || "",
-    project.primaryClassificationId,
-    project.createdAt,
-    project.updatedAt,
+    ifcSchema,
+    project.ifcDocumentationUrl || "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/",
+    project.modelDefinitionViewMvd || "Reference View",
   ]);
   styleDataRow(dataRow);
 
-  finalizeSheet(sheet, [36, 30, 20, 40, 15, 20, 36, 22, 22]);
+  finalizeSheet(sheet, [30, 20, 40, 25, 50, 25]);
 };
 
 /**
  * Create Sheet 2: FÁZE (Phases)
+ * Bez ID, hlavičky v češtině, oranžová barva.
  */
 const createPhasesSheet = (workbook: ExcelJS.Workbook, phases: Phase[]) => {
   const sheet = workbook.addWorksheet("FÁZE");
 
-  const headers = ["id", "code", "name", "description"];
+  const headers = ["Kód", "Název", "Popis"];
   const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
+  headerRow.eachCell((cell) => {
+    cell.fill = HEADER_FILL_POZADAVKY;
+    cell.font = HEADER_FONT;
+    cell.alignment = HEADER_ALIGNMENT;
+    cell.border = CELL_BORDER;
+  });
+  headerRow.height = 28;
 
   phases.forEach((phase, index) => {
     const row = sheet.addRow([
-      phase.id,
       phase.code,
       phase.name,
       phase.description || "",
@@ -156,22 +217,28 @@ const createPhasesSheet = (workbook: ExcelJS.Workbook, phases: Phase[]) => {
     styleDataRow(row, index % 2 === 1);
   });
 
-  finalizeSheet(sheet, [36, 10, 30, 50]);
+  finalizeSheet(sheet, [10, 30, 50]);
 };
 
 /**
  * Create Sheet 3: ČÍSELNÍKY (Code Lists)
+ * Bez sloupce id, hlavičky v češtině, oranžová barva jako v požadavcích.
  */
 const createCodeListsSheet = (workbook: ExcelJS.Workbook, codeLists: CodeList[]) => {
   const sheet = workbook.addWorksheet("ČÍSELNÍKY");
 
-  const headers = ["id", "name", "values", "note"];
+  const headers = ["Název", "Hodnoty", "Poznámka"];
   const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
+  headerRow.eachCell((cell) => {
+    cell.fill = HEADER_FILL_POZADAVKY;
+    cell.font = HEADER_FONT;
+    cell.alignment = HEADER_ALIGNMENT;
+    cell.border = CELL_BORDER;
+  });
+  headerRow.height = 28;
 
   codeLists.forEach((codeList, index) => {
     const row = sheet.addRow([
-      codeList.id,
       codeList.name,
       (codeList.values || []).join(";"),
       codeList.note || "",
@@ -179,187 +246,199 @@ const createCodeListsSheet = (workbook: ExcelJS.Workbook, codeLists: CodeList[])
     styleDataRow(row, index % 2 === 1);
   });
 
-  finalizeSheet(sheet, [36, 25, 60, 40]);
+  finalizeSheet(sheet, [25, 60, 40]);
 };
 
 /**
- * Create Sheet 4: KLASIFIKAČNÍ_SYSTÉMY (Classification System Entries)
+ * Flatten classification tree to simple rows (Kód, Popis, Úroveň)
  */
-const createClassificationSystemsSheet = (
-  workbook: ExcelJS.Workbook,
-  entries: ClassificationSystemEntry[]
-) => {
-  const sheet = workbook.addWorksheet("KLASIFIKAČNÍ_SYSTÉMY");
-
-  const headers = ["id", "name", "uri", "description", "isPrimary", "sourceName"];
-  const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
-
-  entries.forEach((entry, index) => {
-    const row = sheet.addRow([
-      entry.id,
-      entry.name,
-      entry.uri || "",
-      entry.description || "",
-      formatBoolean(entry.isPrimary),
-      entry.sourceName || "",
-    ]);
-    styleDataRow(row, index % 2 === 1);
-  });
-
-  finalizeSheet(sheet, [36, 25, 40, 40, 12, 30]);
-};
-
-/**
- * Flatten classification tree to rows
- */
-const flattenClassificationNodes = (
-  nodes: ClassificationNode[],
-  systemId: string,
-  parentCode: string = ""
-): Array<{
-  systemId: string;
-  code: string;
-  description: string;
-  level: number;
-  parentCode: string;
-  category?: string;
-  ifcEntity?: string;
-  predefinedType?: string;
-}> => {
-  const rows: Array<{
-    systemId: string;
-    code: string;
-    description: string;
-    level: number;
-    parentCode: string;
-    category?: string;
-    ifcEntity?: string;
-    predefinedType?: string;
-  }> = [];
-
+const flattenToCodePopisUroven = (nodes: ClassificationNode[]): Array<{ code: string; description: string; level: number }> => {
+  const rows: Array<{ code: string; description: string; level: number }> = [];
   nodes.forEach((node) => {
     rows.push({
-      systemId,
-      code: node.code,
-      description: node.description,
+      code: node.code || "",
+      description: node.description || "",
       level: node.level,
-      parentCode,
-      category: node.category,
-      ifcEntity: node.ifcEntity,
-      predefinedType: node.predefinedType,
     });
-
     if (node.children && node.children.length > 0) {
-      rows.push(...flattenClassificationNodes(node.children, systemId, node.code));
+      rows.push(...flattenToCodePopisUroven(node.children));
     }
   });
-
   return rows;
 };
 
+/** Sanitize sheet name for Excel (max 31 chars, no \ / * ? : [ ]) */
+const sanitizeSheetName = (name: string): string => {
+  const sanitized = name.replace(/[\\/*?:\[\]]/g, "_").trim();
+  return sanitized.slice(0, 31) || "Klasifikace";
+};
+
+/** Prefix pro názvy listů klasifikací. */
+const KLASIFIKACE_LIST_PREFIX = "KLASIFIKACE_";
+
 /**
- * Create Sheet 5: KLASIFIKACE_HIERARCHIE (Classification Tree)
+ * Create one sheet per classification system: Kód, Popis, Úroveň.
+ * IFC systém se neexportuje (mapování je v PRVKY).
+ * Názvy listů: KLASIFIKACE_ + název klasifikace.
  */
-const createClassificationHierarchySheet = (
-  workbook: ExcelJS.Workbook,
-  entries: ClassificationSystemEntry[]
-) => {
-  const sheet = workbook.addWorksheet("KLASIFIKACE_HIERARCHIE");
+const createClassificationSheets = (workbook: ExcelJS.Workbook, entries: ClassificationSystemEntry[]) => {
+  const usedNames = new Set<string>();
+  const entriesToExport = entries.filter((e) => !e.isIfcSystem && e.nodes && e.nodes.length > 0);
 
-  const headers = [
-    "systemId",
-    "code",
-    "description",
-    "level",
-    "parentCode",
-    "category",
-    "ifcEntity",
-    "predefinedType",
-  ];
-  const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
-
-  let rowIndex = 0;
-  entries.forEach((entry) => {
-    if (entry.nodes && entry.nodes.length > 0) {
-      const flatNodes = flattenClassificationNodes(entry.nodes, entry.id);
-      flatNodes.forEach((node) => {
-        const row = sheet.addRow([
-          node.systemId,
-          node.code,
-          node.description,
-          node.level,
-          node.parentCode,
-          node.category || "",
-          node.ifcEntity || "",
-          node.predefinedType || "",
-        ]);
-        styleDataRow(row, rowIndex % 2 === 1);
-        rowIndex++;
-      });
+  entriesToExport.forEach((entry) => {
+    const baseName = entry.name || entry.sourceName || entry.id;
+    let sheetName = sanitizeSheetName(KLASIFIKACE_LIST_PREFIX + baseName);
+    let suffix = 0;
+    while (usedNames.has(sheetName)) {
+      suffix++;
+      const base = sheetName.slice(0, 28);
+      sheetName = `${base}_${suffix}`.slice(0, 31);
     }
-  });
+    usedNames.add(sheetName);
 
-  finalizeSheet(sheet, [36, 15, 40, 8, 15, 20, 20, 20]);
+    const sheet = workbook.addWorksheet(sheetName);
+    const headers = ["Třídící_kód", "Popis", "Úroveň"];
+    const headerRow = sheet.addRow(headers);
+    const headerFill =
+      (entry.systemKind ?? "classification") === "authoring"
+        ? HEADER_FILL_AUTORSKE_NASTROJE
+        : HEADER_FILL_IDENTIFIKACNI;
+    headerRow.eachCell((cell) => {
+      cell.fill = headerFill;
+      cell.font = HEADER_FONT;
+      cell.alignment = HEADER_ALIGNMENT;
+      cell.border = CELL_BORDER;
+    });
+    headerRow.height = 28;
+
+    const rows = flattenToCodePopisUroven(entry.nodes ?? []);
+    rows.forEach((r, index) => {
+      const row = sheet.addRow([r.code, r.description, r.level]);
+      styleDataRow(row, index % 2 === 1);
+    });
+
+    finalizeSheet(sheet, [20, 40, 10]);
+  });
 };
 
 /**
- * Create Sheet 6: OBJEKTY (Objects)
- * Includes authoring classification columns (e.g. Kategorie RVT) when primary system has mapped systems.
+ * Create PRVKY sheet: primární klasifikace s IFC_entita, IFC_predefinedType, mapovanými systémy a popisem objektu.
+ * IFC data a metadata objektu (popis, poznámka, příklady) se berou z project.objects.
  */
-const createObjectsSheet = (
+const createMapovaniSheet = (
   workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>,
-  classificationSystemEntries: ClassificationSystemEntry[] = []
+  project: Project,
+  entries: ClassificationSystemEntry[],
+  exportAutorskeNastroje: boolean = false
 ) => {
-  const sheet = workbook.addWorksheet("OBJEKTY");
+  const primaryEntry = entries.find((e) => e.isPrimary);
+  if (!primaryEntry?.nodes?.length) return;
+  const primaryNodes = primaryEntry.nodes;
 
-  const primaryEntry = classificationSystemEntries.find((e) => e.isPrimary);
-  const authoringSystemIds = (primaryEntry?.authoringToolSystemIds?.length
-    ? primaryEntry.authoringToolSystemIds
-    : primaryEntry?.mappedSystemIds) ?? [];
-  const effectiveKind = (e: ClassificationSystemEntry) =>
-    e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification");
-  const authoringEntries = authoringSystemIds
-    .map((id) => classificationSystemEntries.find((e) => e.id === id))
-    .filter((e): e is ClassificationSystemEntry => !!e && effectiveKind(e) === "authoring");
+  const sheet = workbook.addWorksheet("PRVKY");
+
+  // Stejné filtrování a pořadí jako ve POŽADAVKY: další klasifikace (teal) vs autorské nástroje (violet)
+  const additionalEntries = (primaryEntry.mappedSystemIds ?? [])
+    .map((id) => entries.find((e) => e.id === id))
+    .filter((e): e is ClassificationSystemEntry => {
+      if (!e) return false;
+      if (e.isIfcSystem) return false;
+      const kind = e.systemKind ?? "classification";
+      return kind === "classification";
+    });
+  const authoringEntries = exportAutorskeNastroje && (primaryEntry.authoringToolSystemIds ?? []).length
+    ? (primaryEntry.authoringToolSystemIds ?? [])
+        .map((id) => entries.find((e) => e.id === id))
+        .filter((e): e is ClassificationSystemEntry => !!e)
+    : [];
+
+  const flattenWithMapping = (
+    nodes: ClassificationNode[],
+    parentPath: ClassificationNode[] = []
+  ): Array<{ node: ClassificationNode; path: ClassificationNode[] }> => {
+    const result: Array<{ node: ClassificationNode; path: ClassificationNode[] }> = [];
+    nodes.forEach((node) => {
+      const path = [...parentPath, node];
+      result.push({ node, path });
+      if (node.children?.length) {
+        result.push(...flattenWithMapping(node.children, path));
+      }
+    });
+    return result;
+  };
+
+  const flatAll = flattenWithMapping(primaryNodes);
+  const flat = flatAll.filter(({ node }) => !node.children?.length);
+  const maxDepth = Math.max(1, ...flat.map(({ path }) => path.length));
+  const hierarchyPopisHeaders = Array.from(
+    { length: Math.min(maxDepth, 5) },
+    (_, i) => `Třídění_úroveň_${i + 1}`
+  );
 
   const headers = [
-    "code",
-    "description",
-    "popis",
-    "poznamka",
-    "priklady",
-    "ifcEntity",
-    "predefinedTypeMode",
-    "predefinedTypeValue",
-    ...authoringEntries.map((e) => `authoring_${e.name}`),
+    "Třídící_kód",
+    ...hierarchyPopisHeaders,
+    ...additionalEntries.map((e) => `Třídění_${e.name}`),
+    ...authoringEntries.map((e) => `Třídění_AN_${e.name}`),
+    "IFC_entita",
+    "IFC_predefinedType",
+    "Popis",
+    "Poznámka",
+    "Příklady",
   ];
   const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
+  const identifikacniColCount = 1 + hierarchyPopisHeaders.length;
+  const dalsiKlasifikaceColCount = additionalEntries.length;
+  const autorskeNastrojeColCount = authoringEntries.length;
+  const ifcColCount = 2;
+  styleZdrojHeaderRow(headerRow, identifikacniColCount, dalsiKlasifikaceColCount, autorskeNastrojeColCount, ifcColCount);
 
-  const getAuthoringCodes = (obj: ProjectObject, systemEntryId: string) =>
-    (obj.authoringClassifications ?? []).filter((a) => a.systemEntryId === systemEntryId).map((a) => a.code).filter((c) => c?.trim());
-
-  const objectList = Object.values(objects);
-  objectList.forEach((obj, index) => {
+  flat.forEach(({ node, path }, index) => {
+    const obj = project.objects[node.code ?? ""];
+    const ifcEntity = obj?.ifcEntity ?? node.ifcEntity ?? "";
+    const predefinedType =
+      obj?.predefinedType?.mode === "ENUM"
+        ? (obj.predefinedType.value || "NOTDEFINED")
+        : (node.predefinedType || (node.code?.includes("::") ? "NOTDEFINED" : ""));
+    const hierarchyValues = hierarchyPopisHeaders.map((_, i) =>
+      normalizeNotDefined(path[i]?.description ?? "")
+    );
+    const additionalVals = additionalEntries.map((e) => node.mappedValues?.[e.id] ?? "");
+    const authoringVals = authoringEntries.map((e) => node.mappedValues?.[e.id] ?? "");
+    const tridiciKodPrvky = node.code?.includes("::") ? "" : (node.code ?? "");
     const row = sheet.addRow([
-      obj.code,
-      obj.description,
-      obj.popis || "",
-      obj.poznamka || "",
-      obj.priklady || "",
-      obj.ifcEntity,
-      obj.predefinedType.mode,
-      obj.predefinedType.value || "",
-      ...authoringEntries.map((e) => getAuthoringCodes(obj, e.id).join(", ")),
+      tridiciKodPrvky,
+      ...hierarchyValues,
+      ...additionalVals,
+      ...authoringVals,
+      ifcEntity,
+      predefinedType,
+      obj?.popis ?? "",
+      obj?.poznamka ?? "",
+      obj?.priklady ?? "",
     ]);
     styleDataRow(row, index % 2 === 1);
   });
 
-  const widths = [15, 40, 30, 30, 30, 20, 18, 20, ...authoringEntries.map(() => 25)];
+  const hierarchyWidths = hierarchyPopisHeaders.map(() => 30);
+  const widths = [
+    20,
+    ...hierarchyWidths,
+    ...additionalEntries.map(() => 22),
+    ...authoringEntries.map(() => 22),
+    22,
+    22,
+    30,
+    30,
+    30,
+  ];
   finalizeSheet(sheet, widths);
+};
+
+/** Normalizace pro export: "Není definováno" → "NOTDEFINED" (jednotné označení) */
+const normalizeNotDefined = (val: string): string => {
+  const s = val?.trim() ?? "";
+  return s.toLowerCase() === "není definováno" ? "NOTDEFINED" : s;
 };
 
 /**
@@ -368,171 +447,6 @@ const createObjectsSheet = (
 const getCodeListId = (extensions?: Record<string, unknown>): string => {
   if (!extensions) return "";
   return (extensions[ENUM_CODELIST_ID_KEY] as string) || "";
-};
-
-/**
- * Create Sheet 7: ATRIBUTY (Attribute Requirements)
- */
-const createAttributesSheet = (
-  workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>
-) => {
-  const sheet = workbook.addWorksheet("ATRIBUTY");
-
-  const headers = [
-    "id",
-    "objectCode",
-    "attribute",
-    "dataType",
-    "occurrence",
-    "constraint",
-    "value",
-    "allowedValues",
-    "unit",
-    "phases",
-    "codeListId",
-    "popis",
-    "note",
-    "priklady",
-  ];
-  const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
-
-  let rowIndex = 0;
-  Object.values(objects).forEach((obj) => {
-    obj.requirements.attributes.forEach((attr: AttributeRequirement) => {
-      const row = sheet.addRow([
-        attr.id,
-        obj.code,
-        attr.attribute,
-        attr.dataType || "",
-        attr.occurrence || "required",
-        attr.constraint,
-        attr.value || "",
-        (attr.allowedValues || []).join(";"),
-        attr.unit || "",
-        formatPhases(attr.phases),
-        getCodeListId(attr.extensions),
-        attr.popis || "",
-        attr.note || "",
-        attr.priklady || "",
-      ]);
-      styleDataRow(row, rowIndex % 2 === 1);
-      rowIndex++;
-    });
-  });
-
-  finalizeSheet(sheet, [36, 15, 20, 15, 12, 12, 30, 30, 10, 20, 36, 30, 40, 30]);
-};
-
-/**
- * Create Sheet 8: VLASTNOSTI (Property Requirements)
- */
-const createPropertiesSheet = (
-  workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>
-) => {
-  const sheet = workbook.addWorksheet("VLASTNOSTI");
-
-  const headers = [
-    "id",
-    "objectCode",
-    "source",
-    "psetName",
-    "propertyName",
-    "dataType",
-    "occurrence",
-    "constraint",
-    "value",
-    "allowedValues",
-    "unit",
-    "phases",
-    "codeListId",
-    "popis",
-    "note",
-    "priklady",
-  ];
-  const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
-
-  let rowIndex = 0;
-  Object.values(objects).forEach((obj) => {
-    obj.requirements.properties.forEach((prop: PropertyRequirement) => {
-      const row = sheet.addRow([
-        prop.id,
-        obj.code,
-        prop.source,
-        prop.psetName,
-        prop.propertyName,
-        prop.dataType,
-        prop.occurrence || "required",
-        prop.constraint || "",
-        prop.value || "",
-        (prop.allowedValues || []).join(";"),
-        prop.unit || "",
-        formatPhases(prop.phases),
-        getCodeListId(prop.extensions),
-        prop.popis || "",
-        prop.note || "",
-        prop.priklady || "",
-      ]);
-      styleDataRow(row, rowIndex % 2 === 1);
-      rowIndex++;
-    });
-  });
-
-  finalizeSheet(sheet, [36, 15, 10, 30, 25, 15, 12, 12, 30, 30, 10, 20, 36, 30, 40, 30]);
-};
-
-/**
- * Create Sheet 9: RELACE (Relation Requirements)
- */
-const createRelationsSheet = (
-  workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>
-) => {
-  const sheet = workbook.addWorksheet("RELACE");
-
-  const headers = [
-    "id",
-    "objectCode",
-    "relationType",
-    "entityType",
-    "entityPredefinedType",
-    "occurrence",
-    "minCardinality",
-    "maxCardinality",
-    "phases",
-    "popis",
-    "note",
-    "priklady",
-  ];
-  const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
-
-  let rowIndex = 0;
-  Object.values(objects).forEach((obj) => {
-    obj.requirements.relations.forEach((rel: RelationRequirement) => {
-      const row = sheet.addRow([
-        rel.id,
-        obj.code,
-        rel.relationType,
-        rel.entityType || "",
-        rel.entityPredefinedType || "",
-        rel.occurrence || "required",
-        rel.minCardinality ?? "",
-        rel.maxCardinality ?? "",
-        formatPhases(rel.phases),
-        rel.popis || "",
-        rel.note || "",
-        rel.priklady || "",
-      ]);
-      styleDataRow(row, rowIndex % 2 === 1);
-      rowIndex++;
-    });
-  });
-
-  finalizeSheet(sheet, [36, 15, 30, 20, 20, 12, 12, 12, 20, 30, 40, 30]);
 };
 
 /**
@@ -550,148 +464,400 @@ const excludeIfcClassifications = (
 };
 
 /**
- * Create Sheet 10: KLASIFIKACE_POŽADAVKY (Classification Requirements)
- * IFC třídění (isIfcSystem) se neexportuje – je už v entitě a predefined type
+ * Check if requirement applies to given phase
  */
-const createClassificationRequirementsSheet = (
-  workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>,
-  classificationSystemEntries: ClassificationSystemEntry[] = []
-) => {
-  const sheet = workbook.addWorksheet("KLASIFIKACE_POŽADAVKY");
-
-  const headers = [
-    "id",
-    "objectCode",
-    "systemEntryId",
-    "system",
-    "identification",
-    "value",
-    "name",
-    "uri",
-    "constraint",
-    "description",
-    "note",
-    "priklady",
-    "isApplicability",
-    "phases",
-  ];
-  const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
-
-  let rowIndex = 0;
-  Object.values(objects).forEach((obj) => {
-    const classifications = excludeIfcClassifications(obj.requirements.classifications, classificationSystemEntries);
-    classifications.forEach((cls: ClassificationRequirement) => {
-      const row = sheet.addRow([
-        cls.id,
-        obj.code,
-        cls.systemEntryId || "",
-        cls.system,
-        cls.identification,
-        cls.value || "",
-        cls.name,
-        cls.uri || "",
-        cls.constraint || "",
-        cls.description || "",
-        cls.note || "",
-        cls.priklady || "",
-        formatBoolean(cls.isApplicability),
-        formatPhases(cls.phases),
-      ]);
-      styleDataRow(row, rowIndex % 2 === 1);
-      rowIndex++;
-    });
-  });
-
-  finalizeSheet(sheet, [36, 15, 36, 25, 20, 20, 30, 40, 12, 30, 40, 30, 15, 20]);
+const hasPhase = (phases?: string[], phaseId?: string): string => {
+  if (!phaseId || !phases || phases.length === 0) return "";
+  return phases.includes(phaseId) ? "Ano" : "Ne";
 };
 
 /**
- * Create Sheet 11: MATERIÁLY (Material Requirements)
+ * Get code list name by ID
  */
-const createMaterialsSheet = (
+const getCodeListName = (codeListId: string, codeLists: CodeList[]): string => {
+  const list = codeLists.find((c) => c.id === codeListId);
+  return list?.name || codeListId || "";
+};
+
+/**
+ * Create Sheet: POŽADAVKY (hlavní tabulka pro kontingenční tabulku a import)
+ * Jeden řádek = jeden požadavek. Čitelné názvy sloupců.
+ *
+ * Skupina: pouze u typu Vlastnost (název Pset/Qto), v budoucnu i skupina materiálů.
+ * Parametr_hodnoty: identifikátor, na který se vážou Požadované_hodnoty:
+ *   - Atribut: název IFC atributu
+ *   - Vlastnost: název vlastnosti
+ *   - Součást: entita součásti (IfcWall.WALL)
+ *   - Klasifikace: název klasifikačního systému
+ *   - Materiál: kategorie materiálu
+ * (Alternativní názvy sloupce: Specifikátor, Předmět_požadavku, Identifikátor)
+ */
+const createZdrojSheet = (
   workbook: ExcelJS.Workbook,
-  objects: Record<string, ProjectObject>
+  project: Project,
+  classificationSystemEntries: ClassificationSystemEntry[] = [],
+  exportAutorskeNastroje: boolean = false
 ) => {
-  const sheet = workbook.addWorksheet("MATERIÁLY");
+  const sheet = workbook.addWorksheet("POŽADAVKY");
+
+  const phases = project.phases;
+  const phaseHeaders = phases.map((p) => p.name || p.code || p.id);
+  const phaseIds = phases.map((p) => p.id);
+  const codeLists = project.codeLists || [];
+
+  /** Najde cestu hierarchie pro kód v libovolném klasifikačním systému; fallback pro kódy s tečkou (ASR.KAN.01). */
+  const getHierarchyPath = (objectCode: string): ClassificationNode[] | null => {
+    const allSources: ClassificationNode[][] = [
+      ...classificationSystemEntries.map((e) => e.nodes ?? []).filter((n) => n.length > 0),
+      ...(project.classification?.nodes ? [project.classification.nodes] : []),
+    ];
+    for (const nodes of allSources) {
+      const path = getPathToNode(nodes, objectCode);
+      if (path && path.length > 0) return path;
+    }
+    if (objectCode.includes(".") && !objectCode.includes("::")) {
+      const parts = objectCode.split(".");
+      const path: ClassificationNode[] = [];
+      for (let i = 1; i <= parts.length; i++) {
+        const parentCode = parts.slice(0, i).join(".");
+        let desc = "";
+        for (const nodes of allSources) {
+          const node = findNodeByCode(nodes, parentCode);
+          if (node) {
+            desc = node.description || "";
+            break;
+          }
+        }
+        path.push({ code: parentCode, description: desc, level: i, children: [] });
+      }
+      return path.length > 0 ? path : null;
+    }
+    return null;
+  };
+
+  // Jen sloupce popisů nadřazených úrovní (bez kódů – kód je jen Kód_objektu = nejnižší úroveň)
+  // Přidáme pouze sloupce pro úrovně, které jsou v datech vyplněné (žádné prázdné sloupce)
+  const MAX_HIERARCHY_LEVELS = 5;
+  let maxDepthUsed = 0;
+  for (const code of Object.keys(project.objects)) {
+    const path = getHierarchyPath(code);
+    if (path && path.length > 0) {
+      maxDepthUsed = Math.max(maxDepthUsed, path.length);
+    }
+  }
+  const hierarchyPopisHeaders = Array.from(
+    { length: Math.min(maxDepthUsed, MAX_HIERARCHY_LEVELS) },
+    (_, i) => `Třídění_úroveň_${i + 1}`
+  );
+
+  // Další klasifikační systémy (Klasifikační systém), ne Autorský nástroj ani IFC (IFC je už v sloupcích IFC_entita a IFC_predefinedType)
+  const primaryEntry = classificationSystemEntries.find((e) => e.isPrimary);
+  const additionalSystemEntries = (primaryEntry?.mappedSystemIds ?? [])
+    .map((id) => classificationSystemEntries.find((e) => e.id === id))
+    .filter((e): e is ClassificationSystemEntry => {
+      if (!e) return false;
+      if (e.isIfcSystem) return false; // IFC už v IFC_entita + IFC_predefinedType
+      const kind = e.systemKind ?? "classification";
+      return kind === "classification";
+    });
+  const additionalSystemHeaders = additionalSystemEntries.map((e) => `Třídění_${e.name}`);
+
+  // Třídění autorských nástrojů (např. Kategorie RVT) – pouze když je zaškrtnuto v exportu
+  const authoringSystemEntries = exportAutorskeNastroje && primaryEntry?.authoringToolSystemIds?.length
+    ? (primaryEntry.authoringToolSystemIds ?? [])
+        .map((id) => classificationSystemEntries.find((e) => e.id === id))
+        .filter((e): e is ClassificationSystemEntry => !!e)
+    : [];
+  const authoringSystemHeaders = authoringSystemEntries.map((e) => `Třídění_AN_${e.name}`);
 
   const headers = [
-    "id",
-    "objectCode",
-    "occurrence",
-    "categoryMode",
-    "category",
-    "uri",
-    "constraint",
-    "value",
-    "phases",
-    "codeListId",
-    "popis",
-    "note",
-    "priklady",
+    "Třídící_kód",
+    ...hierarchyPopisHeaders,
+    ...additionalSystemHeaders,
+    ...authoringSystemHeaders,
+    "IFC_entita",
+    "IFC_predefinedType",
+    "Typ_požadavku",
+    "Skupina",
+    "Parametr_hodnoty",
+    "IFC_datový_typ",
+    "Omezení",
+    "Požadované_hodnoty",
+    "Jednotka",
+    "Číselník",
+    "URI",
+    "Popis",
+    "Poznámka",
+    "Příklady",
+    "Výskyt",
+    ...phaseHeaders,
   ];
   const headerRow = sheet.addRow(headers);
-  styleHeaderRow(headerRow);
+  const identifikacniColCount = 1 + hierarchyPopisHeaders.length; // Kód + hierarchie primární klasifikace
+  const dalsiKlasifikaceColCount = additionalSystemHeaders.length; // Další klasifikační systémy
+  const autorskeNastrojeColCount = authoringSystemHeaders.length; // Třídění autorských nástrojů
+  const ifcColCount = 2; // IFC_entita, IFC_predefinedType
+  styleZdrojHeaderRow(headerRow, identifikacniColCount, dalsiKlasifikaceColCount, autorskeNastrojeColCount, ifcColCount);
+
+  const orderedCodes = primaryEntry?.nodes
+    ? collectLeaves(primaryEntry.nodes).map((n) => n.code)
+    : [];
+  const objectCodes = [
+    ...orderedCodes.filter((c) => project.objects[c]),
+    ...Object.keys(project.objects).filter((c) => !orderedCodes.includes(c)),
+  ];
+
+  const occurrenceLabels: Record<string, string> = {
+    required: "Povinný",
+    optional: "Volitelný",
+    prohibited: "Zakázaný",
+  };
+
+  const constraintLabels: Record<string, string> = {
+    FILLED: "Jednoduchá hodnota",
+    ENUM: "Výčet",
+    PATTERN: "Vzor",
+    RANGE: "Ohraničení",
+    LENGTH: "Délka",
+  };
+
+  const ciselnikColIndex = headers.indexOf("Číselník") + 1;
+  const pozadovaneHodnotyColIndex = headers.indexOf("Požadované_hodnoty") + 1;
+  const maxCiselnikRow = 1 + codeLists.length;
 
   let rowIndex = 0;
-  Object.values(objects).forEach((obj) => {
-    obj.requirements.materials.forEach((mat: MaterialRequirement) => {
+
+  objectCodes.forEach((code) => {
+    const obj = project.objects[code];
+    if (!obj) return;
+
+    const hierarchyPath = getHierarchyPath(code);
+    const hierarchyValues = hierarchyPopisHeaders.map((_, i) =>
+      normalizeNotDefined(hierarchyPath?.[i]?.description ?? "")
+    );
+
+    const leafNode = primaryEntry ? findNodeByCode(primaryEntry.nodes ?? [], code) : undefined;
+    const additionalSystemValues = additionalSystemEntries.map(
+      (e) => leafNode?.mappedValues?.[e.id]?.trim() ?? ""
+    );
+    const authoringSystemValues = authoringSystemEntries.map(
+      (e) => leafNode?.mappedValues?.[e.id]?.trim() ?? ""
+    );
+
+    const tridiciKod = obj.code?.includes("::") ? "" : (obj.code ?? "");
+    const baseCols = [
+      tridiciKod,
+      ...hierarchyValues,
+      ...additionalSystemValues,
+      ...authoringSystemValues,
+      obj.ifcEntity,
+      obj.predefinedType.mode === "ENUM"
+        ? (obj.predefinedType.value || "NOTDEFINED")
+        : (obj.code?.includes("::") ? "NOTDEFINED" : ""),
+    ];
+
+    const addRow = (
+      typ: string,
+      skupina: string,
+      parametrHodnoty: string,
+      dataType: string,
+      unit: string,
+      occurrence: string,
+      constraint: string,
+      povoleneHodnoty: string,
+      ciselnikName: string,
+      uri: string,
+      popis: string,
+      note: string,
+      priklady: string,
+      reqPhases?: string[]
+    ) => {
+      const occLabel = occurrenceLabels[occurrence] || occurrence;
+      const constraintLabel = constraintLabels[(constraint ?? "FILLED").toUpperCase()] || constraint;
+      const phaseVals = phaseIds.map((pid) => hasPhase(reqPhases, pid));
+      const useCiselnikFormula =
+        constraint === "ENUM" &&
+        ciselnikName &&
+        codeLists.length > 0;
+
       const row = sheet.addRow([
-        mat.id,
-        obj.code,
-        mat.occurrence || "required",
-        mat.categoryMode || "",
+        ...baseCols,
+        typ,
+        skupina,
+        parametrHodnoty,
+        dataType,
+        constraintLabel,
+        useCiselnikFormula ? "" : povoleneHodnoty,
+        unit,
+        ciselnikName,
+        uri,
+        popis,
+        note,
+        priklady,
+        occLabel,
+        ...phaseVals,
+      ]);
+
+      if (useCiselnikFormula) {
+        const ciselnikColLetter = getColumnLetter(ciselnikColIndex);
+        const ciselnikCellRef = `${ciselnikColLetter}${row.number}`;
+        const formula = `=IF(${ciselnikCellRef}="","",VLOOKUP(${ciselnikCellRef},ČÍSELNÍKY!$A$2:$B$${maxCiselnikRow},2,FALSE))`;
+        row.getCell(pozadovaneHodnotyColIndex).value = { formula };
+      }
+
+      styleDataRow(row, rowIndex % 2 === 1);
+      rowIndex++;
+    };
+
+    obj.requirements.attributes.forEach((attr: AttributeRequirement) => {
+      const clId = getCodeListId(attr.extensions);
+      addRow(
+        "Atribut",
+        "",
+        attr.attribute || "",
+        attr.dataType || "",
+        attr.unit || "",
+        attr.occurrence || "required",
+        attr.constraint,
+        (attr.allowedValues || []).join(";") || attr.value || "",
+        getCodeListName(clId, codeLists),
+        attr.uri || "",
+        attr.popis || "",
+        attr.note || "",
+        attr.priklady || "",
+        attr.phases
+      );
+    });
+
+    obj.requirements.properties.forEach((prop: PropertyRequirement) => {
+      const clId = getCodeListId(prop.extensions);
+      addRow(
+        "Vlastnost",
+        prop.psetName,
+        prop.propertyName || "",
+        prop.dataType,
+        prop.unit || "",
+        prop.occurrence || "required",
+        prop.constraint || "",
+        (prop.allowedValues || []).join(";") || prop.value || "",
+        getCodeListName(clId, codeLists),
+        prop.uri || "",
+        prop.popis || "",
+        prop.note || "",
+        prop.priklady || "",
+        prop.phases
+      );
+    });
+
+    obj.requirements.relations.forEach((rel: RelationRequirement) => {
+      const soucastEntity = [rel.entityType, rel.entityPredefinedType].filter(Boolean).join(".");
+      addRow(
+        "Součást",
+        "",
+        soucastEntity,
+        "",
+        "",
+        rel.occurrence || "required",
+        "",
+        rel.relationType || "",
+        "",
+        rel.uri || "",
+        rel.popis || "",
+        rel.note || "",
+        rel.priklady || "",
+        rel.phases
+      );
+    });
+
+    excludeIfcClassifications(obj.requirements.classifications, classificationSystemEntries).forEach(
+      (cls: ClassificationRequirement) => {
+        const noteWithIdentification = cls.identification
+          ? [cls.note, `[Identifikace: ${cls.identification}]`].filter(Boolean).join(" ")
+          : (cls.note || "");
+        addRow(
+          "Klasifikace",
+          "",
+          cls.system,
+          "",
+          "",
+          cls.occurrence || "required",
+          cls.constraint || "",
+          cls.value || "",
+          "",
+          cls.uri || "",
+          cls.description || "",
+          noteWithIdentification,
+          cls.priklady || "",
+          cls.phases
+        );
+      }
+    );
+
+    obj.requirements.materials.forEach((mat: MaterialRequirement) => {
+      const clId = getCodeListId(mat.extensions);
+      addRow(
+        "Materiál",
+        "",
         mat.category || "",
-        mat.uri || "",
+        "",
+        "",
+        mat.occurrence || "required",
         mat.constraint || "",
         mat.value || "",
-        formatPhases(mat.phases),
-        getCodeListId(mat.extensions),
+        getCodeListName(clId, codeLists),
+        mat.uri || "",
         mat.popis || "",
         mat.note || "",
         mat.priklady || "",
-      ]);
-      styleDataRow(row, rowIndex % 2 === 1);
-      rowIndex++;
+        mat.phases
+      );
     });
   });
 
-  finalizeSheet(sheet, [36, 15, 12, 15, 25, 40, 12, 30, 20, 36, 30, 40, 30]);
+  const hierarchyWidths = hierarchyPopisHeaders.map(() => 30);
+  const additionalWidths = additionalSystemHeaders.map(() => 22);
+  const authoringWidths = authoringSystemHeaders.map(() => 22);
+  const widths = [
+    18,
+    ...hierarchyWidths,
+    ...additionalWidths,
+    ...authoringWidths,
+    18, 15, 12, 25, 25, 15, 25, 30, 12, 22, 25, 30, 30, 30, 10,
+    ...phaseHeaders.map(() => 10),
+  ];
+  finalizeSheet(sheet, widths);
 };
 
 /**
  * Sheet selection options for selective export
+ * zdroj = list POŽADAVKY (hlavní tabulka pro kontingenční tabulku a import)
+ * klasifikaceListy = každá klasifikace jako samostatný list (Kód, Popis, Úroveň)
+ * mapovani = list PRVKY (primární klasifikace + IFC + mapované systémy + popis objektů)
  */
 export interface SheetSelection {
-  projekt: boolean;
-  faze: boolean;
+  zdroj: boolean;
+  /** Exportovat třídění autorských nástrojů jako další sloupce za primární klasifikací a IFC */
+  zdrojExportAutorskeNastroje?: boolean;
   ciselniky: boolean;
-  klasifikacniSystemy: boolean;
-  klasifikaceHierarchie: boolean;
-  objekty: boolean;
-  atributy: boolean;
-  vlastnosti: boolean;
-  relace: boolean;
-  klasifikacePozadavky: boolean;
-  materialy: boolean;
+  faze: boolean;
+  projekt: boolean;
+  /** Každá klasifikace jako samostatný list (Kód, Popis, Úroveň) */
+  klasifikaceListy: boolean;
+  /** List PRVKY – primární klasifikace s IFC, mapovanými systémy a popisem objektů */
+  mapovani: boolean;
 }
 
 /**
- * Default selection - all sheets selected
+ * Default selection - hlavní list + doplňky pro pochopení
  */
 export const DEFAULT_SHEET_SELECTION: SheetSelection = {
-  projekt: true,
-  faze: true,
+  zdroj: true,
+  zdrojExportAutorskeNastroje: false,
   ciselniky: true,
-  klasifikacniSystemy: true,
-  klasifikaceHierarchie: true,
-  objekty: true,
-  atributy: true,
-  vlastnosti: true,
-  relace: true,
-  klasifikacePozadavky: true,
-  materialy: true,
+  faze: true,
+  projekt: true,
+  klasifikaceListy: true,
+  mapovani: false,
 };
 
 /**
@@ -711,39 +877,29 @@ export const generateExcelWorkbook = async (
   workbook.title = project.name;
   workbook.subject = "BIM Information Requirements";
 
-  // Create sheets based on selection
+  // Pořadí listů: PROJEKT, FÁZE, PRVKY, POŽADAVKY, ČÍSELNÍKY, Klasifikace
   if (selection.projekt) {
     createProjectSheet(workbook, project);
   }
   if (selection.faze) {
     createPhasesSheet(workbook, project.phases);
   }
+  if (selection.mapovani) {
+    createMapovaniSheet(
+      workbook,
+      project,
+      project.classificationSystemEntries || [],
+      selection.zdrojExportAutorskeNastroje ?? false
+    );
+  }
+  if (selection.zdroj) {
+    createZdrojSheet(workbook, project, project.classificationSystemEntries ?? [], selection.zdrojExportAutorskeNastroje ?? false);
+  }
   if (selection.ciselniky) {
     createCodeListsSheet(workbook, project.codeLists || []);
   }
-  if (selection.klasifikacniSystemy) {
-    createClassificationSystemsSheet(workbook, project.classificationSystemEntries || []);
-  }
-  if (selection.klasifikaceHierarchie) {
-    createClassificationHierarchySheet(workbook, project.classificationSystemEntries || []);
-  }
-  if (selection.objekty) {
-    createObjectsSheet(workbook, project.objects, project.classificationSystemEntries ?? []);
-  }
-  if (selection.atributy) {
-    createAttributesSheet(workbook, project.objects);
-  }
-  if (selection.vlastnosti) {
-    createPropertiesSheet(workbook, project.objects);
-  }
-  if (selection.relace) {
-    createRelationsSheet(workbook, project.objects);
-  }
-  if (selection.klasifikacePozadavky) {
-    createClassificationRequirementsSheet(workbook, project.objects, project.classificationSystemEntries ?? []);
-  }
-  if (selection.materialy) {
-    createMaterialsSheet(workbook, project.objects);
+  if (selection.klasifikaceListy) {
+    createClassificationSheets(workbook, project.classificationSystemEntries || []);
   }
 
   return workbook;
@@ -779,19 +935,38 @@ export const exportExcelFile = async (
 };
 
 /**
+ * Validace dat před exportem – zjistí nevyplněné nebo placeholder hodnoty
+ */
+export const validateExportData = (project: Project): { valid: boolean; issues: string[] } => {
+  const issues: string[] = [];
+
+  for (const [objCode, obj] of Object.entries(project.objects)) {
+    const objLabel = obj.description || objCode;
+
+    for (const prop of obj.requirements.properties) {
+      if (prop.psetName?.startsWith("_NEW_")) {
+        issues.push(
+          `Objekt „${objLabel}“: skupina vlastností není vyplněna (vlastnost „${prop.propertyName || "—"}“)`
+        );
+      }
+    }
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues,
+  };
+};
+
+/**
  * Get statistics about export content
- * Excludes IFC classifications from count (isIfcSystem) – ty jsou v entitě/predefined type
  */
 export const getExportStatistics = (project: Project): {
+  zdroj: number;
   phases: number;
   codeLists: number;
-  classificationSystems: number;
-  objects: number;
-  attributes: number;
-  properties: number;
-  relations: number;
-  classifications: number;
-  materials: number;
+  klasifikaceListy: number;
+  mapovani: number;
 } => {
   const objects = Object.values(project.objects);
   const entries = project.classificationSystemEntries ?? [];
@@ -800,15 +975,22 @@ export const getExportStatistics = (project: Project): {
     return sum + filtered.length;
   }, 0);
 
+  const zdrojCount =
+    objects.reduce((sum, obj) => sum + obj.requirements.attributes.length, 0) +
+    objects.reduce((sum, obj) => sum + obj.requirements.properties.length, 0) +
+    objects.reduce((sum, obj) => sum + obj.requirements.relations.length, 0) +
+    classificationsCount +
+    objects.reduce((sum, obj) => sum + obj.requirements.materials.length, 0);
+
+  const klasifikaceCount = entries.filter((e) => !e.isIfcSystem && e.nodes?.length).length;
+  const primaryEntry = entries.find((e) => e.isPrimary);
+  const mapovaniCount = primaryEntry?.nodes ? flattenToCodePopisUroven(primaryEntry.nodes).length : 0;
+
   return {
+    zdroj: zdrojCount,
     phases: project.phases.length,
     codeLists: (project.codeLists || []).length,
-    classificationSystems: entries.length,
-    objects: objects.length,
-    attributes: objects.reduce((sum, obj) => sum + obj.requirements.attributes.length, 0),
-    properties: objects.reduce((sum, obj) => sum + obj.requirements.properties.length, 0),
-    relations: objects.reduce((sum, obj) => sum + obj.requirements.relations.length, 0),
-    classifications: classificationsCount,
-    materials: objects.reduce((sum, obj) => sum + obj.requirements.materials.length, 0),
+    klasifikaceListy: klasifikaceCount,
+    mapovani: mapovaniCount,
   };
 };

@@ -399,18 +399,7 @@ const generateSpecification = (
     return null;
   }
   
-  // If no requirements for this phase, skip (at least one requirement facet must be present)
-  const hasRequirements =
-    requirementAttributes.length > 0 ||
-    requirementProperties.length > 0 ||
-    requirementClassifications.length > 0 ||
-    requirementRelations.length > 0 ||
-    requirementMaterials.length > 0;
-  
-  if (!hasRequirements) {
-    return null;
-  }
-  
+  // Allow export even with empty requirements – IDS může mít pouze identifikační údaje (applicability) a prázdné požadavky
   const meta = getIdsSpecMetadataForPhaseOccurrence(obj, phaseId, occurrenceFilter);
   const sanitizeForSpec = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
   const occurrenceLabel = occurrenceFilter === "all" ? "Vše" : occurrenceFilter === "required" ? "Požadované" : occurrenceFilter === "prohibited" ? "Zakázané" : "Možné";
@@ -610,7 +599,8 @@ export const exportIDSZip = async (
 };
 
 /**
- * Get objects that have requirements for a given phase
+ * Get objects that have requirements or applicability for a given phase.
+ * Zahrnuje i objekty s pouze identifikačními údaji (applicability) a prázdnými požadavky.
  */
 export const getObjectsWithRequirementsForPhase = (
   project: Project,
@@ -618,13 +608,10 @@ export const getObjectsWithRequirementsForPhase = (
 ): ProjectObject[] => {
   return Object.values(project.objects).filter((obj) => {
     if (!obj.ifcEntity) return false; // Skip objects without IFC entity
-    const { requirements } = obj;
-    const hasReqs =
-      requirements.attributes.some((r) => requirementAppliesToPhase(r, phaseId) && r.attribute && r.attribute !== "PredefinedType" && !r.isApplicability) ||
-      requirements.properties.some((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r) && !r.isApplicability) ||
-      requirements.classifications.some((r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability && !r.readOnly) ||
-      requirements.relations.some((r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability) ||
-      requirements.materials.some((r) => requirementAppliesToPhase(r, phaseId) && !r.isApplicability);
-    return hasReqs;
+    const ifcEntityPhases = obj.ifcEntityPhases ?? obj.entityPhases;
+    if (ifcEntityPhases && ifcEntityPhases.length > 0 && !ifcEntityPhases.includes(phaseId)) {
+      return false; // Entity neplatí pro tuto fázi
+    }
+    return true; // Entity + phase match – lze exportovat včetně applicability-only s prázdnými požadavky
   });
 };

@@ -32,6 +32,8 @@ export const createEmptyProject = (classification: ClassificationData): Project 
     updatedAt: now,
     ifcSchemaVersion: "IFC4X3",
     ifcSchemaVersionDisplay: "IFC 4.3 ADD2 TC1",
+    ifcDocumentationUrl: "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/",
+    modelDefinitionViewMvd: "Reference View",
     classification,
     classifications: [primary],
     primaryClassificationId: primary.id,
