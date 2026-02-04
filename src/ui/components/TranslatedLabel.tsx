@@ -32,7 +32,9 @@ export const TranslatedLabel: React.FC<Props> = ({
   const [result, setResult] = useState<{ translated: string | null; source: "bsdd" | "auto" | null }>({ translated: null, source: null });
   const [loading, setLoading] = useState(true);
 
-  const showTranslation = translationMode !== "OFF" && officialName?.trim();
+  /** Když showCzTranslations je zapnuto: používáme editovatelná *_CZ políčka místo TranslatedLabel.
+   *  Když je vypnuto: uživatel nechce žádné překlady. V obou případech TranslatedLabel nepřekládá. */
+  const showTranslation = false;
 
   useEffect(() => {
     if (!showTranslation || !officialName) {

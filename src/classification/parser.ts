@@ -237,3 +237,27 @@ export const updateLeafMappedValue = (
     }
     return node;
   });
+
+/** Aktualizuje ifcEntity a predefinedType u uzlu se zadaným code; vrací nový strom (imutabilně). */
+export const updateLeafIfcEntityPredefinedType = (
+  nodes: ClassificationNode[],
+  code: string,
+  ifcEntity: string,
+  predefinedType: string,
+): ClassificationNode[] =>
+  nodes.map((node) => {
+    if (node.code === code) {
+      return {
+        ...node,
+        ifcEntity: ifcEntity || undefined,
+        predefinedType: predefinedType || undefined,
+      };
+    }
+    if (node.children.length) {
+      return {
+        ...node,
+        children: updateLeafIfcEntityPredefinedType(node.children, code, ifcEntity, predefinedType),
+      };
+    }
+    return node;
+  });

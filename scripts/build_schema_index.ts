@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { XMLParser } from "fast-xml-parser";
+import { parseIfcXsd, getEntityAttributesFromXsd } from "./parse_ifc_xsd";
 
 type PropertyDefinition = {
   name: string;
@@ -21,8 +22,16 @@ type QuantitySetDefinition = {
 
 type PsetAssignment = string | { name: string; forPredefinedType?: string };
 
+type AttributeDefinition = {
+  name: string;
+  dataType: string;
+  isOptional: boolean;
+  allowedValues?: string[];
+};
+
 type SchemaEntity = {
   name: string;
+  attributes: AttributeDefinition[];
   standardPsets: PsetAssignment[];
   standardQtoSets: PsetAssignment[];
   predefinedTypeValues: string[];
@@ -37,6 +46,7 @@ type SchemaIndex = {
 
 const INPUT_PATH = path.resolve("IFC_4x3.json");
 const PSET_QTO_DIR = path.resolve("IFC_4x3_Pset_Qto_Def");
+const XSD_PATH = path.resolve("IFC_4x3", "IFC4X3_ADD2.xsd");
 const OUTPUT_DIR = path.resolve("public/ifc");
 const OUTPUT_PATH = path.join(OUTPUT_DIR, "schema_index_ifc4x3.json");
 
@@ -217,6 +227,16 @@ const buildIndex = (): SchemaIndex => {
   const classes: any[] = raw.Classes ?? [];
   const properties: any[] = raw.Properties ?? [];
 
+  // Parse XSD for entity attributes and enums (fallback to empty if XSD missing)
+  let xsdParsed: ReturnType<typeof parseIfcXsd> | null = null;
+  if (fs.existsSync(XSD_PATH)) {
+    try {
+      xsdParsed = parseIfcXsd(XSD_PATH);
+    } catch (err) {
+      console.warn("⚠️ Nepodařilo se načíst IFC XSD, atributy budou omezené:", err);
+    }
+  }
+
   const propertiesByCode = new Map<string, any>();
   properties.forEach((p) => {
     if (p?.Code) propertiesByCode.set(p.Code, p);
@@ -237,11 +257,28 @@ const buildIndex = (): SchemaIndex => {
     cls.Description.toLowerCase().includes("predefined type") &&
     !!cls.ParentClassCode;
 
+  // Resolve attributes for entity: prefer XSD, fallback to base list
+  const getAttributesForEntity = (entityCode: string): AttributeDefinition[] => {
+    if (xsdParsed) {
+      const attrs = getEntityAttributesFromXsd(entityCode, xsdParsed);
+      if (attrs.length > 0) return attrs;
+    }
+    // Fallback: base attributes only when XSD has no match
+    return [
+      { name: "GlobalId", dataType: "IfcGloballyUniqueId", isOptional: false },
+      { name: "Name", dataType: "IfcLabel", isOptional: true },
+      { name: "Description", dataType: "IfcText", isOptional: true },
+      { name: "Tag", dataType: "IfcIdentifier", isOptional: true },
+      { name: "ObjectType", dataType: "IfcLabel", isOptional: true },
+    ];
+  };
+
   // First pass: create main entities (skip predefined variants)
   for (const cls of classes) {
     if (!cls?.Code || isPredefinedVariant(cls)) continue;
     const entity: SchemaEntity = {
       name: cls.Code,
+      attributes: getAttributesForEntity(cls.Code),
       standardPsets: [],
       standardQtoSets: [],
       predefinedTypeValues: [],
@@ -308,6 +345,17 @@ const buildIndex = (): SchemaIndex => {
       entity.predefinedTypeValues.push("USERDEFINED");
     }
     entity.predefinedTypeValues = Array.from(new Set(entity.predefinedTypeValues));
+
+    // Add PredefinedType attribute for entities that have predefined types but don't have it yet
+    const hasPredefinedAttr = entity.attributes.some((a) => a.name === "PredefinedType");
+    if (!hasPredefinedAttr && entity.predefinedTypeValues.length > 0) {
+      entity.attributes.push({
+        name: "PredefinedType",
+        dataType: "IfcLabel",
+        isOptional: true,
+        allowedValues: [...entity.predefinedTypeValues],
+      });
+    }
   }
 
   // Override pset definitions from XML source when available

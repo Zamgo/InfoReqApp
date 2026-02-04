@@ -1,0 +1,333 @@
+ASR	architektonicko stavebni reseni	1		
+ASR.KAN	domovni kanalizace (KAN)	2		
+G-JD-XKE	vpust KAN	3		IfcWasteTerminal
+S-RC	zarizovaci predmet KAN	3		IfcSanitaryTerminal
+ASR.MAP	mistnosti a prostory	2		
+	mistnost	3		IfcSpace
+	parkovaci misto	3		IfcSpace
+ASR.STR	stresni konstrukce	2		
+D-AE-NCE	plast strechy	3		IfcSlab
+ASR.SVK	svisle konstrukce	2		
+G-JA-FN_	komin	3		IfcChimney
+B-AD-ULM	stena - nenosna	3		IfcWall
+ASR.VKF	vnejsi obalove konstrukce a fasady	2		
+B-AD-FSB	fasadni nater	3		IfcCovering
+B-AD-RQA	kontaktni zateplovaci system	3		IfcCovering
+B-AD-NCB	lehky obvodovy plast (LOP)	3		IfcCurtainWall
+B-AD-NCB	obklad - venkovni	3		IfcCovering
+B-AD-NCB	provetravana fasada	3		IfcCovering
+B-AD-QQA	sklepni svetlik	3		IfcWindow
+B-AD-RQD	stinici prvek - slunolam apod.	3		IfcShadingDevice
+B-AD-RQF	stinici prvek - zaluzie a roleta	3		IfcShadingDevice
+ASR.VUP	vnitrni upravy povrchu	2		
+B-AD-FSB	malba	3		IfcCovering
+B-AD-NCB	obklad - vnitrni	3		IfcCovering
+B-AD-FSA	omitka - vnitrni	3		IfcCovering
+B-AD-NCB	tapeta	3		IfcCovering
+ASR.VOK	vodorovne kontrukce	2		
+C-BC-NCD	podhled	3		IfcSlab
+A-BB	podkladni beton	3		IfcSlab
+C-AC-NCC	podlaha	3		IfcCovering
+B-AD-ULE	preklad	3		IfcBeam
+ASR.VOT	vyplne otvoru	2		
+B-AD-QQC	dvere - vnitrni	3		IfcDoor
+B-AD-QQA	okno	3		IfcWindow
+B-AD-QQE	vrata	3		IfcDoor
+B-AD-QQD	vylez a poklop	3		IfcDoor
+ASR.VYK	vyrobky - klempirske	2		
+G-JD-WMC	oplechovani atiky	3		IfcPlate
+G-JD-WMC	parapet	3		IfcPlate
+G-JD-WPA	stresni svod	3		IfcPipeSegment
+G-JD-WMB	stresni zlab	3		IfcPipeSegment
+ASR.VYO	vyrobky - ostatni	2		
+B-AD-RQD	revizni dvirka	3		IfcDoor
+B-AD-RQD	vetraci mrizka a protidestova zaluzie	3		IfcAirTerminal
+ASR.VYT	vyrobky - truhlarske	2		
+S-RB-CLB	nabytek - vestaveny - kuchynska linka a recepcni pult	3		IfcFurniture
+ASR.VYZ	vyrobky - zamecnicke	2		
+G-FQ-FQA	bezpecnostni mriz	3		IfcRailing
+S-RB-FQD	zabradli	3		IfcRailing
+G-XS-XSC	zebrik	3		IfcStairFlight
+ASR.ZAO	zarizeni - ostatni	2		
+N-JM-GMC	eskalator, travelator	3		IfcTransportElement
+N-JM-GMC	vytah	3		IfcTransportElement
+ASR.ZAP	zarizovaci predmety, vpusti	2		
+G-JD-XKE	vpust	3		IfcWasteTerminal
+G-JD-XKA	zarizovaci predmet	3		IfcSanitaryTerminal
+I	interier	1		
+I.NAB	nabytek	2		
+S-RB	nabytek - ostatni	3		IfcFurniture
+S-RB-CLB	nabytek - vestaveny	3		IfcFurniture
+SKR	stavebne konstrukcni cast	1		
+SKR.OPK	operne konstrukce	2		
+U-UL-ULL	operna stena - beton	3		IfcWall
+U-UL-ULL	operna stena - gabion	3		IfcWall
+U-UL-ULL	operna stena - zdivo	3		IfcWall
+U-UL-ULL	operna stena - zelezobeton	3		IfcWall
+SKR.SCH	schodiste a rampy	2		
+N-AG-XSD	rampa - beton	3		IfcRampFlight
+N-AG-XSD	rampa - drevo	3		IfcRampFlight
+N-AG-XSD	rampa - ocel	3		IfcRampFlight
+N-AG-XSD	rampa - sklo	3		IfcRampFlight
+N-AG-XSD	rampa - smisena	3		IfcRampFlight
+N-AG-XSD	rampa - zdivo	3		IfcRampFlight
+N-AG-XSD	rampa - zelezobeton	3		IfcRampFlight
+N-AF-XSB	schodistova podesta - beton	3		IfcSlab
+N-AF-XSB	schodistova podesta - drevo	3		IfcSlab
+N-AF-XSB	schodistova podesta - ocel	3		IfcSlab
+N-AF-XSB	schodistova podesta - sklo	3		IfcSlab
+N-AF-XSB	schodistova podesta - smisena	3		IfcSlab
+N-AF-XSB	schodistova podesta - zdivo	3		IfcSlab
+N-AF-XSB	schodistova podesta - zelezobeton	3		IfcSlab
+N-AF-XSB	schodistove rameno - beton	3		IfcStairFlight
+N-AF-XSB	schodistove rameno - drevo	3		IfcStairFlight
+N-AF-XSB	schodistove rameno - ocel	3		IfcStairFlight
+N-AF-XSB	schodistove rameno - sklo	3		IfcStairFlight
+N-AF-XSB	schodistove rameno - smisene	3		IfcStairFlight
+N-AF-XSB	schodistove rameno - zdivo	3		IfcStairFlight
+N-AF-XSB	schodistove rameno - zelezobeton	3		IfcStairFlight
+SKR.SPP	specialni prvky	2		
+P-UL-ULE	izonosnik	3		IfcSlab
+F-UL-ULF	kotevni deska	3		IfcPlate
+B-UP-UPA	lozisko, vibroizolace	3		IfcBearing
+H-UM-UMK	smykovy trn	3		IfcMechanicalFastener
+SKR.SVK	svisle a vodorovne konstrukce	2		
+B-BD-ULQ	hlava piloty - beton	3		IfcFooting
+B-BD-ULQ	hlava piloty - drevo	3		IfcFooting
+B-BD-ULQ	hlava piloty - ocel	3		IfcFooting
+B-BD-ULQ	hlava piloty - zelezobeton	3		IfcFooting
+B-BD-ULQ	hlavice sloupu - beton	3		IfcSlab
+B-BD-ULQ	hlavice sloupu - drevo	3		IfcSlab
+B-BD-ULQ	hlavice sloupu - ocel	3		IfcSlab
+B-BD-ULQ	hlavice sloupu - sklo	3		IfcSlab
+B-BD-ULQ	hlavice sloupu - zdivo	3		IfcSlab
+B-BD-ULQ	hlavice sloupu - zelezobeton	3		IfcSlab
+D-BE-ULF	nosnik - drevo	3		IfcMember
+D-BE-ULF	nosnik - ocel	3		IfcMember
+D-BE-ULF	nosnik - sklo	3		IfcMember
+D-BE-ULF	nosnik - smiseny	3		IfcMember
+D-BE-ULF	nosnik - zelezobeton	3		IfcMember
+D-BE-ULE	prihradovy vaznik - drevo	3		IfcBeam
+D-BE-ULE	prihradovy vaznik - ocel	3		IfcBeam
+D-BE-ULE	prihradovy vaznik - smiseny	3		IfcBeam
+D-BE-ULE	prihradovy vaznik - zelezobeton	3		IfcBeam
+U-UL-ULD	sloup - beton	3		IfcColumn
+U-UL-ULD	sloup - drevo	3		IfcColumn
+U-UL-ULD	sloup - obecny	3		IfcColumn
+U-UL-ULD	sloup - ocel	3		IfcColumn
+U-UL-ULD	sloup - sklo	3		IfcColumn
+U-UL-ULD	sloup - zdivo	3		IfcColumn
+U-UL-ULD	sloup - zelezobeton	3		IfcColumn
+B-BD-ULM	stena - nosna - beton	3		IfcWall
+B-BD-ULM	stena - nosna - drevo	3		IfcWall
+B-BD-ULM	stena - nosna - ocel	3		IfcWall
+B-BD-ULM	stena - nosna - sklo	3		IfcWall
+B-BD-ULM	stena - nosna - zdivo	3		IfcWall
+B-BD-ULM	stena - nosna - zelezobeton	3		IfcWall
+C-BC-EQB	stropni deska - beton	3		IfcSlab
+C-BC-EQB	stropni deska - drevo	3		IfcSlab
+C-BC-EQB	stropni deska - ocel	3		IfcSlab
+C-BC-EQB	stropni deska - sklo	3		IfcSlab
+C-BC-EQB	stropni deska - smisena	3		IfcSlab
+C-BC-EQB	stropni deska - zdivo	3		IfcSlab
+C-BC-EQB	stropni deska - zelezobeton	3		IfcSlab
+D-BE-ULE	tram, pruvlak - drevo	3		IfcBeam
+D-BE-ULE	tram, pruvlak - ocel	3		IfcBeam
+D-BE-ULE	tram, pruvlak - smiseny	3		IfcBeam
+D-BE-ULE	tram, pruvlak - zelezobeton	3		IfcBeam
+SKR.ZAK	zakladove konstrukce	2		
+A-AB-ULC	pilota, mikropilota - beton	3		IfcPile
+A-AB-ULC	pilota, mikropilota - drevo	3		IfcPile
+A-AB-ULC	pilota, mikropilota - ocel	3		IfcPile
+A-AB-ULC	pilota, mikropilota - zelezobeton	3		IfcPile
+A-BB-ULK	zakladova deska - beton	3		IfcSlab
+A-BB-ULK	zakladova deska - zelezobeton	3		IfcSlab
+A-AB-ULQ	zakladova patka - beton	3		IfcFooting
+A-AB-ULQ	zakladova patka - zdivo	3		IfcFooting
+A-AB-ULQ	zakladova patka - zelezobeton	3		IfcFooting
+A-BB-ULC	zakladovy pas - beton	3		IfcFooting
+A-BB-ULC	zakladovy pas - zdivo	3		IfcFooting
+A-BB-ULC	zakladovy pas - zelezobeton	3		IfcFooting
+TZB	technicka zarizeni budov (TZB)	1		
+TZB.ATU	automaticka telefonni ustredna (ATU)	2		
+M-HJ-TFE	telefon ATU	3		IfcAudioVisualAppliance
+M-HJ-XGC	ustredna ATU	3		IfcCommunicationsAppliance
+TZB.DBS	dobijeci stanice	2		IfcOutlet
+K-HG-CCA	dobijeci stanice	3		IfcOutlet
+TZB.KAN	domovni kanalizace (KAN)	2		
+G-JD-QMA	armatura KAN	3		IfcValve
+G-JD-GPB	cerpadlo KAN	3		IfcPump
+G-KD-HQ_	cistirna odpadnich vod (COV)	3		IfcInterceptor
+G-JD-RQA	izolace potrubi KAN	3		IfcCovering
+G-JD-HMA	lapol/odlucovac KAN	3		IfcInterceptor
+G-JD-GPA	nadrz KAN	3		IfcTank
+G-JD-WPA	potrubi KAN	3		IfcPipeSegment
+G-JD-GPA	precerpavaci stanice KAN	3		IfcPump
+G-JD-XMA	sachta KAN	3		IfcDistributionChamberElement
+G-JD-WPA	tvarovka KAN	3		IfcPipeFitting
+G-JD-WMG	vsakovaci objekt	3		IfcTank
+G-JD-WMB	zlab	3		IfcPipeSegment
+TZB.PLN	domovni plynovod (PLN)	2		
+E-JA-QMB	armatura PLN	3		IfcValve
+E-JA-FNB	chranicka PLN	3		IfcPipeSegment
+P-RQ-RQA	izolace potrubi PLN	3		IfcCovering
+E-JA-BHA	plynomer PLN	3		IfcFlowMeter
+E-JA-WPA	potrubi PLN	3		IfcPipeSegment
+E-JA-WPA	tvarovka PLN	3		IfcPipeFitting
+E-JA-CMA	zasobnik PLN	3		IfcTank
+TZB.DOT	domovni telefony	2		
+S-JL-SJB	tablo/tlacitko zvonku DT	3		IfcCommunicationsAppliance
+S-JL-TFE	telefon DT	3		IfcAudioVisualAppliance
+TZB.VOD	domovni vodovod (VOD)	2		
+F-JB-QMA	armatura VOD	3		IfcValve
+F-JB-WPA	izolace potrubi VOD	3		IfcCovering
+F-JB-CMA	nadrz VOD	3		IfcTank
+F-JB-WPA	potrubi VOD	3		IfcPipeSegment
+F-JB-EBA	prutokovy ohrivac VOD	3		IfcBoiler
+F-JB-WPA	tvarovka VOD	3		IfcPipeFitting
+F-JB-HMA	upravna vody	3		IfcFilter
+F-JB-BFB	vodomerna sestava	3		IfcFlowMeter
+TZB.EPS	elektricka pozarni signalizace (EPS)	2		
+P-PA-BQA	automaticky hlasic (cidlo, senzor)	3		IfcSensor
+P-PA-UCA	klicovy trezor	3		IfcElectricAppliance
+P-PA-PJB	sirena EPS	3		IfcAlarm
+P-PA-PFA	svetelna signalizace EPS	3		IfcAlarm
+P-PA-SJB	tlacitkovy hlasic EPS	3		IfcAlarm
+P-PA-XGC	ustredna EPS	3		IfcCommunicationsAppliance
+P-PA-KEC	vstupni/vystupni zarizeni	3		IfcSensor
+TZB.EVR	evakuacni rozhlas, mistni rozhlas s nucenym odposlechem (EVAC)	2		
+P-PA-SJC	mikrofonni pult EVAC	3		IfcAudioVisualAppliance
+P-PA-PJA	reproduktor EVAC	3		IfcCommunicationsAppliance
+P-PA-TFA	ustredna, zesilovac EVAC	3		IfcAudioVisualAppliance
+TZB.FVE	fotovoltaika	2		
+K-HG-CCA	baterie	3		IfcElectricFlowStorageDevice
+K-HG-GCA	fotovoltaicky panel	3		IfcSolarDevice
+K-HG-TBB	stridac	3		IfcTransformer
+TZB.JEC	jednotny cas	2		
+M-MD-KDE	hodinova ustredna (hlavni hodiny)	3		IfcCommunicationsAppliance
+K-HJ-TFB	hodiny	3		IfcCommunicationsAppliance
+M-MD-XGA	prijimac casoveho signalu JC	3		IfcCommunicationsAppliance
+M-MD-PJC	zvonek JC	3		IfcAlarm
+TZB.MAR	mereni a regulace (MAR)	2		
+L-LC-B__	koncovy prvek MAR	3		IfcUnitaryControlElement
+TZB.PSI	pocitacove site	2		
+M-JL-KE_	ostatni prvky	3		IfcCommunicationsAppliance
+M-JL-KEC	pristupovy bod (AP)	3		IfcCommunicationsAppliance
+TZB.PZT	poplachove zabezpecovaci a tisnove systemy (PZTS)	2		
+P-PA-BGA	detektor PZTS	3		IfcSensor
+P-PA-SJB	ovladaci prvek PZTS	3		IfcActuator
+P-PA-PJB	sirena PTZS	3		IfcAlarm
+P-PA-BGA	tlacitkovy hlasic PZTS	3		IfcAlarm
+P-PA-XGC	ustredna PZTS	3		IfcCommunicationsAppliance
+TZB.ACS	pristupove a dochazkove systemy (ACS)	2		
+M-LD-BYA	ctecka	3		IfcSensor
+M-LD-XGC	terminal (ustredna) ACS	3		IfcCommunicationsAppliance
+M-LD-QSA	zamek ACS	3		IfcElectricAppliance
+TZB.SOZ	samocinne odvetravaci zarizeni (SOZ)	2		
+J-HF-RQA	izolace potrubi SOZ	3		IfcCovering
+P-PB-QNB	klapka SOZ	3		IfcDamper
+J-JJ-FN_	kompenzator delkove roztaznosti	3		IfcDuctFitting
+J-JJ-FMG	koncovy prvek SOZ	3		IfcAirTerminal
+F-FM-FMB	kourotesna klapka	3		IfcDamper
+F-FM-FMF	kourova zabrana	3		IfcWall
+S-SZ-SZA	ovladaci panel (rozvadec) SOZ	3		IfcElectricDistributionBoard
+P-PB-WPA	potrubi SOZ	3		IfcDuctSegment
+J-JJ-FMG	pozarni klapka	3		IfcDamper
+J-JJ-NED	stresni sokl a prostup SOZ	3		IfcRoof
+J-JJ-EVB	tlumic hluku SOZ	3		IfcDuctSilencer
+J-JJ-WPA	tvarovka SOZ	3		IfcDuctFitting
+P-PB-GQB	ventilator - proudovy (jet fan)	3		IfcFan
+P-PB-GQB	ventilator SOZ	3		IfcFan
+TZB.ESI	silnoprouda elektrotechnika (ESI)	2		
+K-HG-UBA	kabelova trasa a nosny system pro kabely ESI	3		IfcCableCarrierSegment
+K-HG-UCA	rozvadec ESI	3		IfcElectricDistributionBoard
+K-HG-UAC	svitidlo ESI	3		IfcLightFixture
+K-HG-TAA	transformator ESI	3		IfcTransformer
+K-HG-QAA	vypinac, spinac, cidlo ESI	3		IfcSwitchingDevice
+K-HG-XBA	vyvod ESI	3		IfcJunctionBox
+K-HG-CCA	zalozni zdroj (generator) ESI	3		IfcElectricGenerator
+K-HG-XDB	zasuvka (a podlahovy box) ESI	3		IfcOutlet
+TZB.ESL	slaboprouda elektrotechnika (ESL)	2		
+K-HJ-XGA	datova zasuvka ESL	3		IfcOutlet
+K-HG-UBA	kabelova trasa a nosny system pro kabely ESL	3		IfcCableCarrierSegment
+K-JK-XDC	rozvadec (rack) ESL	3		IfcElectricDistributionBoard
+TZB.SHZ	stabilni hasici zarizeni (SHZ)	2		
+G-JD-QMA	armatura SHZ	3		IfcValve
+P-PB-GPB	cerpadlo SHZ	3		IfcPump
+P-PB-FLE	expanzni nadoba SHZ	3		IfcTank
+P-PB-RQA	izolace potrubi SHZ	3		IfcCovering
+P-PB-GQA	kompresor	3		IfcCompressor
+P-PB-PJB	poplachovy zvon	3		IfcAlarm
+P-PB-WPA	potrubi SHZ	3		IfcPipeSegment
+P-PB-BFB	prutokovy hlasic	3		IfcSensor
+P-PB-QNA	regulacni armatura SHZ	3		IfcValve
+P-PB-RNA	sprinklerova hlavice	3		IfcFireSuppressionTerminal
+P-PB-CMA	tlakova lahev SHZ	3		IfcTank
+K-PB-FLA	tlakovy spinac SHZ	3		IfcActuator
+P-PB-RNB	tryska	3		IfcFireSuppressionTerminal
+P-PB-WPB	tvarovka SHZ	3		IfcPipeFitting
+P-PB-QMB	ventilova stanice SHZ	3		IfcValve
+P-PB-CLA	zaplavovaci nadrz SHZ	3		IfcTank
+TZB.STA	televizni a satelitni systemy (STA)	2		
+K-HJ-TFB	antena	3		IfcCommunicationsAppliance
+K-HJ-GPA	prvek STA	3		IfcCommunicationsAppliance
+TZB.UTC	ustredni topeni a chlazeni (UTC)	2		
+H-JG-WPA	armatura UTC	3		IfcValve
+H-JG-XMA	doplnovani vody UTC	3		IfcPump
+H-JG-FLE	expanzni zarizeni UTC	3		IfcTank
+H-JF-EQE	fan-coil	3		IfcUnitaryEquipment
+H-JG-RQA	izolace potrubi UTC	3		IfcCovering
+H-JG-EPD	konvektor UTC	3		IfcSpaceHeater
+H-JG-EMB	kotel	3		IfcBoiler
+H-JG-PGF	meridlo UTC	3		IfcFlowMeter
+H-JG-GPB	obehove cerpadlo UTC	3		IfcPump
+G-JG-EVB	odlucovac	3		IfcInterceptor
+H-JG-EPC	otopne teleso UTC	3		IfcSpaceHeater
+H-JG-FLA	pojistna armatura	3		IfcValve
+F-JB-GBP	posilovaci stanice UTC	3		IfcPump
+H-JG-WPA	potrubi UTC	3		IfcPipeSegment
+P-PB-QNA	regulacni armatura UTC	3		IfcValve
+H-JG-XKE	rozdelovac a sberac UTC	3		IfcPipeFitting
+H-JG-GRA	solarni kolektor UTC	3		IfcSolarDevice
+H-JG-EGA	tepelne cerpadlo UTC	3		IfcUnitaryEquipment
+H-JG-EGC	tepelny vymenik	3		IfcHeatExchanger
+H-JG-WPA	tvarovka UTC	3		IfcPipeFitting
+H-JG-HQB	upravna kapaliny	3		IfcFilter
+H-JG-EBB	velkoplosne vytapeni - elektricke	3		IfcCoil
+H-JG-EGA	venkovni jednotka	3		IfcCondenser
+H-JG-EGC	vnitrni jednotka	3		IfcEvaporator
+H-JG-EGC	vymenikova stanice	3		IfcHeatExchanger
+H-JG-EBA	zasobnik UTC	3		IfcBoiler
+TZB.CCT	uzavreny televizni okruh (CCTV)	2		
+M-MB-BXC	kamera	3		IfcAudioVisualAppliance
+M-MB-KEE	rekorder	3		IfcAudioVisualAppliance
+TZB.UAB	uzemneni a bleskosvody	2		
+P-PD-XED	jimaci tyc a stozar ESI	3		IfcCableSegment
+P-PD-XEE	uzemnovaci bod/ekvipotencionalni svorkovnice	3		IfcCableFitting
+P-PD-XEB	vodic a pasek - bleskosvod	3		IfcCableSegment
+P-PD-XEE	zemnici tyc	3		IfcCableSegment
+TZB.VZT	vzduchotechnika (VZT)	2		
+J-JJ-WPA	derovane potrubi VZT	3		IfcAirTerminal
+J-JJ-RQD	dverni clona	3		IfcAirTerminal
+J-JJ-FQA	dverni mrizka	3		IfcAirTerminal
+J-JJ-HQA	filtracni jednotka VZT	3		IfcFilter
+J-JJ-HQB	filtracni komora	3		IfcFilter
+J-JJ-RQA	izolace potrubi VZT	3		IfcCovering
+J-JJ-QMB	klapka VZT	3		IfcDamper
+J-JJ	koncovy prvek VZT	3		IfcAirTerminal
+J-JJ-FQA	kryci mrizka	3		IfcAirTerminal
+J-JJ-WPA	odsavaci rameno VZT	3		IfcAirTerminal
+J-JJ-RNB	odsavaci zakryt a strop	3		IfcAirTerminal
+J-JJ-HPA	odvlhcovac VZT	3		IfcUnitaryEquipment
+J-JJ-WPA	potrubi VZT	3		IfcDuctSegment
+J-JJ-EBD	potrubni vymenik (ohrivac/chladic) VZT	3		IfcHeatExchanger
+J-JJ-KEC	prislusenstvi VZT	3		IfcDuctFitting
+H-JG-KHB	regulacni a uzaviraci ventil, klapka VZT	3		IfcValve
+J-JJ-XTA	revizni otvor	3		IfcDuctSegment
+J-JJ-NED	stresni sokl a prostup VZT	3		IfcRoof
+J-JJ-WPB	tvarovka VZT	3		IfcDuctFitting
+J-JJ-GQB	ventilator VZT	3		IfcFan
+	vetrany prostor a zona	3		IfcSpatialZone
+J-JJ-RNB	vzduchotechnicka (VZT) jednotka	3		IfcUnitaryEquipment
+J-JJ-RNB	vzduchova sprcha VZT	3		IfcAirTerminal
+J-JJ-HWB	zvlhcovac VZT	3		IfcHumidifier

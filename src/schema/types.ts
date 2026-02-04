@@ -25,6 +25,8 @@ export interface AttributeDefinition {
   name: string;
   dataType: string;
   isOptional: boolean;
+  /** Allowed values for enum-type attributes (e.g. IfcDoorTypeOperationEnum) */
+  allowedValues?: string[];
 }
 
 export interface SchemaEntity {

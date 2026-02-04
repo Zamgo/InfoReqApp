@@ -8,9 +8,9 @@ import { generateHumanReadable, filterObjectByPhase, matchesOccurrenceFilter } f
 import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
-import { TranslatedLabel } from "./TranslatedLabel";
 import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition, fetchClassDefinition, getEntityClassUri, getPredefinedTypeClassUri } from "../../translation/translators/BsddTranslator";
 import { translateViaApi } from "../../translation/translators/MtApiTranslator";
+import { translate } from "../../translation/TranslationService";
 import { useTranslation } from "../../translation/TranslationContext";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
@@ -366,14 +366,18 @@ const CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "LENGTH", label: "Délka" },
 ];
 
-// Mapování IFC atributů na jejich datové typy
-const ATTRIBUTE_DATA_TYPES: Record<string, string> = {
+// Záložní mapování IFC atributů (používá se pokud schema nemá definici)
+const ATTRIBUTE_DATA_TYPES_FALLBACK: Record<string, string> = {
   Name: "IfcLabel",
   Description: "IfcText",
   Tag: "IfcIdentifier",
   ObjectType: "IfcLabel",
   GlobalId: "IfcGloballyUniqueId",
   PredefinedType: "IfcLabel",
+  OperationType: "IfcDoorTypeOperationEnum",
+  OverallHeight: "IfcPositiveLengthMeasure",
+  OverallWidth: "IfcPositiveLengthMeasure",
+  UserDefinedOperationType: "IfcLabel",
 };
 
 // Omezení pro atributy - stejné jako u vlastností
@@ -395,9 +399,9 @@ const MATERIAL_CONSTRAINT_OPTIONS: Array<{ value: string; label: string }> = [
 ];
 
 // Funkce pro zjištění, zda je omezení povoleno pro datový typ atributu
-const isAttributeConstraintAllowed = (attribute: string, constraint: string) => {
-  const dataType = ATTRIBUTE_DATA_TYPES[attribute] ?? "IfcLabel";
-  return isConstraintAllowedForDataType(dataType, constraint);
+const isAttributeConstraintAllowed = (attribute: string, constraint: string, dataType?: string) => {
+  const dt = dataType ?? ATTRIBUTE_DATA_TYPES_FALLBACK[attribute] ?? "IfcLabel";
+  return isConstraintAllowedForDataType(dt, constraint);
 };
 
 const isIfcBooleanType = (dataType?: string) => (dataType ?? "").trim().toLowerCase() === "ifcboolean";
@@ -1683,7 +1687,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [classificationColumnMenuOpen, setClassificationColumnMenuOpen] = useState(false);
   /** Načítání Definition pro popis objektu: "entity" | "typ" | null */
   const [loadingObjectDefinition, setLoadingObjectDefinition] = useState<"entity" | "typ" | null>(null);
-  const { translationMode } = useTranslation();
+  const { translationMode, showCzTranslations, czTranslationSource } = useTranslation();
   /** Kontext roztahování: tabulka + index sloupce */
   const [resizingContext, setResizingContext] = useState<{ table: "attribute" | "partOf" | "material" | "classification" | "property"; col: number } | null>(null);
   const resizingStartX = useRef(0);
@@ -1920,6 +1924,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     return defs.filter((d) => !used.has(d.name));
   };
 
+  /** Normalizace pro porovnání: "není definováno" a "NOTDEFINED" jsou ekvivalentní (dropdown byl změněn z českého na IFC) */
+  const normalizePredefinedForCompare = (v: string | undefined): string | undefined => {
+    if (!v) return v;
+    const s = (v ?? "").trim();
+    return s.toLowerCase() === "není definováno" ? "NOTDEFINED" : s;
+  };
+
   const normalizeAssignment = (item: any) => {
     if (!item) return { name: "" };
     if (typeof item === "string") return { name: item as string, forPredefinedType: undefined as string | undefined };
@@ -1936,7 +1947,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       }
       const row = map.get(name)!;
       if (!it.forPredefinedType) row.hasGeneric = true;
-      else row.predefinedTypes.add(it.forPredefinedType);
+      else row.predefinedTypes.add(normalizePredefinedForCompare(it.forPredefinedType) ?? it.forPredefinedType);
     });
     return Array.from(map.values())
       .map((v) => ({
@@ -1957,13 +1968,24 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     return (selectedEntity.standardQtoSets || []).map((q) => normalizeAssignment(q));
   }, [selectedEntity]);
 
+  /** Při režimu NONE dropdown zobrazuje NOTDEFINED – pro filtrování Pset/Qto ho takto chápeme */
+  const effectivePredefinedValue = selectedPredefinedValue ?? (object.predefinedType.mode === "NONE" ? "NOTDEFINED" : undefined);
+
   const allowedPsets = useMemo(() => {
-    return allPsets.filter((p) => !p.forPredefinedType || (selectedPredefinedValue && p.forPredefinedType === selectedPredefinedValue));
-  }, [allPsets, selectedPredefinedValue]);
+    return allPsets.filter(
+      (p) =>
+        !p.forPredefinedType ||
+        (effectivePredefinedValue && normalizePredefinedForCompare(p.forPredefinedType) === normalizePredefinedForCompare(effectivePredefinedValue)),
+    );
+  }, [allPsets, effectivePredefinedValue]);
 
   const allowedQtos = useMemo(() => {
-    return allQtos.filter((q) => !q.forPredefinedType || (selectedPredefinedValue && q.forPredefinedType === selectedPredefinedValue));
-  }, [allQtos, selectedPredefinedValue]);
+    return allQtos.filter(
+      (q) =>
+        !q.forPredefinedType ||
+        (effectivePredefinedValue && normalizePredefinedForCompare(q.forPredefinedType) === normalizePredefinedForCompare(effectivePredefinedValue)),
+    );
+  }, [allQtos, effectivePredefinedValue]);
 
   const invalidSchemaGroups = useMemo(() => {
     return propertyGroups
@@ -1971,7 +1993,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       .filter((g) => !!g.psetName && !g.psetName!.startsWith("_NEW_"))
       .filter((g) => !isGroupAllowed(g.source, g.psetName))
       .map((g) => ({ key: g.key, source: g.source, name: g.psetName as string }));
-  }, [propertyGroups, selectedEntity, selectedPredefinedValue, allowedPsets, allowedQtos]);
+  }, [propertyGroups, selectedEntity, effectivePredefinedValue, allowedPsets, allowedQtos]);
 
   const updateObject = (partial: Partial<ProjectObject>) => {
     if (isLocked) return;
@@ -2006,12 +2028,32 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const handleIfcEntityChange = (value: string) => {
-    // Při změně IFC entity resetujeme PredefinedType na NONE a popis objektu
-    updateObject({ 
+    if (isLocked) return;
+    const baseUpdate: Partial<ProjectObject> = { 
       ifcEntity: value,
       predefinedType: { mode: "NONE" },
       popis: "",
-    });
+    };
+    // Odstraníme neplatné hodnoty výčtu u atributů (atribut může mít jiný enum pro jinou entitu)
+    const newEntityAttrs = schema?.entities[value]?.attributes;
+    if (Array.isArray(newEntityAttrs)) {
+      const attrDefs = new Map(newEntityAttrs.map((a: { name: string; allowedValues?: string[] }) => [a.name, a]));
+      const cleanedAttrs = object.requirements.attributes.map((attr) => {
+        if (attr.constraint !== "ENUM" || !attr.value) return attr;
+        const def = attrDefs.get(attr.attribute);
+        if (!def?.allowedValues?.length) return { ...attr, value: "" }; // atribut bez výčtu pro novou entitu -> vyčistit
+        const currentValues = parseEnumValues(attr.value);
+        const validValues = currentValues.filter((v) => def.allowedValues!.includes(v));
+        return { ...attr, value: formatEnumValues(validValues) };
+      });
+      onChange({
+        ...object,
+        ...baseUpdate,
+        requirements: { ...object.requirements, attributes: cleanedAttrs },
+      });
+    } else {
+      onChange({ ...object, ...baseUpdate });
+    }
   };
 
   const looksLikeCzech = (t: string) => /[ěščřžýáíéúůďťň]/i.test(t);
@@ -2070,30 +2112,71 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     }
   }, [object.ifcEntity, object.predefinedType, object.popis, updateObject, translationMode]);
 
+  /** Automatické vyplnění prázdných políček CZ z nastaveného zdroje překladu */
+  const shouldAutoFillCz = showCzTranslations && (czTranslationSource === "BSDD" || czTranslationSource === "AUTO");
+
+  useEffect(() => {
+    if (!shouldAutoFillCz || !object.ifcEntity?.trim() || object.ifcEntityCz?.trim()) return;
+    const cancelled = { current: false };
+    translate(czTranslationSource, { type: "entity", officialName: object.ifcEntity }).then((r) => {
+      if (!cancelled.current && r.translated?.trim()) updateObject({ ifcEntityCz: r.translated.trim() });
+    });
+    return () => { cancelled.current = true; };
+  }, [shouldAutoFillCz, object.ifcEntity, object.ifcEntityCz, czTranslationSource, updateObject]);
+
+  useEffect(() => {
+    const pt = object.predefinedType?.mode === "ENUM" ? object.predefinedType?.value?.trim() : "";
+    if (!shouldAutoFillCz || !object.ifcEntity?.trim() || !pt || object.predefinedTypeCz?.trim()) return;
+    const cancelled = { current: false };
+    translate(czTranslationSource, { type: "predefinedType", officialName: pt, context: { entity: object.ifcEntity } }).then((r) => {
+      if (!cancelled.current && r.translated?.trim()) updateObject({ predefinedTypeCz: r.translated.trim() });
+    });
+    return () => { cancelled.current = true; };
+  }, [shouldAutoFillCz, object.ifcEntity, object.predefinedType, object.predefinedTypeCz, czTranslationSource, updateObject]);
+
+  const getAttributeDefinition = (attrName: string) => {
+    const attrs = object.ifcEntity && schema?.entities[object.ifcEntity]?.attributes;
+    if (!Array.isArray(attrs)) return undefined;
+    return attrs.find((a: { name: string }) => a.name === attrName);
+  };
+
+  const getEnumAllowedValuesForAttribute = (attrName: string): string[] | undefined => {
+    const def = getAttributeDefinition(attrName);
+    if (def?.allowedValues && def.allowedValues.length > 0) return def.allowedValues;
+    return undefined;
+  };
+
   const getAvailableAttributes = (currentId?: string) => {
-    const allAttributes = ["Name", "Description", "Tag", "ObjectType", "GlobalId"];
+    const entityAttrs = object.ifcEntity && schema?.entities[object.ifcEntity]?.attributes;
+    const attrsArray = Array.isArray(entityAttrs) ? entityAttrs : [];
+    const allAttributes = attrsArray.length > 0 ? attrsArray.map((a: { name: string }) => a.name) : ["Name", "Description", "Tag", "ObjectType", "GlobalId"];
     const used = new Set(
       object.requirements.attributes
         .filter((a) => a.id !== currentId && a.attribute !== "PredefinedType")
         .map((a) => a.attribute),
     );
-    return allAttributes.filter((attr) => !used.has(attr));
+    return allAttributes.filter((attr: string) => !used.has(attr) && attr !== "PredefinedType");
   };
 
   const addAttribute = () => {
     const availableAttributes = getAvailableAttributes();
     if (availableAttributes.length === 0) return; // Všechny atributy jsou již použité
-    
+
     const firstUnused = availableAttributes[0];
+    const attrDef = getAttributeDefinition(firstUnused);
+    const dataType = attrDef?.dataType ?? ATTRIBUTE_DATA_TYPES_FALLBACK[firstUnused] ?? "IfcLabel";
+    const allowedValues = attrDef?.allowedValues;
+    const useEnum = allowedValues && allowedValues.length > 0;
+
     updateRequirements((reqs) => {
       reqs.attributes.push({
         id: makeId(),
         attribute: firstUnused,
-        dataType: ATTRIBUTE_DATA_TYPES[firstUnused] ?? "IfcLabel",
+        dataType,
         required: true,
         occurrence: "optional",
-        constraint: "FILLED",
-        value: "",
+        constraint: useEnum ? "ENUM" : "FILLED",
+        value: useEnum ? formatEnumValues(allowedValues) : "",
         unit: "",
         popis: "",
         note: "",
@@ -2324,6 +2407,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       reqs.properties = reqs.properties.map((p) => {
         if (groupKey(p.source, p.psetName) !== groupKeyValue) return p;
         const updated = { ...p, psetName: trimmed };
+        // Při změně názvu skupiny vymazat psetNameCz – auto-fill doplní překlad nového názvu
+        if (p.psetName !== trimmed) {
+          updated.psetNameCz = undefined;
+        }
         if (p.source === "CUSTOM") {
           // Vymazat lokální hodnotu a chybu po úspěšné aktualizaci
           setCustomGroupNames((prev) => {
@@ -2758,13 +2845,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         const prev = reqs.attributes[idx];
         let next = { ...prev, ...patch };
         
-        // Pokud se změní atribut, aktualizujeme datový typ
+        // Pokud se změní atribut, aktualizujeme datový typ a případně constraint+value z IFC schématu
         if (patch.attribute !== undefined) {
-          next.dataType = ATTRIBUTE_DATA_TYPES[patch.attribute] ?? "IfcLabel";
+          const attrDef = getAttributeDefinition(patch.attribute);
+          next.dataType = attrDef?.dataType ?? ATTRIBUTE_DATA_TYPES_FALLBACK[patch.attribute] ?? "IfcLabel";
+          if (attrDef?.allowedValues?.length) {
+            next.constraint = "ENUM";
+            next.value = formatEnumValues(attrDef.allowedValues);
+          }
         }
         
         // Zajistíme, že omezení je platné pro daný atribut
-        if (next.constraint && !isAttributeConstraintAllowed(next.attribute, next.constraint)) {
+        if (next.constraint && !isAttributeConstraintAllowed(next.attribute, next.constraint, next.dataType)) {
           next = { ...next, constraint: "FILLED", value: "" };
         }
         
@@ -2779,6 +2871,43 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       if (idx >= 0) reqs.relations[idx] = { ...reqs.relations[idx], ...patch };
     });
   };
+
+  /** Zda vypadá jako placeholder překlad (např. "NOVÝ 29A76920-0" z překladu _NEW_uuid) */
+  const looksLikePlaceholderCz = useCallback((s: string | undefined) =>
+    !!s?.trim() && /^NOVÝ\s+[0-9a-fA-F-]+/i.test(s.trim()), []);
+
+  /** Automatické vyplnění prázdných CZ políček u požadavků */
+  useEffect(() => {
+    if (!shouldAutoFillCz) return;
+    const fill = async () => {
+      for (const attr of object.requirements.attributes) {
+        if (attr.attribute?.trim() && (!attr.attributeCz?.trim() || looksLikePlaceholderCz(attr.attributeCz))) {
+          const r = await translate(czTranslationSource, { type: "property", officialName: attr.attribute, context: { entity: object.ifcEntity } });
+          if (r.translated?.trim()) updateAttributeField(attr.id, { attributeCz: r.translated.trim() });
+        }
+      }
+      for (const prop of object.requirements.properties) {
+        const needsPsetCz = prop.psetName?.trim() && !prop.psetName.startsWith("_NEW_") && (!prop.psetNameCz?.trim() || looksLikePlaceholderCz(prop.psetNameCz));
+        if (needsPsetCz) {
+          const type = prop.psetName!.startsWith("Qto_") ? "qto" : "pset";
+          const r = await translate(czTranslationSource, { type, officialName: prop.psetName! });
+          if (r.translated?.trim()) updatePropertyField(prop.id, { psetNameCz: r.translated.trim() });
+        }
+        const needsPropCz = prop.propertyName?.trim() && !prop.propertyName.startsWith("_NEW_") && (!prop.propertyNameCz?.trim() || looksLikePlaceholderCz(prop.propertyNameCz));
+        if (needsPropCz) {
+          const r = await translate(czTranslationSource, { type: "property", officialName: prop.propertyName, context: { psetName: prop.psetName } });
+          if (r.translated?.trim()) updatePropertyField(prop.id, { propertyNameCz: r.translated.trim() });
+        }
+      }
+      for (const rel of object.requirements.relations) {
+        if (rel.entityType?.trim() && !rel.entityTypeCz?.trim()) {
+          const r = await translate(czTranslationSource, { type: "entity", officialName: rel.entityType });
+          if (r.translated?.trim()) updateRelationField(rel.id, { entityTypeCz: r.translated.trim() });
+        }
+      }
+    };
+    void fill();
+  }, [shouldAutoFillCz, czTranslationSource, object.requirements.attributes, object.requirements.properties, object.requirements.relations, object.ifcEntity, looksLikePlaceholderCz, updateAttributeField, updatePropertyField, updateRelationField]);
 
   const removeRequirement = (type: keyof ProjectObject["requirements"], id: string) => {
     updateRequirements((reqs) => {
@@ -3042,11 +3171,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </option>
                   ))}
                 </select>
-                {object.ifcEntity && (
-                  <span className="text-sm text-slate-500">
-                    <span className="mx-1 text-slate-300">—</span>
-                    <TranslatedLabel type="entity" officialName={object.ifcEntity} inline translationOnly />
-                  </span>
+                {showCzTranslations && object.ifcEntity && (
+                  <input
+                    className="min-w-[100px] max-w-[140px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                    placeholder="CZ"
+                    value={object.ifcEntityCz ?? ""}
+                    onChange={(e) => updateObject({ ifcEntityCz: e.target.value || undefined })}
+                    title="Překlad entity do češtiny"
+                  />
                 )}
                 <span className="text-xs text-slate-600 shrink-0">Fáze</span>
                 <PhaseSelector
@@ -3072,17 +3204,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     onChange={(e) => updateObject({ predefinedType: { mode: "USERDEFINED", value: e.target.value }, popis: "" })}
                   />
                 )}
-                {object.predefinedType.mode === "ENUM" && object.predefinedType.value && (
-                  <span className="text-sm text-slate-500">
-                    <span className="mx-1 text-slate-300">—</span>
-                    <TranslatedLabel
-                      type="predefinedType"
-                      officialName={object.predefinedType.value}
-                      context={{ entity: object.ifcEntity }}
-                      inline
-                      translationOnly
-                    />
-                  </span>
+                {showCzTranslations && object.predefinedType.mode === "ENUM" && object.predefinedType.value && (
+                  <input
+                    className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                    placeholder="CZ"
+                    value={object.predefinedTypeCz ?? ""}
+                    onChange={(e) => updateObject({ predefinedTypeCz: e.target.value || undefined })}
+                    title="Překlad PredefinedType do češtiny"
+                  />
                 )}
                 <span className="text-xs text-slate-600 shrink-0">Fáze</span>
                 <PhaseSelector
@@ -3336,35 +3465,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     .filter((p) => p.isApplicability && (p.psetName || p.propertyName))
                     .map((prop) => {
                       const propPhases = prop.phases ?? phases.map(p => p.id);
-                      const showTranslation = (prop.source === "PSET" || prop.source === "QTO") && (prop.psetName || prop.propertyName);
                       return (
                         <div key={prop.id} className="rounded px-2 py-1.5 text-xs bg-white border border-slate-200">
                           <div className="flex items-center justify-between gap-2">
-                            {showTranslation && prop.propertyName ? (
-                              <TranslatedLabel
-                                type="property"
-                                officialName={prop.propertyName}
-                                context={{ psetName: prop.psetName }}
-                                inline
-                              />
-                            ) : (
-                              <span className="font-semibold text-slate-800">{prop.propertyName || "—"}</span>
-                            )}
+                            <span className="font-semibold text-slate-800">{prop.propertyName || "—"}</span>
                           </div>
                           <div className="mt-0.5 flex flex-wrap items-baseline gap-x-1 text-slate-500">
-                            {prop.psetName
-                              ? showTranslation
-                                ? (
-                                  <span>
-                                    <TranslatedLabel
-                                      type={prop.source === "QTO" ? "qto" : "pset"}
-                                      officialName={prop.psetName}
-                                      inline
-                                    />
-                                  </span>
-                                )
-                                : <span>{prop.psetName}</span>
-                              : null}
+                            {prop.psetName ? <span>{prop.psetName}</span> : null}
                             {prop.value && <span>• {prop.value}</span>}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1">
@@ -3696,13 +3803,23 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </thead>
                   <tbody>
                     {visibleAttributes.map((attr) => {
-                      const dataType = attr.dataType ?? ATTRIBUTE_DATA_TYPES[attr.attribute] ?? "IfcLabel";
+                      const dataType = attr.dataType ?? getAttributeDefinition(attr.attribute)?.dataType ?? ATTRIBUTE_DATA_TYPES_FALLBACK[attr.attribute] ?? "IfcLabel";
                       const isDisabled = attr.constraint === "FILLED" || attr.constraint === undefined;
                       const isPattern = attr.constraint === "PATTERN";
                       const isEnum = attr.constraint === "ENUM";
+                      const attrDefForEntity = getAttributeDefinition(attr.attribute);
+                      const attrNotForEntity = !!object.ifcEntity && !attrDefForEntity;
+                      const hasInvalidEnumValues = isEnum && !!object.ifcEntity && (() => {
+                        if (attrNotForEntity) return (attr.value ?? "").trim().length > 0;
+                        const schemaVals = getEnumAllowedValuesForAttribute(attr.attribute);
+                        if (!schemaVals?.length) return false;
+                        const vals = parseEnumValues(attr.value ?? "");
+                        return vals.some((v) => !schemaVals.includes(v));
+                      })();
+                      const showAttrWarning = attrNotForEntity || hasInvalidEnumValues;
                       
                       return (
-                        <tr key={attr.id} className="border-t border-slate-200">
+                        <tr key={attr.id} className={`border-t border-slate-200 ${showAttrWarning ? "bg-red-50/50" : ""}`}>
                           {!hiddenAttributeColumns.has(0) && (
                             <td className="px-2 py-2">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" checked={selectedAttributes.has(attr.id)} onChange={() => toggleAttributeSelection(attr.id)} />
@@ -3729,16 +3846,26 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             </td>
                           )}
                           {!hiddenAttributeColumns.has(2) && (
-                            <td className="px-2 py-2">
-                            <select
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                              value={attr.attribute}
-                              onChange={(e) => updateAttributeField(attr.id, { attribute: e.target.value })}
-                            >
-                              {getAvailableAttributes(attr.id).map((opt) => (
-                                <option key={opt} value={opt}>{opt}</option>
-                              ))}
-                            </select>
+                            <td className="px-2 py-2" title={attrNotForEntity ? `Atribut ${attr.attribute} nepatří k entitě ${object.ifcEntity ?? ""}` : undefined}>
+                            <div className="flex flex-col gap-0.5">
+                              <select
+                                className={`w-full rounded border px-2 py-1 text-sm ${showAttrWarning ? "border-red-400 bg-red-50 ring-1 ring-red-200" : "border-slate-300"}`}
+                                value={attr.attribute}
+                                onChange={(e) => updateAttributeField(attr.id, { attribute: e.target.value })}
+                              >
+                                {getAvailableAttributes(attr.id).map((opt: string) => (
+                                  <option key={opt} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                              {showCzTranslations && (
+                                <input
+                                  className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                  placeholder="CZ"
+                                  value={attr.attributeCz ?? ""}
+                                  onChange={(e) => updateAttributeField(attr.id, { attributeCz: e.target.value || undefined })}
+                                />
+                              )}
+                            </div>
                             </td>
                           )}
                           {!hiddenAttributeColumns.has(3) && (
@@ -3760,7 +3887,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               onChange={(e) => updateAttributeField(attr.id, { constraint: e.target.value as any })}
                             >
                               {ATTRIBUTE_CONSTRAINT_OPTIONS.map((opt) => {
-                                const allowed = isAttributeConstraintAllowed(attr.attribute, opt.value);
+                                const allowed = isAttributeConstraintAllowed(attr.attribute, opt.value, dataType);
                                 return (
                                   <option key={opt.value} value={opt.value} disabled={!allowed}>
                                     {opt.label}
@@ -3804,6 +3931,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 const linkedCodeListId = (attr.extensions?.[ENUM_CODELIST_ID_KEY] as string | undefined) ?? undefined;
                                 const linkedCodeList = linkedCodeListId ? codeLists.find((c) => c.id === linkedCodeListId) : undefined;
                                 const values = linkedCodeList ? (linkedCodeList.values ?? []) : parseEnumValues(attr.value ?? "");
+                                const schemaEnumValues = getEnumAllowedValuesForAttribute(attr.attribute);
                                 const displayValues = values.slice(0, 24);
                                 const remaining = values.length - displayValues.length;
 
@@ -3822,7 +3950,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 };
 
                                 return (
-                                  <div className="flex flex-col gap-1">
+                                  <div className={`flex flex-col gap-1 ${showAttrWarning ? "rounded ring-1 ring-red-300 bg-red-50/30 p-1" : ""}`}>
                                     <div className="flex items-center gap-1">
                                       <select
                                         className="rounded border border-slate-300 px-2 py-1 text-xs"
@@ -3853,6 +3981,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                           title="Odpojit od číselníku (ponechat hodnoty jako inline)"
                                         >
                                           Odpojit
+                                        </button>
+                                      )}
+                                      {schemaEnumValues && schemaEnumValues.length > 0 && !linkedCodeListId && (
+                                        <button
+                                          className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50"
+                                          onClick={() => updateAttributeField(attr.id, { value: formatEnumValues(schemaEnumValues) })}
+                                          title="Zkopírovat IFC předdefinované hodnoty do výčtu"
+                                        >
+                                          Použít IFC hodnoty
                                         </button>
                                       )}
                                     </div>
@@ -3912,13 +4049,22 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     )}
 
                                     <div className="flex flex-wrap gap-1">
-                                      {displayValues.map((v) => (
-                                        <span key={v} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700" title={v}>
+                                      {displayValues.map((v) => {
+                                        const attrDef = getAttributeDefinition(attr.attribute);
+                                        const attrNotForEntity = !!object.ifcEntity && !attrDef;
+                                        const valueNotInAllowed = schemaEnumValues && schemaEnumValues.length > 0 && !schemaEnumValues.includes(v);
+                                        const isInvalid = valueNotInAllowed || attrNotForEntity;
+                                        return (
+                                        <span
+                                          key={v}
+                                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] ${isInvalid ? "bg-red-100 text-red-700 ring-1 ring-red-300" : "bg-slate-100 text-slate-700"}`}
+                                          title={isInvalid ? (attrNotForEntity ? `${v} – atribut ${attr.attribute} nepatří k entitě ${object.ifcEntity ?? ""}` : `${v} – neplatná hodnota pro entitu ${object.ifcEntity ?? ""}`) : v}
+                                        >
                                           <span>{v}</span>
                                           {!linkedCodeListId && (
                                             <button
-                                              className="text-slate-400 hover:text-slate-700"
-                                              title="Odebrat hodnotu"
+                                              className={isInvalid ? "text-red-500 hover:text-red-800" : "text-slate-400 hover:text-slate-700"}
+                                              title={isInvalid ? "Odebrat neplatnou hodnotu" : "Odebrat hodnotu"}
                                               onClick={() => {
                                                 const nextValues = values.filter((x) => x !== v);
                                                 updateAttributeField(attr.id, { value: formatEnumValues(nextValues) });
@@ -3928,7 +4074,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                             </button>
                                           )}
                                         </span>
-                                      ))}
+                                        );
+                                      })}
                                       {remaining > 0 && (
                                         <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">
                                           +{remaining}
@@ -3993,6 +4140,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 />
                               );
                             })()}
+                            {showCzTranslations && (attr.constraint !== "ENUM" || !attr.extensions?.[ENUM_CODELIST_ID_KEY]) && (
+                              <input
+                                className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                placeholder={attr.constraint === "ENUM" ? "Výčet CZ (oddělte ;)" : "CZ"}
+                                value={attr.valueCz ?? ""}
+                                onChange={(e) => updateAttributeField(attr.id, { valueCz: e.target.value || undefined })}
+                              />
+                            )}
                           </td>
                           )}
                           {!hiddenAttributeColumns.has(6) && (
@@ -4148,7 +4303,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <div className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
                   <div className="font-semibold">Některé skupiny neodpovídají zvolenému PredefinedType</div>
                   <div className="mt-1 text-xs text-red-700">
-                    PredefinedType: <span className="font-semibold">{selectedPredefinedValue ?? "není vybrán"}</span>
+                    PredefinedType: <span className="font-semibold">{effectivePredefinedValue ?? "není vybrán"}</span>
                   </div>
                   <div className="mt-2 text-xs">
                     {invalidSchemaGroups.map((g) => (
@@ -4292,27 +4447,33 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                   value={item.name}
                                   disabled={
                                     !item.hasGeneric &&
-                                    (!selectedPredefinedValue || !item.predefinedTypes.includes(selectedPredefinedValue))
+                                    (!effectivePredefinedValue ||
+                                      !item.predefinedTypes.includes(normalizePredefinedForCompare(effectivePredefinedValue) ?? effectivePredefinedValue))
                                   }
                                 >
                                   {item.name}
                                 </option>
                               ))}
                             </select>
-                            {displayPsetName && (group.source === "PSET" || group.source === "QTO") ? (
-                              <TranslatedLabel
-                                type={group.source === "QTO" ? "qto" : "pset"}
-                                officialName={displayPsetName}
-                                inline
-                                translationOnly
-                              />
-                            ) : displayPsetName ? (
+                            {displayPsetName ? (
                               <DocLink href={docHref} label={group.psetName ?? ""} />
                             ) : null}
+                            {showCzTranslations && displayPsetName && (
+                              <input
+                                className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                                placeholder="Skupina CZ"
+                                value={group.properties[0]?.psetNameCz ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value || undefined;
+                                  group.properties.forEach((p) => updatePropertyField(p.id, { psetNameCz: v }));
+                                }}
+                                title="Překlad skupiny do češtiny"
+                              />
+                            )}
                             {isInvalidGroup && (
                               <div className="text-xs text-red-700">
                                 Skupina nepatří k aktuálnímu PredefinedType{" "}
-                                <span className="font-semibold">{selectedPredefinedValue ?? "(není vybrán)"}</span>. Vyberte jiný Pset/Qto nebo změňte PredefinedType.
+                                <span className="font-semibold">{effectivePredefinedValue ?? "(není vybrán)"}</span>. Vyberte jiný Pset/Qto nebo změňte PredefinedType.
                               </div>
                             )}
                           </div>
@@ -4530,16 +4691,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                             ))}
                                           </select>
                                         </div>
-                                        {prop.propertyName && (
-                                          <span className="text-xs text-slate-500">
-                                            <TranslatedLabel
-                                              type="property"
-                                              officialName={prop.propertyName}
-                                              context={{ psetName: group.psetName }}
-                                              inline
-                                              translationOnly
-                                            />
-                                          </span>
+                                        {showCzTranslations && (
+                                          <input
+                                            className="mt-0.5 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                            placeholder="CZ"
+                                            value={prop.propertyNameCz ?? ""}
+                                            onChange={(e) => updatePropertyField(prop.id, { propertyNameCz: e.target.value || undefined })}
+                                          />
                                         )}
                                       </div>
                                     )}
@@ -5067,6 +5225,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         />
                                       );
                                     })()}
+                                    {showCzTranslations && (prop.constraint !== "ENUM" || !prop.extensions?.[ENUM_CODELIST_ID_KEY]) && (
+                                      <input
+                                        className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                        placeholder={prop.constraint === "ENUM" ? "Výčet CZ (oddělte ;)" : "CZ"}
+                                        value={prop.valueCz ?? ""}
+                                        onChange={(e) => updatePropertyField(prop.id, { valueCz: e.target.value || undefined })}
+                                      />
+                                    )}
                                   </td>
                                   )}
                                   {!hiddenPropertyColumns.has(6) && (
@@ -5488,26 +5654,36 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           )}
                           {!hiddenPartOfColumns.has(2) && (
                             <td className="px-2 py-2">
-                            <select
-                              className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                              value={rel.entityType ?? ""}
-                              onChange={(e) => {
-                                // When entity changes, reset predefinedType
-                                updateRelationField(rel.id, { 
-                                  entityType: e.target.value,
-                                  entityPredefinedType: "NOTDEFINED",
-                                  // Also update legacy targetType for backwards compatibility
-                                  targetType: e.target.value
-                                });
-                              }}
-                            >
-                              <option value="">-- Vyberte entitu --</option>
-                              {entities.map((ent) => (
-                                <option key={ent} value={ent}>
-                                  {ent}
-                                </option>
-                              ))}
-                            </select>
+                            <div className="flex flex-col gap-0.5">
+                              <select
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                value={rel.entityType ?? ""}
+                                onChange={(e) => {
+                                  // When entity changes, reset predefinedType
+                                  updateRelationField(rel.id, { 
+                                    entityType: e.target.value,
+                                    entityPredefinedType: "NOTDEFINED",
+                                    // Also update legacy targetType for backwards compatibility
+                                    targetType: e.target.value
+                                  });
+                                }}
+                              >
+                                <option value="">-- Vyberte entitu --</option>
+                                {entities.map((ent) => (
+                                  <option key={ent} value={ent}>
+                                    {ent}
+                                  </option>
+                                ))}
+                              </select>
+                              {showCzTranslations && (
+                                <input
+                                  className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                  placeholder="CZ"
+                                  value={rel.entityTypeCz ?? ""}
+                                  onChange={(e) => updateRelationField(rel.id, { entityTypeCz: e.target.value || undefined })}
+                                />
+                              )}
+                            </div>
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(3) && (
@@ -5528,14 +5704,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           )}
                           {!hiddenPartOfColumns.has(4) && (
                             <td className="px-2 py-2">
-                            <div className="flex items-center gap-1">
-                              <select
-                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                value={rel.relationType}
-                                onChange={(e) => updateRelationField(rel.id, { relationType: e.target.value as any })}
-                              >
-                                {relationTypeOptions.map((opt) => (
-                                  <option key={opt} value={opt}>
+                            <div className="flex flex-col gap-0.5">
+                              <div className="flex items-center gap-1">
+                                <select
+                                  className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                  value={rel.relationType}
+                                  onChange={(e) => updateRelationField(rel.id, { relationType: e.target.value as any })}
+                                >
+                                  {relationTypeOptions.map((opt) => (
+                                    <option key={opt} value={opt}>
                                     {opt}
                                   </option>
                                 ))}
@@ -5548,6 +5725,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               >
                                 ?
                               </button>
+                            </div>
+                            {showCzTranslations && (
+                              <input
+                                className="mt-0.5 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                placeholder="CZ"
+                                value={rel.relationTypeCz ?? ""}
+                                onChange={(e) => updateRelationField(rel.id, { relationTypeCz: e.target.value || undefined })}
+                              />
+                            )}
                             </div>
                             </td>
                           )}
@@ -6175,6 +6361,22 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               />
                             );
                           })()}
+                          {showCzTranslations && mat.category && (
+                            <input
+                              className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                              placeholder="Kategorie CZ"
+                              value={mat.categoryCz ?? ""}
+                              onChange={(e) => updateMaterialField(mat.id, { categoryCz: e.target.value || undefined })}
+                            />
+                          )}
+                          {showCzTranslations && (mat.constraint !== "ENUM" || !mat.extensions?.[ENUM_CODELIST_ID_KEY]) && (
+                            <input
+                              className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                              placeholder={mat.constraint === "ENUM" ? "Výčet CZ (oddělte ;)" : "CZ"}
+                              value={mat.valueCz ?? ""}
+                              onChange={(e) => updateMaterialField(mat.id, { valueCz: e.target.value || undefined })}
+                            />
+                          )}
                         </td>
                         )}
                         {!hiddenMaterialColumns.has(4) && (
@@ -6448,6 +6650,19 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               placeholder="Nebo zadejte název systému ručně"
                             />
                           )}
+                          {showCzTranslations && (
+                            <input
+                              className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                              placeholder="Systém CZ"
+                              value={cls.systemCz ?? ""}
+                              onChange={(e) =>
+                                updateRequirements((reqs) => {
+                                  reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, systemCz: e.target.value || undefined } : c));
+                                })
+                              }
+                              disabled={cls.readOnly}
+                            />
+                          )}
                         </td>
                         )}
                         {!hiddenClassificationColumns.has(3) && (
@@ -6470,17 +6685,32 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         )}
                         {!hiddenClassificationColumns.has(4) && (
                           <td className="px-2 py-2">
-                            <input
-                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                              value={cls.value ?? cls.identification ?? cls.code ?? ""}
-                            onChange={(e) =>
-                              updateRequirements((reqs) => {
-                                reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, value: e.target.value, identification: e.target.value, code: e.target.value } : c));
-                              })
-                            }
-                            disabled={cls.readOnly}
-                            placeholder={cls.constraint === "ENUM" ? "Hodnoty oddělené |" : cls.constraint === "PATTERN" ? "Regex vzor" : "Hodnota klasifikace"}
-                          />
+                            <div className="flex flex-col gap-0.5">
+                              <input
+                                className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
+                                value={cls.value ?? cls.identification ?? cls.code ?? ""}
+                                onChange={(e) =>
+                                  updateRequirements((reqs) => {
+                                    reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, value: e.target.value, identification: e.target.value, code: e.target.value } : c));
+                                  })
+                                }
+                                disabled={cls.readOnly}
+                                placeholder={cls.constraint === "ENUM" ? "Hodnoty oddělené |" : cls.constraint === "PATTERN" ? "Regex vzor" : "Hodnota klasifikace"}
+                              />
+                              {showCzTranslations && cls.constraint !== "ENUM" && (
+                                <input
+                                  className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                  placeholder="CZ"
+                                  value={cls.valueCz ?? ""}
+                                  onChange={(e) =>
+                                    updateRequirements((reqs) => {
+                                      reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, valueCz: e.target.value || undefined } : c));
+                                    })
+                                  }
+                                  disabled={cls.readOnly}
+                                />
+                              )}
+                            </div>
                         </td>
                         )}
                         {!hiddenClassificationColumns.has(5) && (

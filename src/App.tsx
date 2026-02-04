@@ -6,7 +6,7 @@ import { SettingsDialog } from "./ui/components/SettingsDialog";
 import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
-import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode, addNodeAsSibling, updateLeafMappedValue } from "./classification/parser";
+import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode, addNodeAsSibling, updateLeafMappedValue, updateLeafIfcEntityPredefinedType } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import {
   buildClassificationFromSchema,
@@ -261,6 +261,60 @@ const AppInner: React.FC = () => {
     return { ...proj, objects: nextObjects, updatedAt: new Date().toISOString() };
   }, []);
 
+  /** Propaguje mapování klasifikačních systémů (typ „Klasifikační systém“) z primárního systému do object.requirements.classifications. */
+  const propagateClassificationMappingToObjects = useCallback((proj: Project): Project => {
+    const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    const mappedClassificationIds = (primary?.mappedSystemIds ?? []).filter((sid) => {
+      const e = (proj.classificationSystemEntries ?? []).find((x) => x.id === sid);
+      return e && (e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification")) === "classification";
+    });
+    if (!primary?.nodes || mappedClassificationIds.length === 0) return proj;
+
+    let changed = false;
+    const nextObjects: Project["objects"] = { ...proj.objects };
+    for (const [objCode, obj] of Object.entries(nextObjects)) {
+      const leaf = findNodeByCode(primary.nodes, objCode);
+      if (!leaf) continue;
+      const nextClassifications = [...(obj.requirements.classifications ?? [])];
+      let clsChanged = false;
+      for (const systemId of mappedClassificationIds) {
+        const mappedVal = leaf.mappedValues?.[systemId]?.trim() ?? "";
+        const entry = (proj.classificationSystemEntries ?? []).find((e) => e.id === systemId);
+        const existing = nextClassifications.find((c) => c.systemEntryId === systemId);
+        const newValue = mappedVal;
+        if (existing) {
+          if ((existing.value ?? "") !== newValue) {
+            nextClassifications[nextClassifications.indexOf(existing)] = { ...existing, value: newValue, identification: newValue, code: newValue };
+            clsChanged = true;
+          }
+        } else if (newValue && entry) {
+          nextClassifications.push({
+            id: makeId(),
+            classificationId: proj.primaryClassificationId ?? "",
+            systemEntryId: systemId,
+            system: entry.name ?? "",
+            identification: newValue,
+            value: newValue,
+            name: entry.name ?? "",
+            occurrence: "optional",
+            phases: obj.requirements.classifications?.[0]?.phases ?? proj.phases?.map((p) => p.id) ?? [],
+            extensions: {},
+          });
+          clsChanged = true;
+        }
+      }
+      if (clsChanged) {
+        nextObjects[objCode] = {
+          ...obj,
+          requirements: { ...obj.requirements, classifications: nextClassifications },
+        };
+        changed = true;
+      }
+    }
+    if (!changed) return proj;
+    return { ...proj, objects: nextObjects, updatedAt: new Date().toISOString() };
+  }, []);
+
   /** Propaguje IFC mapování z primárního klasifikačního systému do objektů. */
   const propagateMappingToObjects = useCallback((proj: Project): Project => {
     const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
@@ -305,6 +359,7 @@ const AppInner: React.FC = () => {
       let withPropagation = propagateObjectAuthoringToNodes(migrated);
       withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
+      withPropagation = propagateClassificationMappingToObjects(withPropagation);
       setProject(withPropagation);
       setClassification(withPropagation.classification);
       const leaves = collectLeaves(withPropagation.classification.nodes);
@@ -314,7 +369,7 @@ const AppInner: React.FC = () => {
       }
     }
     // Bez uloženého projektu zůstane prázdný stav – uživatel si sám nahraje klasifikaci.
-  }, [propagateObjectAuthoringToNodes, propagateMappingToObjects, propagateAuthoringMappingToObjects]);
+  }, [propagateObjectAuthoringToNodes, propagateMappingToObjects, propagateAuthoringMappingToObjects, propagateClassificationMappingToObjects]);
 
   const selectedNode = useMemo<ClassificationNode | undefined>(() => {
     if (!classification || !selectedCode) return undefined;
@@ -457,6 +512,7 @@ const AppInner: React.FC = () => {
             updatedAt: new Date().toISOString(),
           };
           next = propagateMappingToObjects(next);
+          next = propagateClassificationMappingToObjects(next);
           updateProjectWithHistory(next);
           setClassification(pureClassification);
           const leaves = collectLeaves(pureNodes);
@@ -559,6 +615,7 @@ const AppInner: React.FC = () => {
             updatedAt: new Date().toISOString(),
           };
           next = propagateMappingToObjects(next);
+          next = propagateClassificationMappingToObjects(next);
           updateProjectWithHistory(next);
           setClassification(pureClassification);
           const leaves = collectLeaves(pureNodes);
@@ -718,6 +775,71 @@ const AppInner: React.FC = () => {
       }
     }
 
+    // Propagace hodnot klasifikací (karta Klasifikace) do namapované klasifikace – pro nemapované systémy typu „Klasifikační systém“
+    const mappedClassificationIds = (primaryEntry?.mappedSystemIds ?? []).filter((sid) => {
+      const e = (project.classificationSystemEntries ?? []).find((x) => x.id === sid);
+      return e && (e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification")) === "classification";
+    });
+    if (primaryEntry?.nodes && mappedClassificationIds.length > 0) {
+      const prevCls = prevObj?.requirements?.classifications ?? [];
+      const currCls = mergedObj.requirements?.classifications ?? [];
+      const clsChanged = currCls.some(
+        (c) => c.systemEntryId && mappedClassificationIds.includes(c.systemEntryId) && !c.readOnly &&
+          (prevCls.find((p) => p.id === c.id)?.value !== c.value)
+      );
+      if (clsChanged) {
+        let nextNodes = next.classificationSystemEntries?.find((e) => e.id === primaryEntry.id)?.nodes ?? primaryEntry.nodes;
+        for (const cls of currCls) {
+          if (cls.systemEntryId && mappedClassificationIds.includes(cls.systemEntryId) && !cls.readOnly) {
+            nextNodes = updateLeafMappedValue(nextNodes, mergedObj.code, cls.systemEntryId, cls.value ?? "");
+          }
+        }
+        next = {
+          ...next,
+          classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
+            e.id === primaryEntry.id ? { ...e, nodes: nextNodes } : e
+          ),
+          classification: project.classification && primaryEntry
+            ? { ...project.classification, nodes: nextNodes }
+            : next.classification,
+        };
+        if (project.classification && primaryEntry) {
+          setClassification({ ...project.classification, nodes: nextNodes });
+        }
+      }
+    }
+
+    // Propagace IFC entity a predefinedType z nastavení objektu do namapované klasifikace (primární systém není IFC)
+    if (primaryEntry?.nodes && !primaryIsIfc && ifcChanged) {
+      const ifcSystemId = primaryEntry.mappedSystemIds?.find((sid) =>
+        (project.classificationSystemEntries ?? []).some((e) => e.id === sid && e.isIfcSystem)
+      );
+      const ptVal = mergedObj.predefinedType.mode === "ENUM" || mergedObj.predefinedType.mode === "USERDEFINED"
+        ? (mergedObj.predefinedType.value ?? "NOTDEFINED")
+        : "NOTDEFINED";
+      const ifcMappedValue = `${mergedObj.ifcEntity || ""}::${ptVal}`;
+      let nextNodes = next.classificationSystemEntries?.find((e) => e.id === primaryEntry.id)?.nodes ?? primaryEntry.nodes;
+      if (ifcSystemId) {
+        nextNodes = updateLeafMappedValue(nextNodes, mergedObj.code, ifcSystemId, ifcMappedValue);
+      } else if (!primaryEntry.isPure) {
+        nextNodes = updateLeafIfcEntityPredefinedType(nextNodes, mergedObj.code, mergedObj.ifcEntity || "", ptVal);
+      }
+      if (nextNodes !== (next.classificationSystemEntries?.find((e) => e.id === primaryEntry.id)?.nodes ?? primaryEntry.nodes)) {
+        next = {
+          ...next,
+          classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
+            e.id === primaryEntry.id ? { ...e, nodes: nextNodes } : e
+          ),
+          classification: project.classification && primaryEntry
+            ? { ...project.classification, nodes: nextNodes }
+            : next.classification,
+        };
+        if (project.classification && primaryEntry) {
+          setClassification({ ...project.classification, nodes: nextNodes });
+        }
+      }
+    }
+
     updateProjectWithHistory(next);
     if (selectedObject && selectedObject.code === mergedObj.code) {
       setSelectedObject(mergedObj);
@@ -731,6 +853,7 @@ const AppInner: React.FC = () => {
       let withPropagation = propagateObjectAuthoringToNodes(migrated);
       withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
+      withPropagation = propagateClassificationMappingToObjects(withPropagation);
       // Reset history for imported project
       historyRef.current = [JSON.parse(JSON.stringify(withPropagation))];
       historyIndexRef.current = 0;
@@ -753,6 +876,7 @@ const AppInner: React.FC = () => {
       let withPropagation = propagateObjectAuthoringToNodes(migrated);
       withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
+      withPropagation = propagateClassificationMappingToObjects(withPropagation);
       historyRef.current = [JSON.parse(JSON.stringify(withPropagation))];
       historyIndexRef.current = 0;
       setProject(withPropagation);
@@ -1041,6 +1165,10 @@ const AppInner: React.FC = () => {
     // Po uložení mapování primárního systému propagovat autor. nástroje (mappedValues) do object.authoringClassifications
     if (updatedEntry?.isPrimary && (updates.nodes || updates.authoringToolSystemIds)) {
       next = propagateAuthoringMappingToObjects(next);
+    }
+    // Po uložení mapování primárního systému propagovat klasifikační systémy (mappedValues) do object.requirements.classifications
+    if (updatedEntry?.isPrimary && updates.nodes) {
+      next = propagateClassificationMappingToObjects(next);
     }
     updateProjectWithHistory(next);
   };

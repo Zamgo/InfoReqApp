@@ -33,8 +33,12 @@ const MAX_COLS = 80;
 
 function cellToString(val: ExcelJS.CellValue | null | undefined): string {
   if (val == null) return "";
-  if (typeof val === "object" && "result" in val && (val as { result?: unknown }).result !== undefined) {
-    return String((val as { result: unknown }).result);
+  if (typeof val === "object" && val !== null) {
+    if ("result" in val && (val as { result?: unknown }).result !== undefined) {
+      return String((val as { result: unknown }).result);
+    }
+    // Formule bez uloženého výsledku – import spoléhá na Číselník sloupec pro allowedValues
+    if ("formula" in val) return "";
   }
   return String(val).trim();
 }
@@ -65,6 +69,12 @@ const VYSKYT_MAP: Record<string, string> = {
   "volitelný": "optional",
   "zakázaný": "prohibited",
 };
+
+/** Normalizace PredefinedType při importu: "není definováno" → "NOTDEFINED" (jednotné označení) */
+function normalizePredefinedType(val: string): string {
+  const s = (val ?? "").trim();
+  return s.toLowerCase() === "není definováno" ? "NOTDEFINED" : s;
+}
 
 const TYP_POZADAVKU = {
   atribut: "attribute",
@@ -349,6 +359,8 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     };
     const colIfcEntity = findCol(h1, "IFC_entita") >= 0 ? findCol(h1, "IFC_entita") : findCol(h1, "IFC Entita");
     const colPredefined = findCol(h1, "IFC_predefinedType") >= 0 ? findCol(h1, "IFC_predefinedType") : findCol(h1, "IFC PredefinedType");
+    const colIfcEntityCz = findCol(h1, "IFC_entita_CZ");
+    const colPredefinedCz = findCol(h1, "IFC_predefinedType_CZ");
     const colPopis = findCol(h1, "Popis");
     const colPoznamka = findCol(h1, "Poznámka");
     const colPriklady = findCol(h1, "Příklady");
@@ -374,14 +386,19 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
       }
 
       const ifcEntity = getVal(row, colIfcEntity);
-      const predefined = getVal(row, colPredefined);
+      const predefinedRaw = getVal(row, colPredefined);
+      const predefined = predefinedRaw ? normalizePredefinedType(predefinedRaw) : "";
       const description = primaryEntry ? (findNodeByCode(primaryEntry.nodes ?? [], code)?.description ?? "") : "";
+      const ifcEntityCz = colIfcEntityCz >= 0 ? getVal(row, colIfcEntityCz) : undefined;
+      const predefinedCz = colPredefinedCz >= 0 ? getVal(row, colPredefinedCz) : undefined;
       objects[code] = {
         code,
         description,
         ifcEntity: ifcEntity || "",
+        ...(ifcEntityCz?.trim() && { ifcEntityCz: ifcEntityCz.trim() }),
         predefinedType:
           predefined ? { mode: "ENUM" as const, value: predefined } : { mode: "NONE" as const },
+        ...(predefinedCz?.trim() && { predefinedTypeCz: predefinedCz.trim() }),
         ifcEntityPhases: phases.map((p) => p.id),
         predefinedTypePhases: phases.map((p) => p.id),
         popis: getVal(row, colPopis) || undefined,
@@ -433,16 +450,23 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
       return path.filter(Boolean).join("::") || "";
     };
     const colTyp = findCol(h1, "Typ_požadavku");
+    const colIfcEntityPoz = findCol(h1, "IFC_entita") >= 0 ? findCol(h1, "IFC_entita") : findCol(h1, "IFC Entita");
+    const colPredefinedPoz = findCol(h1, "IFC_predefinedType") >= 0 ? findCol(h1, "IFC_predefinedType") : findCol(h1, "IFC PredefinedType");
+    const colIfcEntityCzPoz = findCol(h1, "IFC_entita_CZ");
+    const colPredefinedCzPoz = findCol(h1, "IFC_predefinedType_CZ");
     const colSkupina =
       findCol(h1, "Skupina") >= 0
         ? findCol(h1, "Skupina")
         : findCol(h1, "Skupina_vlastností") >= 0
           ? findCol(h1, "Skupina_vlastností")
           : findCol(h1, "Seskupení");
+    const colSkupinaCz = findCol(h1, "Skupina_CZ");
     const colParametrHodnoty = findCol(h1, "Parametr_hodnoty");
+    const colParametrHodnotyCz = findCol(h1, "Parametr_hodnoty_CZ");
     const colDataType = findCol(h1, "IFC_datový_typ");
     const colOmezeni = findCol(h1, "Omezení");
     const colHodnoty = findCol(h1, "Požadované_hodnoty");
+    const colHodnotyCz = findCol(h1, "Požadované_hodnoty_CZ");
     const colJednotka = findCol(h1, "Jednotka");
     const colCiselnik = findCol(h1, "Číselník");
     const colUri = findCol(h1, "URI");
@@ -467,16 +491,24 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
       const code = getCodeFromPozRow(row);
       if (!code) continue;
       let obj = objects[code];
+      const ifcEntityCzVal = colIfcEntityCzPoz >= 0 ? getVal(row, colIfcEntityCzPoz) : "";
+      const predefinedCzVal = colPredefinedCzPoz >= 0 ? getVal(row, colPredefinedCzPoz) : "";
+      const skupinaCzVal = colSkupinaCz >= 0 ? getVal(row, colSkupinaCz) : "";
+      const parametrCzVal = colParametrHodnotyCz >= 0 ? getVal(row, colParametrHodnotyCz) : "";
+      const hodnotyCzVal = colHodnotyCz >= 0 ? getVal(row, colHodnotyCz) : "";
       if (!obj) {
         const descFromHierarchy = getVal(row, findCol(h1, "Třídění_úroveň_1") || 0) || code;
         obj = {
           code,
           description: descFromHierarchy,
           ifcEntity: getVal(row, colIfcEntityPoz >= 0 ? colIfcEntityPoz : 0) || "",
+          ...(ifcEntityCzVal?.trim() && { ifcEntityCz: ifcEntityCzVal.trim() }),
           predefinedType: (() => {
-            const pt = getVal(row, colPredefinedPoz >= 0 ? colPredefinedPoz : 0);
+            const ptRaw = getVal(row, colPredefinedPoz >= 0 ? colPredefinedPoz : 0);
+            const pt = ptRaw ? normalizePredefinedType(ptRaw) : "";
             return pt ? { mode: "ENUM" as const, value: pt } : { mode: "NONE" as const };
           })(),
+          ...(predefinedCzVal?.trim() && { predefinedTypeCz: predefinedCzVal.trim() }),
           ifcEntityPhases: phases.map((p) => p.id),
           predefinedTypePhases: phases.map((p) => p.id),
           requirements: {
@@ -536,11 +568,13 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         const req: AttributeRequirement = {
           id: makeId(),
           attribute: parametrHodnoty || skupina || "Name",
+          ...(parametrCzVal?.trim() && { attributeCz: parametrCzVal.trim() }),
           required: occurrence === "required",
           dataType: dataType || undefined,
           occurrence: occurrence as "required" | "optional" | "prohibited",
           constraint: constraint as AttributeRequirement["constraint"],
           value: constraint !== "ENUM" ? hodnotyRaw || undefined : undefined,
+          ...(hodnotyCzVal?.trim() && (constraint !== "ENUM" || !cl) && { valueCz: hodnotyCzVal.trim() }),
           allowedValues: constraint === "ENUM" ? (hodnoty.length ? hodnoty : cl?.values) : undefined,
           unit: jednotka || undefined,
           uri: uri || undefined,
@@ -555,16 +589,25 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         const [psetNameFallback, propNameFallback] = skupina.includes(".")
           ? skupina.split(".", 2)
           : [skupina, ""];
+        const psetName = skupina || psetNameFallback || "_NEW_";
+        const source = psetName.startsWith("Qto_")
+          ? ("QTO" as const)
+          : psetName.startsWith("Pset_")
+            ? ("PSET" as const)
+            : ("CUSTOM" as const);
         const req: PropertyRequirement = {
           id: makeId(),
-          source: "PSET",
-          psetName: skupina || psetNameFallback || "_NEW_",
+          source,
+          psetName,
+          ...(skupinaCzVal?.trim() && { psetNameCz: skupinaCzVal.trim() }),
           propertyName: parametrHodnoty || propNameFallback || "_NEW_",
+          ...(parametrCzVal?.trim() && { propertyNameCz: parametrCzVal.trim() }),
           dataType: dataType || "IfcLabel",
           required: occurrence === "required",
           occurrence: occurrence as "required" | "optional" | "prohibited",
           constraint: (constraint || "FILLED") as PropertyRequirement["constraint"],
           value: constraint !== "ENUM" ? hodnotyRaw || undefined : undefined,
+          ...(hodnotyCzVal?.trim() && (constraint !== "ENUM" || !cl) && { valueCz: hodnotyCzVal.trim() }),
           allowedValues: constraint === "ENUM" ? (hodnoty.length ? hodnoty : cl?.values) : undefined,
           unit: jednotka || undefined,
           uri: uri || undefined,
@@ -584,6 +627,8 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         const req: RelationRequirement = {
           id: makeId(),
           relationType: (relTypeFromHodnoty?.[0].toUpperCase() as RelationRequirement["relationType"]) || "IFCRELAGGREGATES",
+          ...(parametrCzVal?.trim() && { entityTypeCz: parametrCzVal.trim() }),
+          ...(hodnotyCzVal?.trim() && { relationTypeCz: hodnotyCzVal.trim() }),
           entityType: entityType || undefined,
           entityPredefinedType: entityPredefinedType || undefined,
           occurrence: occurrence as "required" | "optional" | "prohibited",
@@ -613,8 +658,10 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           classificationId: primaryEntry?.id ?? "",
           systemEntryId: sysEntry?.id,
           system: parametrHodnoty || skupina || "Klasifikace",
+          ...(parametrCzVal?.trim() && { systemCz: parametrCzVal.trim() }),
           identification,
           value: constraint === "ENUM" && hodnoty.length ? hodnoty.join(";") : (hodnotyRaw || code),
+          ...(hodnotyCzVal?.trim() && constraint !== "ENUM" && { valueCz: hodnotyCzVal.trim() }),
           name: parametrHodnoty || "Klasifikace",
           occurrence: occurrence as "required" | "optional" | "prohibited",
           constraint: (constraint || "FILLED") as ClassificationRequirement["constraint"],
@@ -635,11 +682,13 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           occurrence: occurrence as "required" | "optional" | "prohibited",
           categoryMode: (parametrHodnoty || skupina) ? "SIMPLE" : "NONE",
           category: parametrHodnoty || skupina || undefined,
+          ...(parametrCzVal?.trim() && { categoryCz: parametrCzVal.trim() }),
           constraint: (constraint || "FILLED") as MaterialRequirement["constraint"],
           value:
             constraint === "ENUM"
               ? (hodnoty.length ? hodnoty : cl?.values ?? []).join(";")
               : hodnotyRaw || undefined,
+          ...(hodnotyCzVal?.trim() && (constraint !== "ENUM" || !cl) && { valueCz: hodnotyCzVal.trim() }),
           extensions,
           popis: popis || undefined,
           note: poznamka || undefined,

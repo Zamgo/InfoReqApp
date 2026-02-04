@@ -329,7 +329,8 @@ const createMapovaniSheet = (
   workbook: ExcelJS.Workbook,
   project: Project,
   entries: ClassificationSystemEntry[],
-  exportAutorskeNastroje: boolean = false
+  exportAutorskeNastroje: boolean = false,
+  exportCzTranslations: boolean = false
 ) => {
   const primaryEntry = entries.find((e) => e.isPrimary);
   if (!primaryEntry?.nodes?.length) return;
@@ -381,7 +382,9 @@ const createMapovaniSheet = (
     ...additionalEntries.map((e) => `Třídění_${e.name}`),
     ...authoringEntries.map((e) => `Třídění_AN_${e.name}`),
     "IFC_entita",
+    ...(exportCzTranslations ? ["IFC_entita_CZ"] : []),
     "IFC_predefinedType",
+    ...(exportCzTranslations ? ["IFC_predefinedType_CZ"] : []),
     "Popis",
     "Poznámka",
     "Příklady",
@@ -390,7 +393,7 @@ const createMapovaniSheet = (
   const identifikacniColCount = 1 + hierarchyPopisHeaders.length;
   const dalsiKlasifikaceColCount = additionalEntries.length;
   const autorskeNastrojeColCount = authoringEntries.length;
-  const ifcColCount = 2;
+  const ifcColCount = exportCzTranslations ? 4 : 2;
   styleZdrojHeaderRow(headerRow, identifikacniColCount, dalsiKlasifikaceColCount, autorskeNastrojeColCount, ifcColCount);
 
   flat.forEach(({ node, path }, index) => {
@@ -412,7 +415,9 @@ const createMapovaniSheet = (
       ...additionalVals,
       ...authoringVals,
       ifcEntity,
+      ...(exportCzTranslations ? [obj?.ifcEntityCz ?? ""] : []),
       predefinedType,
+      ...(exportCzTranslations ? [obj?.predefinedTypeCz ?? ""] : []),
       obj?.popis ?? "",
       obj?.poznamka ?? "",
       obj?.priklady ?? "",
@@ -427,7 +432,9 @@ const createMapovaniSheet = (
     ...additionalEntries.map(() => 22),
     ...authoringEntries.map(() => 22),
     22,
+    ...(exportCzTranslations ? [22] : []),
     22,
+    ...(exportCzTranslations ? [22] : []),
     30,
     30,
     30,
@@ -496,7 +503,9 @@ const createZdrojSheet = (
   workbook: ExcelJS.Workbook,
   project: Project,
   classificationSystemEntries: ClassificationSystemEntry[] = [],
-  exportAutorskeNastroje: boolean = false
+  exportAutorskeNastroje: boolean = false,
+  exportCzTranslations: boolean = false,
+  ciselnikySheetExists: boolean = false
 ) => {
   const sheet = workbook.addWorksheet("POŽADAVKY");
 
@@ -576,13 +585,18 @@ const createZdrojSheet = (
     ...additionalSystemHeaders,
     ...authoringSystemHeaders,
     "IFC_entita",
+    ...(exportCzTranslations ? ["IFC_entita_CZ"] : []),
     "IFC_predefinedType",
+    ...(exportCzTranslations ? ["IFC_predefinedType_CZ"] : []),
     "Typ_požadavku",
     "Skupina",
+    ...(exportCzTranslations ? ["Skupina_CZ"] : []),
     "Parametr_hodnoty",
+    ...(exportCzTranslations ? ["Parametr_hodnoty_CZ"] : []),
     "IFC_datový_typ",
     "Omezení",
     "Požadované_hodnoty",
+    ...(exportCzTranslations ? ["Požadované_hodnoty_CZ"] : []),
     "Jednotka",
     "Číselník",
     "URI",
@@ -596,7 +610,7 @@ const createZdrojSheet = (
   const identifikacniColCount = 1 + hierarchyPopisHeaders.length; // Kód + hierarchie primární klasifikace
   const dalsiKlasifikaceColCount = additionalSystemHeaders.length; // Další klasifikační systémy
   const autorskeNastrojeColCount = authoringSystemHeaders.length; // Třídění autorských nástrojů
-  const ifcColCount = 2; // IFC_entita, IFC_predefinedType
+  const ifcColCount = exportCzTranslations ? 4 : 2; // IFC_entita, IFC_entita_CZ, IFC_predefinedType, IFC_predefinedType_CZ
   styleZdrojHeaderRow(headerRow, identifikacniColCount, dalsiKlasifikaceColCount, autorskeNastrojeColCount, ifcColCount);
 
   const orderedCodes = primaryEntry?.nodes
@@ -651,9 +665,11 @@ const createZdrojSheet = (
       ...additionalSystemValues,
       ...authoringSystemValues,
       obj.ifcEntity,
+      ...(exportCzTranslations ? [obj.ifcEntityCz ?? ""] : []),
       obj.predefinedType.mode === "ENUM"
         ? (obj.predefinedType.value || "NOTDEFINED")
         : (obj.code?.includes("::") ? "NOTDEFINED" : ""),
+      ...(exportCzTranslations ? [obj.predefinedTypeCz ?? ""] : []),
     ];
 
     const addRow = (
@@ -670,7 +686,8 @@ const createZdrojSheet = (
       popis: string,
       note: string,
       priklady: string,
-      reqPhases?: string[]
+      reqPhases?: string[],
+      czVals?: { skupinaCz?: string; parametrCz?: string; hodnotyCz?: string }
     ) => {
       const occLabel = occurrenceLabels[occurrence] || occurrence;
       const constraintLabel = constraintLabels[(constraint ?? "FILLED").toUpperCase()] || constraint;
@@ -678,16 +695,20 @@ const createZdrojSheet = (
       const useCiselnikFormula =
         constraint === "ENUM" &&
         ciselnikName &&
-        codeLists.length > 0;
+        codeLists.length > 0 &&
+        ciselnikySheetExists;
 
       const row = sheet.addRow([
         ...baseCols,
         typ,
         skupina,
+        ...(exportCzTranslations ? [czVals?.skupinaCz ?? ""] : []),
         parametrHodnoty,
+        ...(exportCzTranslations ? [czVals?.parametrCz ?? ""] : []),
         dataType,
         constraintLabel,
         useCiselnikFormula ? "" : povoleneHodnoty,
+        ...(exportCzTranslations ? [czVals?.hodnotyCz ?? ""] : []),
         unit,
         ciselnikName,
         uri,
@@ -725,7 +746,8 @@ const createZdrojSheet = (
         attr.popis || "",
         attr.note || "",
         attr.priklady || "",
-        attr.phases
+        attr.phases,
+        exportCzTranslations ? { parametrCz: attr.attributeCz, hodnotyCz: attr.constraint === "ENUM" && clId ? undefined : attr.valueCz } : undefined
       );
     });
 
@@ -745,7 +767,12 @@ const createZdrojSheet = (
         prop.popis || "",
         prop.note || "",
         prop.priklady || "",
-        prop.phases
+        prop.phases,
+        exportCzTranslations ? {
+          skupinaCz: prop.psetName?.startsWith("_NEW_") ? undefined : prop.psetNameCz,
+          parametrCz: prop.propertyName?.startsWith("_NEW_") ? undefined : prop.propertyNameCz,
+          hodnotyCz: prop.constraint === "ENUM" && clId ? undefined : prop.valueCz,
+        } : undefined
       );
     });
 
@@ -765,7 +792,8 @@ const createZdrojSheet = (
         rel.popis || "",
         rel.note || "",
         rel.priklady || "",
-        rel.phases
+        rel.phases,
+        exportCzTranslations ? { parametrCz: rel.entityTypeCz, hodnotyCz: rel.relationTypeCz } : undefined
       );
     });
 
@@ -788,7 +816,8 @@ const createZdrojSheet = (
           cls.description || "",
           noteWithIdentification,
           cls.priklady || "",
-          cls.phases
+          cls.phases,
+          exportCzTranslations ? { parametrCz: cls.systemCz, hodnotyCz: cls.constraint === "ENUM" ? undefined : cls.valueCz } : undefined
         );
       }
     );
@@ -809,20 +838,37 @@ const createZdrojSheet = (
         mat.popis || "",
         mat.note || "",
         mat.priklady || "",
-        mat.phases
+        mat.phases,
+        exportCzTranslations ? { parametrCz: mat.categoryCz, hodnotyCz: mat.constraint === "ENUM" && clId ? undefined : mat.valueCz } : undefined
       );
     });
   });
 
+  // Data validation: dropdown v sloupci Číselník odkazující na ČÍSELNÍKY – při změně se automaticky přepočítá Požadované_hodnoty (VLOOKUP)
+  if (ciselnikySheetExists && codeLists.length > 0 && rowIndex > 0) {
+    const ciselnikRange = `ČÍSELNÍKY!$A$2:$A$${1 + codeLists.length}`;
+    for (let r = 2; r <= rowIndex + 1; r++) {
+      const cell = sheet.getCell(r, ciselnikColIndex);
+      cell.dataValidation = {
+        type: "list",
+        allowBlank: true,
+        formulae: [ciselnikRange],
+      };
+    }
+  }
+
   const hierarchyWidths = hierarchyPopisHeaders.map(() => 30);
   const additionalWidths = additionalSystemHeaders.map(() => 22);
   const authoringWidths = authoringSystemHeaders.map(() => 22);
+  const reqWidths = exportCzTranslations
+    ? [18, 22, 15, 22, 12, 25, 22, 25, 22, 15, 25, 30, 22, 12, 22, 25, 30, 30, 30, 10]
+    : [18, 15, 12, 25, 25, 15, 25, 30, 12, 22, 25, 30, 30, 30, 10];
   const widths = [
     18,
     ...hierarchyWidths,
     ...additionalWidths,
     ...authoringWidths,
-    18, 15, 12, 25, 25, 15, 25, 30, 12, 22, 25, 30, 30, 30, 10,
+    ...reqWidths,
     ...phaseHeaders.map(() => 10),
   ];
   finalizeSheet(sheet, widths);
@@ -838,6 +884,8 @@ export interface SheetSelection {
   zdroj: boolean;
   /** Exportovat třídění autorských nástrojů jako další sloupce za primární klasifikací a IFC */
   zdrojExportAutorskeNastroje?: boolean;
+  /** Exportovat sloupce překladů CZ (IFC_entita_CZ, Skupina_CZ, atd.) v POŽADAVKY a PRVKY */
+  exportCzTranslations?: boolean;
   ciselniky: boolean;
   faze: boolean;
   projekt: boolean;
@@ -853,6 +901,7 @@ export interface SheetSelection {
 export const DEFAULT_SHEET_SELECTION: SheetSelection = {
   zdroj: true,
   zdrojExportAutorskeNastroje: false,
+  exportCzTranslations: false,
   ciselniky: true,
   faze: true,
   projekt: true,
@@ -877,7 +926,7 @@ export const generateExcelWorkbook = async (
   workbook.title = project.name;
   workbook.subject = "BIM Information Requirements";
 
-  // Pořadí listů: PROJEKT, FÁZE, PRVKY, POŽADAVKY, ČÍSELNÍKY, Klasifikace
+  // Pořadí listů: PROJEKT, FÁZE, PRVKY, ČÍSELNÍKY (před POŽADAVKY kvůli odkazům), POŽADAVKY, Klasifikace
   if (selection.projekt) {
     createProjectSheet(workbook, project);
   }
@@ -889,14 +938,22 @@ export const generateExcelWorkbook = async (
       workbook,
       project,
       project.classificationSystemEntries || [],
-      selection.zdrojExportAutorskeNastroje ?? false
+      selection.zdrojExportAutorskeNastroje ?? false,
+      selection.exportCzTranslations ?? false
     );
-  }
-  if (selection.zdroj) {
-    createZdrojSheet(workbook, project, project.classificationSystemEntries ?? [], selection.zdrojExportAutorskeNastroje ?? false);
   }
   if (selection.ciselniky) {
     createCodeListsSheet(workbook, project.codeLists || []);
+  }
+  if (selection.zdroj) {
+    createZdrojSheet(
+      workbook,
+      project,
+      project.classificationSystemEntries ?? [],
+      selection.zdrojExportAutorskeNastroje ?? false,
+      selection.exportCzTranslations ?? false,
+      selection.ciselniky ?? false
+    );
   }
   if (selection.klasifikaceListy) {
     createClassificationSheets(workbook, project.classificationSystemEntries || []);

@@ -26,8 +26,6 @@ export const SettingsDialog: React.FC<Props> = ({
     if (e.key === "Escape") onClose();
   };
 
-  const mode = project?.translationMode ?? "OFF";
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
@@ -40,36 +38,46 @@ export const SettingsDialog: React.FC<Props> = ({
       >
         <div className="border-b border-slate-200 px-6 py-4">
           <h2 className="text-lg font-semibold text-slate-800">Nastavení</h2>
-          <p className="text-sm text-slate-500">Překlady IFC názvů pro zobrazení v aplikaci</p>
+          <p className="text-sm text-slate-500">Políčka překladů CZ a jejich automatické vyplňování</p>
         </div>
 
-        <div className="px-6 py-4 space-y-4">
-          <div>
+        <div className="px-6 py-4">
             <label className="mb-2 block text-sm font-medium text-slate-700">
-              Režim překladů
+              Zobrazit políčka překladů CZ
             </label>
-            <p className="mb-2 text-xs text-slate-500">
-              Oficiální IFC názvy jsou vždy uloženy v datech. Překlad slouží jen pro zobrazení uživateli – pod oficiálním názvem kurzívou.
+            <p className="mb-3 text-xs text-slate-500">
+              Zobrazit sloupec/políčko pro hodnotu v češtině vedle každé inkriminované hodnoty (entita, predefinedType, atributy, vlastnosti, součásti, materiál, klasifikace). Hodnoty lze upravovat ručně nebo nechat přeložit.
             </p>
-            <div className="space-y-2">
-              {TRANSLATION_OPTIONS.map((opt) => (
-                <label
-                  key={opt.value}
-                  className="flex items-start gap-2 cursor-pointer rounded border border-slate-200 p-3 hover:bg-slate-50 has-[:checked]:border-indigo-500 has-[:checked]:bg-indigo-50/50"
-                >
-                  <input
-                    type="radio"
-                    name="translationMode"
-                    value={opt.value}
-                    checked={mode === opt.value}
-                    onChange={() => onSave({ translationMode: opt.value })}
-                    className="mt-0.5 h-4 w-4 text-indigo-600"
-                  />
-                  <span className="text-sm text-slate-700">{opt.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={project?.showCzTranslations ?? false}
+                onChange={(e) => onSave({ showCzTranslations: e.target.checked })}
+                className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="text-sm text-slate-700">Zobrazit políčka překladů CZ</span>
+            </label>
+            {(project?.showCzTranslations ?? false) && (
+              <div className="mt-4 pt-4 border-t border-slate-200 space-y-2">
+                <label className="block text-sm font-medium text-slate-700">Režim překladů</label>
+                <p className="mb-2 text-xs text-slate-500">Zdroj pro automatické vyplnění prázdných políček CZ:</p>
+                <div className="space-y-1">
+                  {TRANSLATION_OPTIONS.map((opt) => (
+                    <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="czTranslationSource"
+                        value={opt.value}
+                        checked={(project?.czTranslationSource ?? "OFF") === opt.value}
+                        onChange={() => onSave({ czTranslationSource: opt.value })}
+                        className="h-4 w-4 text-indigo-600"
+                      />
+                      <span className="text-sm text-slate-700">{opt.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4">

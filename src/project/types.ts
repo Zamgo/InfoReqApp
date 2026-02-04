@@ -22,11 +22,15 @@ export interface RequirementBase {
 
 export interface AttributeRequirement extends RequirementBase {
   attribute: string;
+  /** Překlad atributu do češtiny (Parametr_hodnoty_CZ) */
+  attributeCz?: string;
   required: boolean;
   dataType?: string;
   occurrence?: "required" | "prohibited" | "optional";
   constraint: "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH";
   value?: string;
+  /** Překlad hodnoty do češtiny (Požadované_hodnoty_CZ) – ne u číselníků */
+  valueCz?: string;
   allowedValues?: string[];
   unit?: string;
   /** URI reference */
@@ -43,12 +47,18 @@ export interface AttributeRequirement extends RequirementBase {
 export interface PropertyRequirement extends RequirementBase {
   source: "PSET" | "QTO" | "CUSTOM";
   psetName: string;
+  /** Překlad skupiny do češtiny (Skupina_CZ) */
+  psetNameCz?: string;
   propertyName: string;
+  /** Překlad vlastnosti do češtiny (Parametr_hodnoty_CZ) */
+  propertyNameCz?: string;
   dataType: string;
   required: boolean;
   occurrence?: "required" | "prohibited" | "optional";
   constraint?: "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH";
   value?: string;
+  /** Překlad hodnoty do češtiny (Požadované_hodnoty_CZ) – ne u číselníků */
+  valueCz?: string;
   /** Allowed values for ENUM constraint (e.g. from IDS restriction) */
   allowedValues?: string[];
   unit?: string;
@@ -71,6 +81,10 @@ export interface RelationRequirement extends RequirementBase {
     | "IFCRELNESTS"
     | "IFCRELVOIDSELEMENT"
     | "IFCRELFILLSELEMENT";
+  /** Překlad entity součásti do češtiny (Parametr_hodnoty_CZ) */
+  entityTypeCz?: string;
+  /** Překlad typu vztahu do češtiny (Požadované_hodnoty_CZ) */
+  relationTypeCz?: string;
   /** @deprecated Use entityType instead */
   targetType?: string;
   /** Occurrence of the relation requirement */
@@ -97,9 +111,13 @@ export interface ClassificationRequirement extends RequirementBase {
   /** ID of the selected classification system entry */
   systemEntryId?: string;
   system: string;
+  /** Překlad systému do češtiny (Parametr_hodnoty_CZ) */
+  systemCz?: string;
   identification: string;
   /** Value - the classification value/code */
   value?: string;
+  /** Překlad hodnoty do češtiny (Požadované_hodnoty_CZ) – ne u číselníků */
+  valueCz?: string;
   name: string;
   /** URI reference for this classification item */
   uri?: string;
@@ -127,12 +145,16 @@ export interface MaterialRequirement extends RequirementBase {
   categoryMode?: "NONE" | "SIMPLE" | "ENUM";
   /** Category - can be custom value or selected from codelist */
   category?: string;
+  /** Překlad kategorie do češtiny (Parametr_hodnoty_CZ) */
+  categoryCz?: string;
   /** URI reference for the material */
   uri?: string;
   /** Constraint type for material value */
   constraint?: "FILLED" | "ENUM" | "PATTERN" | "RANGE" | "LENGTH";
   /** Value based on constraint type */
   value?: string;
+  /** Překlad hodnoty do češtiny (Požadované_hodnoty_CZ) – ne u číselníků */
+  valueCz?: string;
   /** @deprecated Use occurrence instead */
   required: boolean;
   /** @deprecated Use category instead */
@@ -208,7 +230,11 @@ export interface ProjectObject {
   /** Příklady k objektu – pouze pro Excel export, ne do IDS */
   priklady?: string;
   ifcEntity: string;
+  /** Překlad entity do češtiny (IFC_entita_CZ) */
+  ifcEntityCz?: string;
   predefinedType: PredefinedTypeSelection;
+  /** Překlad predefinedType do češtiny (IFC_predefinedType_CZ) */
+  predefinedTypeCz?: string;
   /** Phases for which the IfcEntity requirement applies. At least one required. */
   ifcEntityPhases?: string[];
   /** Phases for which the PredefinedType requirement applies. At least one required when PredefinedType is set. */
@@ -273,6 +299,10 @@ export interface Project {
   author?: string;
   /** Režim překladů IFC názvů pro zobrazení uživateli */
   translationMode?: TranslationMode;
+  /** Zobrazit políčka překladů CZ vedle hodnot v kartách požadavků */
+  showCzTranslations?: boolean;
+  /** Zdroj pro automatický překlad prázdných políček CZ: OFF / BSDD / AUTO */
+  czTranslationSource?: TranslationMode;
   /** Project description */
   description?: string;
   createdAt: string;

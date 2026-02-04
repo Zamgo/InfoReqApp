@@ -13,6 +13,8 @@ export interface SheetSelection {
   zdroj: boolean;
   /** Exportovat třídění autorských nástrojů jako další sloupce za primární klasifikací a IFC */
   zdrojExportAutorskeNastroje?: boolean;
+  /** Exportovat sloupce překladů CZ (IFC_entita_CZ, Skupina_CZ, atd.) v POŽADAVKY a PRVKY */
+  exportCzTranslations?: boolean;
   ciselniky: boolean;
   faze: boolean;
   projekt: boolean;
@@ -107,6 +109,7 @@ export const ExcelExportDialog: React.FC<Props> = ({
   const [selection, setSelection] = useState<SheetSelection>({
     zdroj: true,
     zdrojExportAutorskeNastroje: false,
+    exportCzTranslations: false,
     ciselniky: true,
     faze: true,
     projekt: true,
@@ -129,6 +132,7 @@ export const ExcelExportDialog: React.FC<Props> = ({
     setSelection({
       zdroj: true,
       zdrojExportAutorskeNastroje: selection.zdrojExportAutorskeNastroje ?? false,
+      exportCzTranslations: selection.exportCzTranslations ?? false,
       ciselniky: true,
       faze: true,
       projekt: true,
@@ -141,6 +145,7 @@ export const ExcelExportDialog: React.FC<Props> = ({
     setSelection({
       zdroj: false,
       zdrojExportAutorskeNastroje: false,
+      exportCzTranslations: false,
       ciselniky: false,
       faze: false,
       projekt: false,
@@ -246,25 +251,46 @@ export const ExcelExportDialog: React.FC<Props> = ({
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">{sheet.description}</p>
                       {((sheet.key === "zdroj" || sheet.key === "mapovani") && isSelected) && (
-                        <label
-                          className="flex items-center gap-2 mt-2 cursor-pointer"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selection.zdrojExportAutorskeNastroje ?? false}
-                            onChange={() =>
-                              setSelection((prev) => ({
-                                ...prev,
-                                zdrojExportAutorskeNastroje: !prev.zdrojExportAutorskeNastroje,
-                              }))
-                            }
-                            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span className="text-xs text-slate-600">
-                            Exportovat klasifikaci dle autorských nástrojů
-                          </span>
-                        </label>
+                        <div className="mt-2 space-y-1">
+                          <label
+                            className="flex items-center gap-2 cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selection.zdrojExportAutorskeNastroje ?? false}
+                              onChange={() =>
+                                setSelection((prev) => ({
+                                  ...prev,
+                                  zdrojExportAutorskeNastroje: !prev.zdrojExportAutorskeNastroje,
+                                }))
+                              }
+                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-xs text-slate-600">
+                              Exportovat klasifikaci dle autorských nástrojů
+                            </span>
+                          </label>
+                          <label
+                            className="flex items-center gap-2 cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selection.exportCzTranslations ?? false}
+                              onChange={() =>
+                                setSelection((prev) => ({
+                                  ...prev,
+                                  exportCzTranslations: !prev.exportCzTranslations,
+                                }))
+                              }
+                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span className="text-xs text-slate-600">
+                              Exportovat překlady CZ (sloupce *_CZ)
+                            </span>
+                          </label>
+                        </div>
                       )}
                     </div>
                   </label>
