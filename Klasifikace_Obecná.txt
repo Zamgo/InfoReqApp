@@ -1,0 +1,333 @@
+ASR	architektonicko stavebni reseni	1		
+ASR.KAN	domovni kanalizace (KAN)	2		
+ASR.KAN.001	vpust KAN	3		IfcWasteTerminal
+ASR.KAN.002	zarizovaci predmet KAN	3		IfcSanitaryTerminal
+ASR.MAP	mistnosti a prostory	2		
+ASR.MAP.001	mistnost	3		IfcSpace
+ASR.MAP.002	parkovaci misto	3		IfcSpace
+ASR.STR	stresni konstrukce	2		
+ASR.STR.001	plast strechy	3		IfcSlab
+ASR.SVK	svisle konstrukce	2		
+ASR.SVK.001	komin	3		IfcChimney
+ASR.SVK.002	stena - nenosna	3		IfcWall
+ASR.VKF	vnejsi obalove konstrukce a fasady	2		
+ASR.VKF.001	fasadni nater	3		IfcCovering
+ASR.VKF.002	kontaktni zateplovaci system	3		IfcCovering
+ASR.VKF.003	lehky obvodovy plast (LOP)	3		IfcCurtainWall
+ASR.VKF.004	obklad - venkovni	3		IfcCovering
+ASR.VKF.005	provetravana fasada	3		IfcCovering
+ASR.VKF.006	sklepni svetlik	3		IfcWindow
+ASR.VKF.007	stinici prvek - slunolam apod.	3		IfcShadingDevice
+ASR.VKF.008	stinici prvek - zaluzie a roleta	3		IfcShadingDevice
+ASR.VUP	vnitrni upravy povrchu	2		
+ASR.VUP.001	malba	3		IfcCovering
+ASR.VUP.002	obklad - vnitrni	3		IfcCovering
+ASR.VUP.003	omitka - vnitrni	3		IfcCovering
+ASR.VUP.004	tapeta	3		IfcCovering
+ASR.VOK	vodorovne kontrukce	2		
+ASR.VOK.001	podhled	3		IfcSlab
+ASR.VOK.002	podkladni beton	3		IfcSlab
+ASR.VOK.003	podlaha	3		IfcCovering
+ASR.VOK.004	preklad	3		IfcBeam
+ASR.VOT	vyplne otvoru	2		
+ASR.VOT.001	dvere - vnitrni	3		IfcDoor
+ASR.VOT.002	okno	3		IfcWindow
+ASR.VOT.003	vrata	3		IfcDoor
+ASR.VOT.004	vylez a poklop	3		IfcDoor
+ASR.VYK	vyrobky - klempirske	2		
+ASR.VYK.001	oplechovani atiky	3		IfcPlate
+ASR.VYK.002	parapet	3		IfcPlate
+ASR.VYK.003	stresni svod	3		IfcPipeSegment
+ASR.VYK.004	stresni zlab	3		IfcPipeSegment
+ASR.VYO	vyrobky - ostatni	2		
+ASR.VYO.001	revizni dvirka	3		IfcDoor
+ASR.VYO.002	vetraci mrizka a protidestova zaluzie	3		IfcAirTerminal
+ASR.VYT	vyrobky - truhlarske	2		
+ASR.VYT.001	nabytek - vestaveny - kuchynska linka a recepcni pult	3		IfcFurniture
+ASR.VYZ	vyrobky - zamecnicke	2		
+ASR.VYZ.001	bezpecnostni mriz	3		IfcRailing
+ASR.VYZ.002	zabradli	3		IfcRailing
+ASR.VYZ.003	zebrik	3		IfcStairFlight
+ASR.ZAO	zarizeni - ostatni	2		
+ASR.ZAO.001	eskalator, travelator	3		IfcTransportElement
+ASR.ZAO.002	vytah	3		IfcTransportElement
+ASR.ZAP	zarizovaci predmety, vpusti	2		
+ASR.ZAP.001	vpust	3		IfcWasteTerminal
+ASR.ZAP.002	zarizovaci predmet	3		IfcSanitaryTerminal
+I	interier	1		
+I.NAB	nabytek	2		
+I.NAB.001	nabytek - ostatni	3		IfcFurniture
+I.NAB.002	nabytek - vestaveny	3		IfcFurniture
+SKR	stavebne konstrukcni cast	1		
+SKR.OPK	operne konstrukce	2		
+SKR.OPK.001	operna stena - beton	3		IfcWall
+SKR.OPK.002	operna stena - gabion	3		IfcWall
+SKR.OPK.003	operna stena - zdivo	3		IfcWall
+SKR.OPK.004	operna stena - zelezobeton	3		IfcWall
+SKR.SCH	schodiste a rampy	2		
+SKR.SCH.001	rampa - beton	3		IfcRampFlight
+SKR.SCH.002	rampa - drevo	3		IfcRampFlight
+SKR.SCH.003	rampa - ocel	3		IfcRampFlight
+SKR.SCH.004	rampa - sklo	3		IfcRampFlight
+SKR.SCH.005	rampa - smisena	3		IfcRampFlight
+SKR.SCH.006	rampa - zdivo	3		IfcRampFlight
+SKR.SCH.007	rampa - zelezobeton	3		IfcRampFlight
+SKR.SCH.008	schodistova podesta - beton	3		IfcSlab
+SKR.SCH.009	schodistova podesta - drevo	3		IfcSlab
+SKR.SCH.010	schodistova podesta - ocel	3		IfcSlab
+SKR.SCH.011	schodistova podesta - sklo	3		IfcSlab
+SKR.SCH.012	schodistova podesta - smisena	3		IfcSlab
+SKR.SCH.013	schodistova podesta - zdivo	3		IfcSlab
+SKR.SCH.014	schodistova podesta - zelezobeton	3		IfcSlab
+SKR.SCH.015	schodistove rameno - beton	3		IfcStairFlight
+SKR.SCH.016	schodistove rameno - drevo	3		IfcStairFlight
+SKR.SCH.017	schodistove rameno - ocel	3		IfcStairFlight
+SKR.SCH.018	schodistove rameno - sklo	3		IfcStairFlight
+SKR.SCH.019	schodistove rameno - smisene	3		IfcStairFlight
+SKR.SCH.020	schodistove rameno - zdivo	3		IfcStairFlight
+SKR.SCH.021	schodistove rameno - zelezobeton	3		IfcStairFlight
+SKR.SPP	specialni prvky	2		
+SKR.SPP.001	izonosnik	3		IfcSlab
+SKR.SPP.002	kotevni deska	3		IfcPlate
+SKR.SPP.003	lozisko, vibroizolace	3		IfcBearing
+SKR.SPP.004	smykovy trn	3		IfcMechanicalFastener
+SKR.NOS	nosné konstrukce	2		
+SKR.NOS.001	hlava piloty - beton	3		IfcFooting
+SKR.NOS.002	hlava piloty - drevo	3		IfcFooting
+SKR.NOS.003	hlava piloty - ocel	3		IfcFooting
+SKR.NOS.004	hlava piloty - zelezobeton	3		IfcFooting
+SKR.NOS.005	hlavice sloupu - beton	3		IfcSlab
+SKR.NOS.006	hlavice sloupu - drevo	3		IfcSlab
+SKR.NOS.007	hlavice sloupu - ocel	3		IfcSlab
+SKR.NOS.008	hlavice sloupu - sklo	3		IfcSlab
+SKR.NOS.009	hlavice sloupu - zdivo	3		IfcSlab
+SKR.NOS.010	hlavice sloupu - zelezobeton	3		IfcSlab
+SKR.NOS.011	nosnik - drevo	3		IfcMember
+SKR.NOS.012	nosnik - ocel	3		IfcMember
+SKR.NOS.013	nosnik - sklo	3		IfcMember
+SKR.NOS.014	nosnik - smiseny	3		IfcMember
+SKR.NOS.015	nosnik - zelezobeton	3		IfcMember
+SKR.NOS.016	prihradovy vaznik - drevo	3		IfcBeam
+SKR.NOS.017	prihradovy vaznik - ocel	3		IfcBeam
+SKR.NOS.018	prihradovy vaznik - smiseny	3		IfcBeam
+SKR.NOS.019	prihradovy vaznik - zelezobeton	3		IfcBeam
+SKR.NOS.020	sloup - beton	3		IfcColumn
+SKR.NOS.021	sloup - drevo	3		IfcColumn
+SKR.NOS.022	sloup - obecny	3		IfcColumn
+SKR.NOS.023	sloup - ocel	3		IfcColumn
+SKR.NOS.024	sloup - sklo	3		IfcColumn
+SKR.NOS.025	sloup - zdivo	3		IfcColumn
+SKR.NOS.026	sloup - zelezobeton	3		IfcColumn
+SKR.NOS.027	stena - nosna - beton	3		IfcWall
+SKR.NOS.028	stena - nosna - drevo	3		IfcWall
+SKR.NOS.029	stena - nosna - ocel	3		IfcWall
+SKR.NOS.030	stena - nosna - sklo	3		IfcWall
+SKR.NOS.031	stena - nosna - zdivo	3		IfcWall
+SKR.NOS.032	stena - nosna - zelezobeton	3		IfcWall
+SKR.NOS.033	stropni deska - beton	3		IfcSlab
+SKR.NOS.034	stropni deska - drevo	3		IfcSlab
+SKR.NOS.035	stropni deska - ocel	3		IfcSlab
+SKR.NOS.036	stropni deska - sklo	3		IfcSlab
+SKR.NOS.037	stropni deska - smisena	3		IfcSlab
+SKR.NOS.038	stropni deska - zdivo	3		IfcSlab
+SKR.NOS.039	stropni deska - zelezobeton	3		IfcSlab
+SKR.NOS.040	tram, pruvlak - drevo	3		IfcBeam
+SKR.NOS.041	tram, pruvlak - ocel	3		IfcBeam
+SKR.NOS.042	tram, pruvlak - smiseny	3		IfcBeam
+SKR.NOS.043	tram, pruvlak - zelezobeton	3		IfcBeam
+SKR.ZAK	zakladove konstrukce	2		
+SKR.ZAK.001	pilota, mikropilota - beton	3		IfcPile
+SKR.ZAK.002	pilota, mikropilota - drevo	3		IfcPile
+SKR.ZAK.003	pilota, mikropilota - ocel	3		IfcPile
+SKR.ZAK.004	pilota, mikropilota - zelezobeton	3		IfcPile
+SKR.ZAK.005	zakladova deska - beton	3		IfcSlab
+SKR.ZAK.006	zakladova deska - zelezobeton	3		IfcSlab
+SKR.ZAK.007	zakladova patka - beton	3		IfcFooting
+SKR.ZAK.008	zakladova patka - zdivo	3		IfcFooting
+SKR.ZAK.009	zakladova patka - zelezobeton	3		IfcFooting
+SKR.ZAK.010	zakladovy pas - beton	3		IfcFooting
+SKR.ZAK.011	zakladovy pas - zdivo	3		IfcFooting
+SKR.ZAK.012	zakladovy pas - zelezobeton	3		IfcFooting
+TZB	technicka zarizeni budov (TZB)	1		
+TZB.ATU	automaticka telefonni ustredna (ATU)	2		
+TZB.ATU.001	telefon ATU	3		IfcAudioVisualAppliance
+TZB.ATU.002	ustredna ATU	3		IfcCommunicationsAppliance
+TZB.DBS	dobijeci stanice	2		IfcOutlet
+TZB.DBS.001	dobijeci stanice	3		IfcOutlet
+TZB.KAN	domovni kanalizace (KAN)	2		
+TZB.KAN.001	armatura KAN	3		IfcValve
+TZB.KAN.002	cerpadlo KAN	3		IfcPump
+TZB.KAN.003	cistirna odpadnich vod (COV)	3		IfcInterceptor
+TZB.KAN.004	izolace potrubi KAN	3		IfcCovering
+TZB.KAN.005	lapol/odlucovac KAN	3		IfcInterceptor
+TZB.KAN.006	nadrz KAN	3		IfcTank
+TZB.KAN.007	potrubi KAN	3		IfcPipeSegment
+TZB.KAN.008	precerpavaci stanice KAN	3		IfcPump
+TZB.KAN.009	sachta KAN	3		IfcDistributionChamberElement
+TZB.KAN.010	tvarovka KAN	3		IfcPipeFitting
+TZB.KAN.011	vsakovaci objekt	3		IfcTank
+TZB.KAN.012	zlab	3		IfcPipeSegment
+TZB.PLN	domovni plynovod (PLN)	2		
+TZB.PLN.001	armatura PLN	3		IfcValve
+TZB.PLN.002	chranicka PLN	3		IfcPipeSegment
+TZB.PLN.003	izolace potrubi PLN	3		IfcCovering
+TZB.PLN.004	plynomer PLN	3		IfcFlowMeter
+TZB.PLN.005	potrubi PLN	3		IfcPipeSegment
+TZB.PLN.006	tvarovka PLN	3		IfcPipeFitting
+TZB.PLN.007	zasobnik PLN	3		IfcTank
+TZB.DOT	domovni telefony	2		
+TZB.DOT.001	tablo/tlacitko zvonku DT	3		IfcCommunicationsAppliance
+TZB.DOT.002	telefon DT	3		IfcAudioVisualAppliance
+TZB.VOD	domovni vodovod (VOD)	2		
+TZB.VOD.001	armatura VOD	3		IfcValve
+TZB.VOD.002	izolace potrubi VOD	3		IfcCovering
+TZB.VOD.003	nadrz VOD	3		IfcTank
+TZB.VOD.004	potrubi VOD	3		IfcPipeSegment
+TZB.VOD.005	prutokovy ohrivac VOD	3		IfcBoiler
+TZB.VOD.006	tvarovka VOD	3		IfcPipeFitting
+TZB.VOD.007	upravna vody	3		IfcFilter
+TZB.VOD.008	vodomerna sestava	3		IfcFlowMeter
+TZB.EPS	elektricka pozarni signalizace (EPS)	2		
+TZB.EPS.001	automaticky hlasic (cidlo, senzor)	3		IfcSensor
+TZB.EPS.002	klicovy trezor	3		IfcElectricAppliance
+TZB.EPS.003	sirena EPS	3		IfcAlarm
+TZB.EPS.004	svetelna signalizace EPS	3		IfcAlarm
+TZB.EPS.005	tlacitkovy hlasic EPS	3		IfcAlarm
+TZB.EPS.006	ustredna EPS	3		IfcCommunicationsAppliance
+TZB.EPS.007	vstupni/vystupni zarizeni	3		IfcSensor
+TZB.EVR	evakuacni rozhlas, mistni rozhlas s nucenym odposlechem (EVAC)	2		
+TZB.EVR.001	mikrofonni pult EVAC	3		IfcAudioVisualAppliance
+TZB.EVR.002	reproduktor EVAC	3		IfcCommunicationsAppliance
+TZB.EVR.003	ustredna, zesilovac EVAC	3		IfcAudioVisualAppliance
+TZB.FVE	fotovoltaika	2		
+TZB.FVE.001	baterie	3		IfcElectricFlowStorageDevice
+TZB.FVE.002	fotovoltaicky panel	3		IfcSolarDevice
+TZB.FVE.003	stridac	3		IfcTransformer
+TZB.JEC	jednotny cas	2		
+TZB.JEC.001	hodinova ustredna (hlavni hodiny)	3		IfcCommunicationsAppliance
+TZB.JEC.002	hodiny	3		IfcCommunicationsAppliance
+TZB.JEC.003	prijimac casoveho signalu JC	3		IfcCommunicationsAppliance
+TZB.JEC.004	zvonek JC	3		IfcAlarm
+TZB.MAR	mereni a regulace (MAR)	2		
+TZB.MAR.001	koncovy prvek MAR	3		IfcUnitaryControlElement
+TZB.PSI	pocitacove site	2		
+TZB.PSI.001	ostatni prvky	3		IfcCommunicationsAppliance
+TZB.PSI.002	pristupovy bod (AP)	3		IfcCommunicationsAppliance
+TZB.PZT	poplachove zabezpecovaci a tisnove systemy (PZTS)	2		
+TZB.PZT.001	detektor PZTS	3		IfcSensor
+TZB.PZT.002	ovladaci prvek PZTS	3		IfcActuator
+TZB.PZT.003	sirena PTZS	3		IfcAlarm
+TZB.PZT.004	tlacitkovy hlasic PZTS	3		IfcAlarm
+TZB.PZT.005	ustredna PZTS	3		IfcCommunicationsAppliance
+TZB.ACS	pristupove a dochazkove systemy (ACS)	2		
+TZB.ACS.001	ctecka	3		IfcSensor
+TZB.ACS.002	terminal (ustredna) ACS	3		IfcCommunicationsAppliance
+TZB.ACS.003	zamek ACS	3		IfcElectricAppliance
+TZB.SOZ	samocinne odvetravaci zarizeni (SOZ)	2		
+TZB.SOZ.001	izolace potrubi SOZ	3		IfcCovering
+TZB.SOZ.002	klapka SOZ	3		IfcDamper
+TZB.SOZ.003	kompenzator delkove roztaznosti	3		IfcDuctFitting
+TZB.SOZ.004	koncovy prvek SOZ	3		IfcAirTerminal
+TZB.SOZ.005	kourotesna klapka	3		IfcDamper
+TZB.SOZ.006	kourova zabrana	3		IfcWall
+TZB.SOZ.007	ovladaci panel (rozvadec) SOZ	3		IfcElectricDistributionBoard
+TZB.SOZ.008	potrubi SOZ	3		IfcDuctSegment
+TZB.SOZ.009	pozarni klapka	3		IfcDamper
+TZB.SOZ.010	stresni sokl a prostup SOZ	3		IfcRoof
+TZB.SOZ.011	tlumic hluku SOZ	3		IfcDuctSilencer
+TZB.SOZ.012	tvarovka SOZ	3		IfcDuctFitting
+TZB.SOZ.013	ventilator - proudovy (jet fan)	3		IfcFan
+TZB.SOZ.014	ventilator SOZ	3		IfcFan
+TZB.ESI	silnoprouda elektrotechnika (ESI)	2		
+TZB.ESI.001	kabelova trasa a nosny system pro kabely ESI	3		IfcCableCarrierSegment
+TZB.ESI.002	rozvadec ESI	3		IfcElectricDistributionBoard
+TZB.ESI.003	svitidlo ESI	3		IfcLightFixture
+TZB.ESI.004	transformator ESI	3		IfcTransformer
+TZB.ESI.005	vypinac, spinac, cidlo ESI	3		IfcSwitchingDevice
+TZB.ESI.006	vyvod ESI	3		IfcJunctionBox
+TZB.ESI.007	zalozni zdroj (generator) ESI	3		IfcElectricGenerator
+TZB.ESI.008	zasuvka (a podlahovy box) ESI	3		IfcOutlet
+TZB.ESL	slaboprouda elektrotechnika (ESL)	2		
+TZB.ESL.001	datova zasuvka ESL	3		IfcOutlet
+TZB.ESL.002	kabelova trasa a nosny system pro kabely ESL	3		IfcCableCarrierSegment
+TZB.ESL.003	rozvadec (rack) ESL	3		IfcElectricDistributionBoard
+TZB.SHZ	stabilni hasici zarizeni (SHZ)	2		
+TZB.SHZ.001	armatura SHZ	3		IfcValve
+TZB.SHZ.002	cerpadlo SHZ	3		IfcPump
+TZB.SHZ.003	expanzni nadoba SHZ	3		IfcTank
+TZB.SHZ.004	izolace potrubi SHZ	3		IfcCovering
+TZB.SHZ.005	kompresor	3		IfcCompressor
+TZB.SHZ.006	poplachovy zvon	3		IfcAlarm
+TZB.SHZ.007	potrubi SHZ	3		IfcPipeSegment
+TZB.SHZ.008	prutokovy hlasic	3		IfcSensor
+TZB.SHZ.009	regulacni armatura SHZ	3		IfcValve
+TZB.SHZ.010	sprinklerova hlavice	3		IfcFireSuppressionTerminal
+TZB.SHZ.011	tlakova lahev SHZ	3		IfcTank
+TZB.SHZ.012	tlakovy spinac SHZ	3		IfcActuator
+TZB.SHZ.013	tryska	3		IfcFireSuppressionTerminal
+TZB.SHZ.014	tvarovka SHZ	3		IfcPipeFitting
+TZB.SHZ.015	ventilova stanice SHZ	3		IfcValve
+TZB.SHZ.016	zaplavovaci nadrz SHZ	3		IfcTank
+TZB.STA	televizni a satelitni systemy (STA)	2		
+TZB.STA.001	antena	3		IfcCommunicationsAppliance
+TZB.STA.002	prvek STA	3		IfcCommunicationsAppliance
+TZB.UTC	ustredni topeni a chlazeni (UTC)	2		
+TZB.UTC.001	armatura UTC	3		IfcValve
+TZB.UTC.002	doplnovani vody UTC	3		IfcPump
+TZB.UTC.003	expanzni zarizeni UTC	3		IfcTank
+TZB.UTC.004	fan-coil	3		IfcUnitaryEquipment
+TZB.UTC.005	izolace potrubi UTC	3		IfcCovering
+TZB.UTC.006	konvektor UTC	3		IfcSpaceHeater
+TZB.UTC.007	kotel	3		IfcBoiler
+TZB.UTC.008	meridlo UTC	3		IfcFlowMeter
+TZB.UTC.009	obehove cerpadlo UTC	3		IfcPump
+TZB.UTC.010	odlucovac	3		IfcInterceptor
+TZB.UTC.011	otopne teleso UTC	3		IfcSpaceHeater
+TZB.UTC.012	pojistna armatura	3		IfcValve
+TZB.UTC.013	posilovaci stanice UTC	3		IfcPump
+TZB.UTC.014	potrubi UTC	3		IfcPipeSegment
+TZB.UTC.015	regulacni armatura UTC	3		IfcValve
+TZB.UTC.016	rozdelovac a sberac UTC	3		IfcPipeFitting
+TZB.UTC.017	solarni kolektor UTC	3		IfcSolarDevice
+TZB.UTC.018	tepelne cerpadlo UTC	3		IfcUnitaryEquipment
+TZB.UTC.019	tepelny vymenik	3		IfcHeatExchanger
+TZB.UTC.020	tvarovka UTC	3		IfcPipeFitting
+TZB.UTC.021	upravna kapaliny	3		IfcFilter
+TZB.UTC.022	velkoplosne vytapeni - elektricke	3		IfcCoil
+TZB.UTC.023	venkovni jednotka	3		IfcCondenser
+TZB.UTC.024	vnitrni jednotka	3		IfcEvaporator
+TZB.UTC.025	vymenikova stanice	3		IfcHeatExchanger
+TZB.UTC.026	zasobnik UTC	3		IfcBoiler
+TZB.CCT	uzavreny televizni okruh (CCTV)	2		
+TZB.CCT.001	kamera	3		IfcAudioVisualAppliance
+TZB.CCT.002	rekorder	3		IfcAudioVisualAppliance
+TZB.UAB	uzemneni a bleskosvody	2		
+TZB.UAB.001	jimaci tyc a stozar ESI	3		IfcCableSegment
+TZB.UAB.002	uzemnovaci bod/ekvipotencionalni svorkovnice	3		IfcCableFitting
+TZB.UAB.003	vodic a pasek - bleskosvod	3		IfcCableSegment
+TZB.UAB.004	zemnici tyc	3		IfcCableSegment
+TZB.VZT	vzduchotechnika (VZT)	2		
+TZB.VZT.001	derovane potrubi VZT	3		IfcAirTerminal
+TZB.VZT.002	dverni clona	3		IfcAirTerminal
+TZB.VZT.003	dverni mrizka	3		IfcAirTerminal
+TZB.VZT.004	filtracni jednotka VZT	3		IfcFilter
+TZB.VZT.005	filtracni komora	3		IfcFilter
+TZB.VZT.006	izolace potrubi VZT	3		IfcCovering
+TZB.VZT.007	klapka VZT	3		IfcDamper
+TZB.VZT.008	koncovy prvek VZT	3		IfcAirTerminal
+TZB.VZT.009	kryci mrizka	3		IfcAirTerminal
+TZB.VZT.010	odsavaci rameno VZT	3		IfcAirTerminal
+TZB.VZT.011	odsavaci zakryt a strop	3		IfcAirTerminal
+TZB.VZT.012	odvlhcovac VZT	3		IfcUnitaryEquipment
+TZB.VZT.013	potrubi VZT	3		IfcDuctSegment
+TZB.VZT.014	potrubni vymenik (ohrivac/chladic) VZT	3		IfcHeatExchanger
+TZB.VZT.015	prislusenstvi VZT	3		IfcDuctFitting
+TZB.VZT.016	regulacni a uzaviraci ventil, klapka VZT	3		IfcValve
+TZB.VZT.017	revizni otvor	3		IfcDuctSegment
+TZB.VZT.018	stresni sokl a prostup VZT	3		IfcRoof
+TZB.VZT.019	tvarovka VZT	3		IfcDuctFitting
+TZB.VZT.020	ventilator VZT	3		IfcFan
+TZB.VZT.021	vetrany prostor a zona	3		IfcSpatialZone
+TZB.VZT.022	vzduchotechnicka (VZT) jednotka	3		IfcUnitaryEquipment
+TZB.VZT.023	vzduchova sprcha VZT	3		IfcAirTerminal
+TZB.VZT.024	zvlhcovac VZT	3		IfcHumidifier

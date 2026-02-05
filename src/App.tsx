@@ -1639,9 +1639,9 @@ const AppInner: React.FC = () => {
           <button
             className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50"
             onClick={clearProject}
-            title="Vyčistit projekt a začít znovu"
+            title="Reset projektu a začít znovu"
           >
-            Vyčistit
+            Reset projektu
           </button>
           {/* Import dropdown */}
           <div className="relative" ref={importMenuRef}>
@@ -1791,7 +1791,6 @@ const AppInner: React.FC = () => {
             selectedCode={selectedCode}
             onSelectLeaf={onSelectLeaf}
             onUploadFile={onUploadClassification}
-            onResetDefault={clearProject}
             phases={project?.phases ?? []}
             onAddPhase={onAddPhase}
             onUpdatePhase={onUpdatePhase}

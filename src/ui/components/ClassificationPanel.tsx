@@ -268,7 +268,6 @@ interface Props {
   selectedCode?: string;
   onSelectLeaf: (node: ClassificationNode) => void;
   onUploadFile: (file: File) => Promise<void>;
-  onResetDefault: () => void;
   phases: Phase[];
   onAddPhase: (phase: Phase) => void;
   onUpdatePhase: (phase: Phase) => void;
@@ -405,7 +404,6 @@ export const ClassificationPanel: React.FC<Props> = ({
   selectedCode,
   onSelectLeaf,
   onUploadFile,
-  onResetDefault,
   phases,
   onAddPhase,
   onUpdatePhase,
@@ -772,7 +770,6 @@ export const ClassificationPanel: React.FC<Props> = ({
             onUpdate={onUpdateClassificationSystemEntry}
             onDelete={onDeleteClassificationSystemEntry}
             onUploadFile={onUploadFile}
-            onResetDefault={onResetDefault}
             schemaIndex={schemaIndex}
             onAddIfcClassificationSystem={onAddIfcClassificationSystem}
           />

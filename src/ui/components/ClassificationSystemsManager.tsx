@@ -41,7 +41,6 @@ interface Props {
   onUpdate: (id: string, updates: Partial<ClassificationSystemEntry>) => void;
   onDelete: (id: string) => void;
   onUploadFile: (file: File) => Promise<void>;
-  onResetDefault: () => void;
   schemaIndex?: SchemaIndex | null;
   /** Volitelně callback (entry) => void – po přidání IFC systému se zavolá s novým záznamem (např. pro otevření editoru). */
   onAddIfcClassificationSystem?: (onAdded?: (entry: ClassificationSystemEntry) => void) => void;
@@ -53,7 +52,6 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
   onUpdate,
   onDelete,
   onUploadFile,
-  onResetDefault,
   schemaIndex,
   onAddIfcClassificationSystem,
 }) => {
@@ -251,13 +249,6 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
               <input type="file" accept=".txt,.xlsx" onChange={handleFileChange} className="hidden" />
               <span>Importovat TXT / XLSX</span>
             </label>
-            <button
-              className="rounded border border-slate-300 bg-white px-2.5 py-1 text-sm hover:bg-slate-50"
-              onClick={onResetDefault}
-              title="Vyčistit projekt a začít znovu"
-            >
-              Vyčistit projekt
-            </button>
             <div className="relative">
               <button
                 type="button"
