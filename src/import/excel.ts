@@ -76,6 +76,16 @@ function normalizePredefinedType(val: string): string {
   return s.toLowerCase() === "není definováno" ? "NOTDEFINED" : s;
 }
 
+/** Odvodit IFC entitu a predefinedType z kódu ve formátu IfcEntity::PredefinedType */
+function parseIfcFromCode(code: string): { ifcEntity: string; predefinedType: string } | null {
+  if (!code || !code.includes("::")) return null;
+  const parts = code.split("::");
+  const ifcEntity = (parts[0] ?? "").trim();
+  const predefinedType = normalizePredefinedType((parts[1] ?? "").trim()) || "NOTDEFINED";
+  if (!ifcEntity || !/^Ifc[A-Z]/.test(ifcEntity)) return null;
+  return { ifcEntity, predefinedType };
+}
+
 const TYP_POZADAVKU = {
   atribut: "attribute",
   vlastnost: "property",
@@ -391,8 +401,13 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         leafNode.mappedValues = mappedValues;
       }
 
-      const ifcEntity = getVal(row, colIfcEntity);
-      const predefinedRaw = getVal(row, colPredefined);
+      let ifcEntity = getVal(row, colIfcEntity);
+      let predefinedRaw = getVal(row, colPredefined);
+      const fromCodeObj = parseIfcFromCode(code);
+      if ((!ifcEntity || !predefinedRaw) && fromCodeObj) {
+        if (!ifcEntity) ifcEntity = fromCodeObj.ifcEntity;
+        if (!predefinedRaw) predefinedRaw = fromCodeObj.predefinedType;
+      }
       const predefined = predefinedRaw ? normalizePredefinedType(predefinedRaw) : "";
       const description = primaryEntry ? (findNodeByCode(primaryEntry.nodes ?? [], code)?.description ?? "") : "";
       const ifcEntityCz = colIfcEntityCz >= 0 ? getVal(row, colIfcEntityCz) : undefined;
@@ -502,16 +517,22 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
       const skupinaCzVal = colSkupinaCz >= 0 ? getVal(row, colSkupinaCz) : "";
       const parametrCzVal = colParametrHodnotyCz >= 0 ? getVal(row, colParametrHodnotyCz) : "";
       const hodnotyCzVal = colHodnotyCz >= 0 ? getVal(row, colHodnotyCz) : "";
+      let ifcEntityVal = colIfcEntityPoz >= 0 ? getVal(row, colIfcEntityPoz) : "";
+      let predefinedVal = colPredefinedPoz >= 0 ? getVal(row, colPredefinedPoz) : "";
+      const fromCode = parseIfcFromCode(code);
+      if ((!ifcEntityVal || !predefinedVal) && fromCode) {
+        if (!ifcEntityVal) ifcEntityVal = fromCode.ifcEntity;
+        if (!predefinedVal) predefinedVal = fromCode.predefinedType;
+      }
       if (!obj) {
         const descFromHierarchy = getVal(row, findCol(h1, "Třídění_úroveň_1") || 0) || code;
         obj = {
           code,
           description: descFromHierarchy,
-          ifcEntity: getVal(row, colIfcEntityPoz >= 0 ? colIfcEntityPoz : 0) || "",
+          ifcEntity: ifcEntityVal || "",
           ...(ifcEntityCzVal?.trim() && { ifcEntityCz: ifcEntityCzVal.trim() }),
           predefinedType: (() => {
-            const ptRaw = getVal(row, colPredefinedPoz >= 0 ? colPredefinedPoz : 0);
-            const pt = ptRaw ? normalizePredefinedType(ptRaw) : "";
+            const pt = predefinedVal ? normalizePredefinedType(predefinedVal) : "";
             return pt ? { mode: "ENUM" as const, value: pt } : { mode: "NONE" as const };
           })(),
           ...(predefinedCzVal?.trim() && { predefinedTypeCz: predefinedCzVal.trim() }),
@@ -541,6 +562,20 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           },
         };
         objects[code] = obj;
+      } else {
+        // Doplnit IFC_entita a IFC_predefinedType z dalších řádků nebo z kódu (IfcEntity::PredefinedType)
+        const fallbackFromCode = fromCode ?? parseIfcFromCode(code);
+        if (!obj.ifcEntity && (ifcEntityVal || fallbackFromCode?.ifcEntity)) {
+          obj.ifcEntity = ifcEntityVal || fallbackFromCode!.ifcEntity;
+          if (ifcEntityCzVal?.trim()) obj.ifcEntityCz = ifcEntityCzVal.trim();
+        }
+        if (obj.predefinedType.mode === "NONE" && (predefinedVal || fallbackFromCode?.predefinedType)) {
+          const pt = predefinedVal ? normalizePredefinedType(predefinedVal) : fallbackFromCode!.predefinedType;
+          if (pt) {
+            obj.predefinedType = { mode: "ENUM" as const, value: pt };
+            if (predefinedCzVal?.trim()) obj.predefinedTypeCz = predefinedCzVal.trim();
+          }
+        }
       }
 
       const typRaw = getVal(row, colTyp).toLowerCase();
