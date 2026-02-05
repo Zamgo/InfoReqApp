@@ -179,7 +179,13 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     }
   }
 
-  const sourceSheet = prvkySheet && (prvkySheet.rowCount ?? 0) > 1 ? prvkySheet : pozadavkySheet;
+  // Preferujeme POŽADAVKY pro třídění a mapování – obsahuje flattened požadavky včetně hierarchie a mapovaných systémů
+  const sourceSheet =
+    pozadavkySheet && (pozadavkySheet.rowCount ?? 0) > 1
+      ? pozadavkySheet
+      : prvkySheet && (prvkySheet.rowCount ?? 0) > 1
+        ? prvkySheet
+        : pozadavkySheet;
   const classificationEntries: ClassificationSystemEntry[] = [];
   let primaryEntry: ClassificationSystemEntry | undefined;
   const mappedSystemCols: Array<{ header: string; entry: ClassificationSystemEntry; isAuthoring: boolean }> = [];

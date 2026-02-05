@@ -12,7 +12,7 @@ Import Excelu je nastaven na strukturu souboru **Zdroj_příklad.xlsx**. Níže 
 - **POŽADAVKY**: flattened požadavky – Typ_požadavku, Skupina, Parametr_hodnoty, IFC_datový_typ, Omezení, Požadované_hodnoty, Jednotka, Číselník, URI, Popis, Poznámka, Příklady, Výskyt, sloupce fází (Ano/Ne)
 
 **Poznámky**:
-- **Primární klasifikace** = vytvoří se z tabulky PRVKY nebo POŽADAVKY (dle dostupnosti) z prvních sloupců: Třídící_kód (volitelně), Třídění_úroveň_1, Třídění_úroveň_2, … Třídění_úroveň_x.
+- **Primární klasifikace** = vytvoří se z tabulky POŽADAVKY (při dostupnosti dat), jinak z PRVKY. Sloupce: Třídící_kód (volitelně), Třídění_úroveň_1, Třídění_úroveň_2, … Třídění_úroveň_x.
 - **Mapované klasifikace** = sloupce Třídění_&lt;název&gt; (bez úrovně) jsou další klasifikační systémy namapované na primární. Prefix **Třídění_AN_** = autorský nástroj (zaškrtne se v mapování).
 - **Třídící_kód** – pokud není vyplněn, kód se odvodí z hodnot Třídění_úroveň_* (např. `IfcDoor::NOTDEFINED`).
 - **ID** – při importu se vytvářejí nová ID pro aplikaci; do exportu se ID neexportují.
