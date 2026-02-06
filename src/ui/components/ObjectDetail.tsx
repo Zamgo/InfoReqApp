@@ -2887,15 +2887,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         }
       }
       for (const prop of object.requirements.properties) {
+        // Pro CUSTOM skupiny nepoužíváme bSDD, pouze AUTO překlad
+        const propCzSource = prop.source === "CUSTOM" && czTranslationSource === "BSDD" ? "AUTO" : czTranslationSource;
         const needsPsetCz = prop.psetName?.trim() && !prop.psetName.startsWith("_NEW_") && (!prop.psetNameCz?.trim() || looksLikePlaceholderCz(prop.psetNameCz));
         if (needsPsetCz) {
-          const type = prop.psetName!.startsWith("Qto_") ? "qto" : "pset";
-          const r = await translate(czTranslationSource, { type, officialName: prop.psetName! });
+          const type = prop.source === "CUSTOM" ? "property" : prop.psetName!.startsWith("Qto_") ? "qto" : "pset";
+          const r = await translate(propCzSource, { type, officialName: prop.psetName!, context: { entity: object.ifcEntity, psetName: prop.psetName } });
           if (r.translated?.trim()) updatePropertyField(prop.id, { psetNameCz: r.translated.trim() });
         }
         const needsPropCz = prop.propertyName?.trim() && !prop.propertyName.startsWith("_NEW_") && (!prop.propertyNameCz?.trim() || looksLikePlaceholderCz(prop.propertyNameCz));
         if (needsPropCz) {
-          const r = await translate(czTranslationSource, { type: "property", officialName: prop.propertyName, context: { psetName: prop.psetName } });
+          const r = await translate(propCzSource, { type: "property", officialName: prop.propertyName, context: { entity: object.ifcEntity, psetName: prop.psetName } });
           if (r.translated?.trim()) updatePropertyField(prop.id, { propertyNameCz: r.translated.trim() });
         }
       }
@@ -4421,6 +4423,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               onBlur={() => handleCustomGroupBlur(group.key)}
                               placeholder="Vyplnit název"
                             />
+                            {showCzTranslations && group.psetName && !group.psetName.startsWith("_NEW_") && (
+                              <input
+                                className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                                placeholder="Skupina CZ"
+                                value={group.properties[0]?.psetNameCz ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value || undefined;
+                                  group.properties.forEach((p) => updatePropertyField(p.id, { psetNameCz: v }));
+                                }}
+                                title="Překlad skupiny do češtiny"
+                              />
+                            )}
                             {customGroupErrors[group.key] && (
                               <span className="text-xs text-red-600 whitespace-nowrap">{customGroupErrors[group.key]}</span>
                             )}
@@ -4644,29 +4658,39 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                   {!hiddenPropertyColumns.has(2) && (
                                     <td className="px-2 py-2">
                                     {group.source === "CUSTOM" || isTempGroup ? (
-                                      <input
-                                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                                        value={(() => {
-                                          const propPropertyName = prop.propertyName || "";
-                                          const propPsetName = prop.psetName || "";
-                                          
-                                          // Vždy zobraz prázdný string, pokud propertyName obsahuje _NEW_ nebo se shoduje s psetName
-                                          if (propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName) {
-                                            return "";
-                                          }
-                                          return propPropertyName;
-                                        })()}
-                                        onChange={(e) => {
-                                          const newValue = e.target.value;
-                                          // Pokud uživatel zadá text začínající na _NEW_, ignoruj to a nastav prázdný string
-                                          if (newValue.startsWith("_NEW_")) {
-                                            updatePropertyField(prop.id, { propertyName: "", popis: "" });
-                                          } else {
-                                            updatePropertyField(prop.id, { propertyName: newValue });
-                                          }
-                                        }}
-                                        placeholder="Vlastnost"
-                                      />
+                                      <div className="flex flex-col gap-0.5">
+                                        <input
+                                          className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                          value={(() => {
+                                            const propPropertyName = prop.propertyName || "";
+                                            const propPsetName = prop.psetName || "";
+                                            
+                                            // Vždy zobraz prázdný string, pokud propertyName obsahuje _NEW_ nebo se shoduje s psetName
+                                            if (propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName) {
+                                              return "";
+                                            }
+                                            return propPropertyName;
+                                          })()}
+                                          onChange={(e) => {
+                                            const newValue = e.target.value;
+                                            // Pokud uživatel zadá text začínající na _NEW_, ignoruj to a nastav prázdný string
+                                            if (newValue.startsWith("_NEW_")) {
+                                              updatePropertyField(prop.id, { propertyName: "", popis: "" });
+                                            } else {
+                                              updatePropertyField(prop.id, { propertyName: newValue });
+                                            }
+                                          }}
+                                          placeholder="Vlastnost"
+                                        />
+                                        {showCzTranslations && (
+                                          <input
+                                            className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                            placeholder="CZ"
+                                            value={prop.propertyNameCz ?? ""}
+                                            onChange={(e) => updatePropertyField(prop.id, { propertyNameCz: e.target.value || undefined })}
+                                          />
+                                        )}
+                                      </div>
                                     ) : (
                                       <div className="flex flex-col gap-0.5">
                                         <div className="flex items-center gap-2">
