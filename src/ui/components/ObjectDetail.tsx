@@ -5742,7 +5742,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   groupLabels={Object.fromEntries(
                     propertyGroups.map((g) => [
                       g.key,
-                      customGroupNames[g.key] ?? g.psetNameCz ?? g.psetName ?? g.key,
+                      customGroupNames[g.key] ?? g.properties[0]?.psetNameCz ?? g.psetName ?? g.key,
                     ]),
                   )}
                   onConfirm={(targetObjectCodes) => {
