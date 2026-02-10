@@ -436,6 +436,15 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
       const description = primaryEntry ? (findNodeByCode(primaryEntry.nodes ?? [], code)?.description ?? "") : "";
       const ifcEntityCz = colIfcEntityCz >= 0 ? getVal(row, colIfcEntityCz) : undefined;
       const predefinedCz = colPredefinedCz >= 0 ? getVal(row, colPredefinedCz) : undefined;
+      // V listu POŽADAVKY je každý řádek požadavek – sloupce Popis, Poznámka, Příklady patří požadavku, ne objektu. Nepřebírat je na objekt.
+      const objectPopisPoznamkaPriklady =
+        sourceSheet === pozadavkySheet
+          ? {}
+          : {
+              popis: getVal(row, colPopis) || undefined,
+              poznamka: getVal(row, colPoznamka) || undefined,
+              priklady: getVal(row, colPriklady) || undefined,
+            };
       objects[code] = {
         code,
         description,
@@ -446,9 +455,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         ...(predefinedCz?.trim() && { predefinedTypeCz: predefinedCz.trim() }),
         ifcEntityPhases: phases.map((p) => p.id),
         predefinedTypePhases: phases.map((p) => p.id),
-        popis: getVal(row, colPopis) || undefined,
-        poznamka: getVal(row, colPoznamka) || undefined,
-        priklady: getVal(row, colPriklady) || undefined,
+        ...objectPopisPoznamkaPriklady,
         requirements: {
           attributes: [],
           properties: [],
