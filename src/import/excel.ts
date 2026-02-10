@@ -158,8 +158,32 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     }
   }
   if (phases.length === 0) {
-    phases = [{ id: "phase-1", code: "Fáze1", name: "Fáze1" }];
-    warnings.push("List FÁZE chybí nebo je prázdný – použita výchozí fáze.");
+    // Roundtrip: ak chýba list FÁZE, odvodiť fázy zo stĺpcov POŽADAVKY (za Výskyt)
+    if (pozadavkySheet && (pozadavkySheet.rowCount ?? 0) > 1) {
+      const h1Poz = pozadavkySheet.getRow(1);
+      const colVyskytPoz = findCol(h1Poz, "Výskyt");
+      if (colVyskytPoz >= 0) {
+        const seenPhaseNames = new Set<string>();
+        for (let i = colVyskytPoz + 1; i <= MAX_COLS; i++) {
+          const v = getVal(h1Poz, i);
+          if (v && !seenPhaseNames.has(v)) {
+            seenPhaseNames.add(v);
+            phases.push({
+              id: makeId(),
+              code: v,
+              name: v,
+              description: undefined,
+            });
+          }
+        }
+      }
+    }
+    if (phases.length === 0) {
+      phases = [{ id: "phase-1", code: "Fáze1", name: "Fáze1" }];
+      warnings.push("List FÁZE chybí nebo je prázdný – použita výchozí fáze.");
+    } else {
+      warnings.push("List FÁZE chybí – fáze odvozeny ze sloupců v POŽADAVKY.");
+    }
   }
 
   const phaseByName = new Map<string, Phase>();

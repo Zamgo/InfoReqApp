@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClassificationNode } from "../../classification/types";
-import { collectLeaves } from "../../classification/parser";
+import { collectLeaves, filterTree } from "../../classification/parser";
 import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
@@ -122,6 +122,320 @@ const PropertyRowEditDialog: React.FC<{
   );
 };
 
+/** Dialog pro duplikaci skupin vlastností do jiných objektů – hierarchie, filtrace, vyhledávání. */
+const DuplicatePropertyGroupsDialog: React.FC<{
+  nodes: ClassificationNode[];
+  objects: Record<string, ProjectObject>;
+  currentObjectCode: string;
+  selectedGroupKeys: string[];
+  groupLabels: Record<string, string>;
+  onConfirm: (targetObjectCodes: string[]) => void;
+  onClose: () => void;
+}> = ({ nodes, objects, currentObjectCode, selectedGroupKeys, groupLabels, onConfirm, onClose }) => {
+  const [search, setSearch] = useState("");
+  const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  /** Výstraha: cílové objekty, u kterých už existuje skupina vlastností se stejným názvem – kopírování se neprovede */
+  const [conflictWarning, setConflictWarning] = useState<
+    Array<{ targetCode: string; targetDescription: string; conflictingGroupKeys: string[] }> | null
+  >(null);
+
+  const getGroupKey = (source: string, psetName?: string) => `${source}:${psetName || "(custom)"}`;
+
+  const filteredNodes = useMemo(
+    () => (search.trim() ? filterTree(nodes, search.trim()) : nodes),
+    [nodes, search],
+  );
+
+  /** Všechny kódy objektů (kromě aktuálního), u kterých lze zaškrtnout výběr – plochý seznam z project.objects */
+  const allObjectCodes = useMemo(
+    () => Object.keys(objects).filter((code) => code !== currentObjectCode),
+    [objects, currentObjectCode],
+  );
+
+  const toggleCode = (code: string) => {
+    if (code === currentObjectCode) return;
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedCodes(new Set(allObjectCodes));
+  };
+  const deselectAll = () => setSelectedCodes(new Set());
+
+  const handleConfirm = () => {
+    const targetCodes = Array.from(selectedCodes);
+    const conflicts: Array<{ targetCode: string; targetDescription: string; conflictingGroupKeys: string[] }> = [];
+
+    for (const code of targetCodes) {
+      const obj = objects[code];
+      if (!obj?.requirements?.properties) continue;
+      const existingKeys = new Set(
+        obj.requirements.properties.map((p) => getGroupKey(p.source, p.psetName)),
+      );
+      const conflicting = selectedGroupKeys.filter((k) => existingKeys.has(k));
+      if (conflicting.length > 0) {
+        conflicts.push({
+          targetCode: code,
+          targetDescription: obj.description ?? code,
+          conflictingGroupKeys: conflicting,
+        });
+      }
+    }
+
+    if (conflicts.length > 0) {
+      setConflictWarning(conflicts);
+      return;
+    }
+    setConflictWarning(null);
+    onConfirm(targetCodes);
+    onClose();
+  };
+
+  const toggleExpanded = (code: string) => {
+    setExpanded((e) => ({ ...e, [code]: !e[code] }));
+  };
+
+  const renderNode = (node: ClassificationNode, depth: number, pathKey: string): React.ReactNode => {
+    const isLeaf = node.children.length === 0;
+    const isCurrent = node.code === currentObjectCode;
+    const canSelect = isLeaf && !isCurrent;
+    const nodeId = `dup-${pathKey}`;
+    const isExp = expanded[nodeId] ?? true;
+    const inputId = `dup-cb-${pathKey}`;
+
+    return (
+      <div key={pathKey} className="border-l border-slate-200 pl-2" style={{ marginLeft: depth * 8 }}>
+        <div className="flex items-center gap-2 py-1">
+          {!isLeaf ? (
+            <button
+              type="button"
+              className="h-5 w-5 shrink-0 rounded text-xs text-slate-500 hover:bg-slate-200"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleExpanded(nodeId);
+              }}
+              aria-label={isExp ? "Sbalit" : "Rozbalit"}
+            >
+              {isExp ? "−" : "+"}
+            </button>
+          ) : (
+            <span className="w-5 shrink-0" />
+          )}
+          {canSelect ? (
+            <label
+              htmlFor={inputId}
+              className="flex flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-slate-50"
+            >
+              <input
+                id={inputId}
+                type="checkbox"
+                className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                checked={selectedCodes.has(node.code)}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  toggleCode(node.code);
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+              <span className="text-sm text-slate-800">
+                {objects[node.code]?.description ?? node.description ?? node.code}
+              </span>
+              <span className="text-xs text-slate-500">{node.code}</span>
+            </label>
+          ) : (
+            <div
+              role="button"
+              tabIndex={0}
+              className="flex flex-1 cursor-pointer items-center rounded px-2 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              onClick={(e) => {
+                e.preventDefault();
+                if (!isLeaf) toggleExpanded(nodeId);
+              }}
+              onKeyDown={(e) => {
+                if (!isLeaf && (e.key === "Enter" || e.key === " ")) {
+                  e.preventDefault();
+                  toggleExpanded(nodeId);
+                }
+              }}
+            >
+              {(node.description || node.code).replace(/::/g, ".")}
+            </div>
+          )}
+        </div>
+        {!isLeaf && isExp && node.children.map((child, idx) => renderNode(child, depth + 1, `${pathKey}-${idx}-${child.code}`))}
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
+      <div
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-lg bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-slate-200 p-4">
+          <h3 className="text-lg font-semibold text-slate-800">Duplikovat skupiny vlastností do objektů</h3>
+          <p className="mt-1 text-sm text-slate-600">
+            Vyberte objekty, do kterých se zkopírují vybrané skupiny vlastností (vždy jako nezávislé kopie).
+          </p>
+          {selectedGroupKeys.length > 0 && (
+            <p className="mt-1 text-xs text-slate-500">
+              Skupiny: {selectedGroupKeys.map((k) => groupLabels[k] ?? k).join(", ")}
+            </p>
+          )}
+        </div>
+        <div className="flex flex-none items-center gap-2 border-b border-slate-200 px-4 py-2">
+          <input
+            type="text"
+            className="flex-1 rounded border border-slate-300 px-3 py-1.5 text-sm placeholder:text-slate-400"
+            placeholder="Filtrovat / vyhledat (kód, popis)..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <button
+            type="button"
+            className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            onClick={selectAll}
+          >
+            Označit vše
+          </button>
+          <button
+            type="button"
+            className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+            onClick={deselectAll}
+          >
+            Zrušit výběr
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {nodes.length === 0 ? (
+            allObjectCodes.length === 0 ? (
+              <div className="text-sm text-slate-500">V projektu nejsou žádné další objekty.</div>
+            ) : (
+              <div className="space-y-1">
+                <p className="mb-2 text-xs font-medium text-slate-500">Vyberte objekty (zaškrtnutím):</p>
+                {allObjectCodes
+                  .filter(
+                    (code) =>
+                      !search.trim() ||
+                      (objects[code]?.description ?? code).toLowerCase().includes(search.trim().toLowerCase()) ||
+                      code.toLowerCase().includes(search.trim().toLowerCase()),
+                  )
+                  .map((code) => (
+                    <label
+                      key={code}
+                      className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-slate-50"
+                    >
+                      <input
+                        id={`dup-flat-${code}`}
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        checked={selectedCodes.has(code)}
+                        onChange={() => toggleCode(code)}
+                      />
+                      <span className="text-sm text-slate-800">{objects[code]?.description ?? code}</span>
+                      <span className="text-xs text-slate-500">{code}</span>
+                    </label>
+                  ))}
+              </div>
+            )
+          ) : (
+            <>
+              {filteredNodes.length === 0 ? (
+                <div className="text-sm text-slate-500">Žádné položky ve stromu nevyhovují filtru.</div>
+              ) : (
+                <div className="mb-4">
+                  <p className="mb-2 text-xs font-medium text-slate-500">Hierarchie – zaškrtněte objekty (listy stromu):</p>
+                  <div className="space-y-0.5">
+                    {filteredNodes.map((n, idx) => renderNode(n, 0, `r-${idx}-${n.code}`))}
+                  </div>
+                </div>
+              )}
+              <div className="border-t border-slate-200 pt-4">
+                <p className="mb-2 text-xs font-medium text-slate-500">Všechny objekty – výběr zaškrtnutím:</p>
+                <div className="max-h-48 space-y-1 overflow-y-auto">
+                  {allObjectCodes
+                    .filter(
+                      (code) =>
+                        !search.trim() ||
+                        (objects[code]?.description ?? code).toLowerCase().includes(search.trim().toLowerCase()) ||
+                        code.toLowerCase().includes(search.trim().toLowerCase()),
+                    )
+                    .map((code) => (
+                      <label
+                        key={code}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-slate-50"
+                      >
+                        <input
+                          id={`dup-list-${code}`}
+                          type="checkbox"
+                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          checked={selectedCodes.has(code)}
+                          onChange={() => toggleCode(code)}
+                        />
+                        <span className="text-sm text-slate-800">{objects[code]?.description ?? code}</span>
+                        <span className="text-xs text-slate-500">{code}</span>
+                      </label>
+                    ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+        {conflictWarning && conflictWarning.length > 0 && (
+          <div className="border-t border-amber-200 bg-amber-50 px-4 py-3">
+            <p className="text-sm font-semibold text-amber-800">
+              Kopírování není možné: v některých vybraných objektech již existuje skupina vlastností se stejným názvem.
+            </p>
+            <p className="mt-1 text-xs text-amber-700">
+              Odznačte tyto objekty nebo zrušte výběr skupin vlastností s konfliktním názvem.
+            </p>
+            <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-amber-800">
+              {conflictWarning.map((c) => (
+                <li key={c.targetCode}>
+                  <span className="font-medium">{c.targetDescription}</span> ({c.targetCode}): skupiny{" "}
+                  {c.conflictingGroupKeys.map((k) => groupLabels[k] ?? k).join(", ")}
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button"
+              className="mt-3 rounded border border-amber-400 bg-amber-100 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-200"
+              onClick={() => setConflictWarning(null)}
+            >
+              Rozumím
+            </button>
+          </div>
+        )}
+        <div className="flex justify-end gap-2 border-t border-slate-200 p-4">
+          <button
+            type="button"
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50"
+            onClick={onClose}
+          >
+            Zrušit
+          </button>
+          <button
+            type="button"
+            className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            onClick={handleConfirm}
+            disabled={selectedCodes.size === 0}
+          >
+            Zkopírovat do vybraných ({selectedCodes.size})
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /** Sekce s možností sbalení a přesunutí nahoru/dolů */
 const CollapsibleSection: React.FC<{
   title: string;
@@ -213,6 +527,12 @@ interface Props {
   onDeleteObject?: (code: string) => void;
   /** Zamknout/odemknout objekt (zamčený nelze upravovat ani mazat) */
   onToggleLock?: (obj: ProjectObject) => void;
+  /** Duplikovat vybrané skupiny vlastností (s vlastnostmi) do jiných objektů – nezávislé kopie */
+  onDuplicatePropertyGroupsToObjects?: (
+    sourceObjectCode: string,
+    groups: { groupKey: string; properties: PropertyRequirement[] }[],
+    targetObjectCodes: string[],
+  ) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -1538,7 +1858,7 @@ const IdsSingleExportDialog: React.FC<{
   );
 };
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onCopyObject, onDeleteObject, onToggleLock }) => {
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onCopyObject, onDeleteObject, onToggleLock, onDuplicatePropertyGroupsToObjects }) => {
   const isLocked = object.locked === true;
   /** Zvýraznění červeně: zkopírovaný objekt má stále stejnou entitu a predefinedType jako zdroj */
   const isIncompleteCopy = useMemo(() => {
@@ -1623,6 +1943,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [fillingDescriptionsGroupKey, setFillingDescriptionsGroupKey] = useState<string | null>(null);
   /** Dialog pro úpravu řádku vlastnosti (tužka) – zobrazí celý Popis, Poznámka, Příklady */
   const [propertyRowEditDialog, setPropertyRowEditDialog] = useState<{ prop: PropertyRequirement; groupKey: string } | null>(null);
+  /** Dialog pro duplikaci skupin vlastností do jiných objektů */
+  const [duplicatePropertyGroupsDialogOpen, setDuplicatePropertyGroupsDialogOpen] = useState(false);
   /** Šířky sloupců tabulek (index → px) */
   const [propertyTableColWidths, setPropertyTableColWidths] = useState<Record<number, number>>(() => {
     try {
@@ -2454,13 +2776,20 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const toggleGroupSelection = (groupKey: string) => {
+    const group = propertyGroups.find((g) => g.key === groupKey);
+    const propertyIds = group?.properties.map((p) => p.id) ?? [];
+    const isSelected = selectedGroups.has(groupKey);
+
     setSelectedGroups((prev) => {
       const next = new Set(prev);
-      if (next.has(groupKey)) {
-        next.delete(groupKey);
-      } else {
-        next.add(groupKey);
-      }
+      if (next.has(groupKey)) next.delete(groupKey);
+      else next.add(groupKey);
+      return next;
+    });
+    setSelectedProperties((prev) => {
+      const next = new Set(prev);
+      if (isSelected) propertyIds.forEach((id) => next.delete(id));
+      else propertyIds.forEach((id) => next.add(id));
       return next;
     });
   };
@@ -2479,7 +2808,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const selectAllGroups = () => {
     const allGroupKeys = propertyGroups.map((g) => g.key);
+    const allPropertyIds = propertyGroups.flatMap((g) => g.properties.map((p) => p.id));
     setSelectedGroups(new Set(allGroupKeys));
+    setSelectedProperties(new Set(allPropertyIds));
   };
 
   const deleteSelectedItems = () => {
@@ -4289,6 +4620,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     >
                       Označit všechny skupiny
                     </button>
+                    {selectedGroups.size > 0 && onDuplicatePropertyGroupsToObjects && (
+                      <button
+                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        onClick={() => setDuplicatePropertyGroupsDialogOpen(true)}
+                      >
+                        Duplikovat do…
+                      </button>
+                    )}
                     {(selectedGroups.size > 0 || selectedProperties.size > 0) && (
                       <button
                         className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
@@ -5392,6 +5731,34 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     setPropertyRowEditDialog(null);
                   }}
                   onClose={() => setPropertyRowEditDialog(null)}
+                />
+              )}
+              {duplicatePropertyGroupsDialogOpen && project && onDuplicatePropertyGroupsToObjects && (
+                <DuplicatePropertyGroupsDialog
+                  nodes={project.classification?.nodes ?? []}
+                  objects={project.objects}
+                  currentObjectCode={object.code}
+                  selectedGroupKeys={Array.from(selectedGroups)}
+                  groupLabels={Object.fromEntries(
+                    propertyGroups.map((g) => [
+                      g.key,
+                      customGroupNames[g.key] ?? g.psetNameCz ?? g.psetName ?? g.key,
+                    ]),
+                  )}
+                  onConfirm={(targetObjectCodes) => {
+                    const groups = Array.from(selectedGroups)
+                      .map((key) => {
+                        const group = propertyGroups.find((pg) => pg.key === key);
+                        return group ? { groupKey: key, properties: group.properties } : null;
+                      })
+                      .filter((x): x is { groupKey: string; properties: PropertyRequirement[] } => x !== null);
+                    if (groups.length > 0 && targetObjectCodes.length > 0) {
+                      onDuplicatePropertyGroupsToObjects(object.code, groups, targetObjectCodes);
+                      setSelectedGroups(new Set());
+                    }
+                    setDuplicatePropertyGroupsDialogOpen(false);
+                  }}
+                  onClose={() => setDuplicatePropertyGroupsDialogOpen(false)}
                 />
               )}
             </div>

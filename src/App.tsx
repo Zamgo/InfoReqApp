@@ -17,7 +17,7 @@ import {
 } from "./classification/ifcTree";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
-import type { ClassificationSystemEntry, CodeList, Phase, Project, ProjectObject } from "./project/types";
+import type { ClassificationSystemEntry, CodeList, Phase, Project, ProjectObject, PropertyRequirement } from "./project/types";
 import {
   createEmptyProject,
   clearProjectFromStorage,
@@ -884,7 +884,11 @@ const AppInner: React.FC = () => {
       const leaves = collectLeaves(withPropagation.classification.nodes);
       setSelectedCode(leaves[0]?.code);
       saveProjectToStorage(withPropagation);
-      setStatus(warnings.length > 0 ? `Excel importován (${warnings.length} upozornění)` : "Excel importován");
+      setStatus(
+          warnings.length > 0
+            ? `Excel importován (${warnings.length} upozornění):\n${warnings.map((w, i) => `${i + 1}. ${w}`).join("\n")}`
+            : "Excel importován"
+        );
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Import Excel se nezdařil");
     }
@@ -1476,6 +1480,46 @@ const AppInner: React.FC = () => {
     [project, schemaIndex],
   );
 
+  const onDuplicatePropertyGroupsToObjects = useCallback(
+    (
+      sourceObjectCode: string,
+      groups: { groupKey: string; properties: PropertyRequirement[] }[],
+      targetObjectCodes: string[],
+    ) => {
+      if (!project) return;
+      const nextObjects = { ...project.objects };
+      for (const targetCode of targetObjectCodes) {
+        if (targetCode === sourceObjectCode) continue;
+        const obj = nextObjects[targetCode];
+        if (!obj) continue;
+        const newProps: PropertyRequirement[] = [];
+        for (const { properties } of groups) {
+          for (const p of properties) {
+            newProps.push({
+              ...JSON.parse(JSON.stringify(p)),
+              id: makeId(),
+            });
+          }
+        }
+        nextObjects[targetCode] = {
+          ...obj,
+          requirements: {
+            ...obj.requirements,
+            properties: [...obj.requirements.properties, ...newProps],
+          },
+        };
+      }
+      updateProjectWithHistory({
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      });
+      setStatus(`Skupiny vlastností zkopírovány do ${targetObjectCodes.length} objektů`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project],
+  );
+
   const canUndo = () => {
     return historyIndexRef.current > 0;
   };
@@ -1638,7 +1682,11 @@ const AppInner: React.FC = () => {
           </button>
           <button
             className="rounded border border-slate-300 px-3 py-1 text-sm hover:bg-slate-50"
-            onClick={clearProject}
+            onClick={() => {
+              if (window.confirm("Opravdu chcete projekt nenávratně zresetovat? Všechna data budou ztracena.")) {
+                clearProject();
+              }
+            }}
             title="Reset projektu a začít znovu"
           >
             Reset projektu
@@ -1762,7 +1810,20 @@ const AppInner: React.FC = () => {
       </header>
 
       {status && (
-        <div className="bg-amber-50 px-4 py-2 text-sm text-amber-700">{status}</div>
+        <div className="flex items-start gap-2 bg-amber-50 px-4 py-2 text-sm text-amber-700">
+          <span className="flex-1 whitespace-pre-line">{status}</span>
+          <button
+            type="button"
+            onClick={() => setStatus("")}
+            className="flex-shrink-0 rounded p-0.5 hover:bg-amber-100 text-amber-800"
+            title="Zavřít"
+            aria-label="Zavřít"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       )}
 
       <div ref={resizeContainerRef} className="flex flex-1 overflow-hidden relative">
@@ -1858,6 +1919,7 @@ const AppInner: React.FC = () => {
               onCopyObject={onCopyObject}
               onDeleteObject={onDeleteObject}
               onToggleLock={onToggleLockObject}
+              onDuplicatePropertyGroupsToObjects={onDuplicatePropertyGroupsToObjects}
             />
           )}
         </div>
