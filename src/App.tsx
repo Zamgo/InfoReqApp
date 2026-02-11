@@ -315,6 +315,50 @@ const AppInner: React.FC = () => {
     return { ...proj, objects: nextObjects, updatedAt: new Date().toISOString() };
   }, []);
 
+  /** Propaguje IFC entitu a predefinedType z objektů do uzlů primárního klasifikačního systému. Používá se po importu/načtení, aby třídění a mapování prvků i filtrování v hierarchii odráželo nastavení objektů. */
+  const propagateIfcFromObjectsToNodes = useCallback((proj: Project): Project => {
+    const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
+    if (!primary?.nodes) return proj;
+    const ifcSystemId = primary.mappedSystemIds?.find((sid) =>
+      (proj.classificationSystemEntries ?? []).some((e) => e.id === sid && e.isIfcSystem)
+    );
+    let nextNodes = primary.nodes;
+    let changed = false;
+    for (const [code, obj] of Object.entries(proj.objects)) {
+      if (!obj.ifcEntity?.trim()) continue;
+      const leaf = findNodeByCode(nextNodes, code);
+      if (!leaf) continue;
+      const ptVal =
+        obj.predefinedType?.mode === "ENUM" || obj.predefinedType?.mode === "USERDEFINED"
+          ? (obj.predefinedType.value ?? "").trim() || "NOTDEFINED"
+          : "NOTDEFINED";
+      const ifcMappedValue = `${obj.ifcEntity}::${ptVal}`;
+      if (leaf.ifcEntity !== obj.ifcEntity || (leaf.predefinedType ?? "NOTDEFINED") !== ptVal) {
+        nextNodes = updateLeafIfcEntityPredefinedType(nextNodes, code, obj.ifcEntity, ptVal);
+        changed = true;
+      }
+      if (ifcSystemId) {
+        const currMapped = findNodeByCode(nextNodes, code)?.mappedValues?.[ifcSystemId] ?? "";
+        if (currMapped !== ifcMappedValue) {
+          nextNodes = updateLeafMappedValue(nextNodes, code, ifcSystemId, ifcMappedValue);
+          changed = true;
+        }
+      }
+    }
+    if (!changed) return proj;
+    const nextEntries = (proj.classificationSystemEntries ?? []).map((e) =>
+      e.id === primary.id ? { ...e, nodes: nextNodes } : e
+    );
+    const nextClassification =
+      proj.classification && primary ? { ...proj.classification, nodes: nextNodes } : proj.classification;
+    return {
+      ...proj,
+      classificationSystemEntries: nextEntries,
+      classification: nextClassification,
+      updatedAt: new Date().toISOString(),
+    };
+  }, []);
+
   /** Propaguje IFC mapování z primárního klasifikačního systému do objektů. */
   const propagateMappingToObjects = useCallback((proj: Project): Project => {
     const primary = (proj.classificationSystemEntries ?? []).find((e) => e.isPrimary);
@@ -356,7 +400,8 @@ const AppInner: React.FC = () => {
     const stored = loadProjectFromStorage();
     if (stored) {
       const migrated = migrateProject(stored);
-      let withPropagation = propagateObjectAuthoringToNodes(migrated);
+      let withPropagation = propagateIfcFromObjectsToNodes(migrated);
+      withPropagation = propagateObjectAuthoringToNodes(withPropagation);
       withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       withPropagation = propagateClassificationMappingToObjects(withPropagation);
@@ -369,7 +414,7 @@ const AppInner: React.FC = () => {
       }
     }
     // Bez uloženého projektu zůstane prázdný stav – uživatel si sám nahraje klasifikaci.
-  }, [propagateObjectAuthoringToNodes, propagateMappingToObjects, propagateAuthoringMappingToObjects, propagateClassificationMappingToObjects]);
+  }, [propagateIfcFromObjectsToNodes, propagateObjectAuthoringToNodes, propagateMappingToObjects, propagateAuthoringMappingToObjects, propagateClassificationMappingToObjects]);
 
   const selectedNode = useMemo<ClassificationNode | undefined>(() => {
     if (!classification || !selectedCode) return undefined;
@@ -850,7 +895,8 @@ const AppInner: React.FC = () => {
     try {
       const imported = await importProjectFile(file);
       const migrated = migrateProject(imported);
-      let withPropagation = propagateObjectAuthoringToNodes(migrated);
+      let withPropagation = propagateIfcFromObjectsToNodes(migrated);
+      withPropagation = propagateObjectAuthoringToNodes(withPropagation);
       withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       withPropagation = propagateClassificationMappingToObjects(withPropagation);
@@ -873,7 +919,8 @@ const AppInner: React.FC = () => {
     try {
       const { project: imported, warnings } = await importProjectFromExcel(file);
       const migrated = migrateProject(imported);
-      let withPropagation = propagateObjectAuthoringToNodes(migrated);
+      let withPropagation = propagateIfcFromObjectsToNodes(migrated);
+      withPropagation = propagateObjectAuthoringToNodes(withPropagation);
       withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       withPropagation = propagateClassificationMappingToObjects(withPropagation);

@@ -1,29 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { collectLeaves, filterTree } from "../../classification/parser";
+import {
+  type HierarchyViewMode,
+  getHierarchyViewOptions,
+  getHierarchyNodesForView,
+  collectIfcEntities,
+} from "../../classification/hierarchyView";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
 import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject } from "../../project/types";
 import { PhaseManager } from "./PhaseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
-import { parseAuthoringValues } from "../../project/authoring";
-
-/** Pohled v hierarchii = jedno „dělení“ primárního namapovaného systému */
-type HierarchyViewMode = "classification" | "ifc" | "predefinedType" | `mapped:${string}`;
-
-/**
- * Collect all unique IFC entities from tree
- */
-const collectIfcEntities = (nodes: ClassificationNode[]): string[] => {
-  const entities = new Set<string>();
-  const traverse = (node: ClassificationNode) => {
-    if (node.ifcEntity) {
-      entities.add(node.ifcEntity);
-    }
-    node.children.forEach(traverse);
-  };
-  nodes.forEach(traverse);
-  return Array.from(entities).sort();
-};
 
 /**
  * Get maximum depth of the tree
@@ -39,14 +26,17 @@ const getMaxLevel = (nodes: ClassificationNode[]): number => {
 };
 
 /**
- * Build a tree grouped by IFC entity types (jeden pohled – dělení dle IFC Entity)
+ * Build a tree grouped by IFC entity types (jeden pohled – dělení dle IFC Entity).
+ * Použije object.ifcEntity jako záložní zdroj, aby hierarchie odpovídala nastavení objektů i když uzel ještě nemá ifcEntity.
  */
-const buildIfcTree = (nodes: ClassificationNode[]): ClassificationNode[] => {
+const buildIfcTree = (
+  nodes: ClassificationNode[],
+  objects?: Record<string, ProjectObject>
+): ClassificationNode[] => {
   const leaves = collectLeaves(nodes);
   const byEntity: Record<string, ClassificationNode[]> = {};
-  
   leaves.forEach((leaf) => {
-    const entity = leaf.ifcEntity || "Bez IFC entity";
+    const entity = leaf.ifcEntity || objects?.[leaf.code]?.ifcEntity?.trim() || "Bez IFC entity";
     (byEntity[entity] ??= []).push(leaf);
   });
 
@@ -72,13 +62,21 @@ const buildIfcTree = (nodes: ClassificationNode[]): ClassificationNode[] => {
 };
 
 /**
- * Build a tree grouped by IFC predefined types (jeden pohled – dělení dle PredefinedType)
+ * Build a tree grouped by IFC predefined types (jeden pohled – dělení dle PredefinedType).
+ * Použije object.predefinedType jako záložní zdroj.
  */
-const buildPredefinedTypeTree = (nodes: ClassificationNode[]): ClassificationNode[] => {
+const buildPredefinedTypeTree = (
+  nodes: ClassificationNode[],
+  objects?: Record<string, ProjectObject>
+): ClassificationNode[] => {
   const leaves = collectLeaves(nodes);
   const byType: Record<string, ClassificationNode[]> = {};
   leaves.forEach((leaf) => {
-    const key = leaf.predefinedType || "Bez PredefinedType";
+    const ptFromObj =
+      objects?.[leaf.code]?.predefinedType?.mode === "ENUM" || objects?.[leaf.code]?.predefinedType?.mode === "USERDEFINED"
+        ? (objects[leaf.code].predefinedType?.value ?? "").trim() || "NOTDEFINED"
+        : "";
+    const key = leaf.predefinedType || ptFromObj || "Bez PredefinedType";
     (byType[key] ??= []).push(leaf);
   });
   const sortedKeys = Object.keys(byType).sort((a, b) => {
@@ -94,6 +92,58 @@ const buildPredefinedTypeTree = (nodes: ClassificationNode[]): ClassificationNod
       .sort((a, b) => a.code.localeCompare(b.code))
       .map((item) => ({ ...item, level: 2, children: [] })),
   }));
+};
+
+/**
+ * Jednotný IFC pohled: úroveň 1 = IFC entity, úroveň 2 = predefined type pod správnou entitou, úroveň 3 = konkrétní prvky.
+ * Používá se když IFC není primární klasifikace (jako dříve při zvláštním IFC klasifikačním systému).
+ */
+const buildUnifiedIfcTree = (
+  nodes: ClassificationNode[],
+  objects?: Record<string, ProjectObject>
+): ClassificationNode[] => {
+  const leaves = collectLeaves(nodes);
+  const byEntity: Record<string, Record<string, ClassificationNode[]>> = {};
+  const entityLabel = "Bez IFC entity";
+  const typeLabel = "NOTDEFINED";
+  leaves.forEach((leaf) => {
+    const entity = leaf.ifcEntity || objects?.[leaf.code]?.ifcEntity?.trim() || entityLabel;
+    const ptFromObj =
+      objects?.[leaf.code]?.predefinedType?.mode === "ENUM" || objects?.[leaf.code]?.predefinedType?.mode === "USERDEFINED"
+        ? (objects[leaf.code].predefinedType?.value ?? "").trim() || typeLabel
+        : "";
+    const predefinedType = leaf.predefinedType || ptFromObj || typeLabel;
+    if (!byEntity[entity]) byEntity[entity] = {};
+    (byEntity[entity][predefinedType] ??= []).push(leaf);
+  });
+  const sortedEntities = Object.keys(byEntity).sort((a, b) => {
+    if (a === entityLabel) return 1;
+    if (b === entityLabel) return -1;
+    return a.localeCompare(b);
+  });
+  return sortedEntities.map((entity) => {
+    const byType = byEntity[entity];
+    const sortedTypes = Object.keys(byType).sort((a, b) => {
+      if (a === typeLabel) return 1;
+      if (b === typeLabel) return -1;
+      return a.localeCompare(b);
+    });
+    const level2Children = sortedTypes.map((predefinedType) => {
+      const items = byType[predefinedType].sort((a, b) => a.code.localeCompare(b.code));
+      return {
+        code: `${entity}.${predefinedType}`,
+        description: predefinedType,
+        level: 2,
+        children: items.map((item) => ({ ...item, level: 3, children: [] })),
+      };
+    });
+    return {
+      code: entity,
+      description: entity,
+      level: 1,
+      children: level2Children,
+    };
+  });
 };
 
 const UNASSIGNED_LABEL = "nepřiřazeno";
@@ -308,6 +358,8 @@ const TreeItem: React.FC<{
 }> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel, objects, isIfcPrimary }) => {
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
+  /** Výběr jen u skutečných objektů (kód existuje v objects). Po vyhledání může být uzel „list“ bez dětí, ale bez odpovídajícího objektu – ten nesmí otevřít nový objekt. */
+  const isSelectableLeaf = isLeaf && !!objects?.[node.code];
   const isSelected = selectedCode === node.code;
   const obj = isLeaf ? objects?.[node.code] : undefined;
   const src = obj?.copiedFrom ? objects?.[obj.copiedFrom] : undefined;
@@ -361,8 +413,11 @@ const TreeItem: React.FC<{
             className={`flex cursor-pointer items-center justify-between rounded px-2 py-1 hover:bg-slate-100 ${
               isIncompleteCopy ? "bg-red-100 text-red-800" : isSelected ? "bg-indigo-100 text-indigo-700" : "text-slate-800"
             }`}
-            onClick={() => isLeaf && onSelectLeaf(node)}
-            aria-label={isLeaf ? "Select leaf" : "Toggle"}
+            onClick={() => {
+              if (isSelectableLeaf) onSelectLeaf(node);
+              else if (!isLeaf) setExpanded((v) => !v);
+            }}
+            aria-label={isSelectableLeaf ? "Select leaf" : !isLeaf ? "Expand/Collapse" : undefined}
           >
             <div className="flex flex-col">
               <span className={`text-sm ${isLeaf ? "font-semibold" : "font-medium"}`}>
@@ -432,92 +487,22 @@ export const ClassificationPanel: React.FC<Props> = ({
     return classificationSystemEntries.find((s) => s.isPrimary);
   }, [classificationSystemEntries]);
 
-  // Seznam pohledů = dělení primárního namapovaného systému (hlavní klasifikace, IFC Entity, PredefinedType, namapované systémy)
-  const hierarchyViewOptions = useMemo((): { value: HierarchyViewMode; label: string }[] => {
-    const fallback = [
-      { value: "classification" as HierarchyViewMode, label: primarySystem?.name ?? "Klasifikace" },
-    ];
-    if (!classification) return fallback;
-    const options: { value: HierarchyViewMode; label: string }[] = [];
+  const hierarchyViewOptions = useMemo(
+    () => getHierarchyViewOptions(classification, primarySystem, classificationSystemEntries, objects ?? {}),
+    [classification, primarySystem, classificationSystemEntries, objects]
+  );
 
-    const nodes = classification.nodes;
-    const hasIfcEntities = collectIfcEntities(nodes).length > 0;
-    const hasPredefinedTypes = (() => {
-      const set = new Set<string>();
-      const traverse = (node: ClassificationNode) => {
-        if (node.predefinedType) set.add(node.predefinedType);
-        node.children.forEach(traverse);
-      };
-      nodes.forEach(traverse);
-      return set.size > 0;
-    })();
-
-    // 1. Hlavní klasifikace (vždy)
-    options.push({
-      value: "classification",
-      label: primarySystem?.name ?? "Klasifikace",
-    });
-    // 2. IFC Entity a PredefinedType jen když primární NENÍ IFC (jinak je to už obsaženo v „Třídění dle IFC entit“)
-    const isIfcPrimary = primarySystem?.isIfcSystem === true;
-    if (!isIfcPrimary && hasIfcEntities) {
-      options.push({ value: "ifc", label: "IFC Entity" });
-    }
-    if (!isIfcPrimary && hasPredefinedTypes) {
-      options.push({ value: "predefinedType", label: "IFC PredefinedType" });
-    }
-    // 3. Každý namapovaný systém (třídění nástrojů, Kategorie RVT, …)
-    (primarySystem?.mappedSystemIds ?? []).forEach((systemEntryId) => {
-      const entry = classificationSystemEntries.find((e) => e.id === systemEntryId);
-      options.push({
-        value: `mapped:${systemEntryId}` as HierarchyViewMode,
-        label: entry?.name ?? systemEntryId,
-      });
-    });
-
-    return options;
-  }, [classification, primarySystem, classificationSystemEntries]);
-
-  // Strom podle vybraného pohledu (jedno dělení = jeden strom)
-  // Při pohledu „klasifikace“ bereme strom z primárního záznamu projektu, aby po „Přidat do hierarchie“ entita hned zmizela ze seznamu mimo hierarchii
-  const baseNodes = useMemo(() => {
-    const nodes =
-      viewMode === "classification"
-        ? (primarySystem?.nodes ?? classification?.nodes ?? [])
-        : (classification?.nodes ?? []);
-    if (!nodes.length && !classification) return [];
-    if (viewMode === "classification") return nodes;
-    if (viewMode === "ifc") return buildIfcTree(nodes);
-    if (viewMode === "predefinedType") return buildPredefinedTypeTree(nodes);
-    if (viewMode.startsWith("mapped:")) {
-      const systemEntryId = viewMode.slice(7);
-      const entry = classificationSystemEntries.find((e) => e.id === systemEntryId);
-      const isIfcSystem = entry?.isIfcSystem === true;
-      // Když máme objekty, seskupujeme dle přiřazené hodnoty na objektu (IFC: ifcEntity+predefinedType, jinak authoringClassifications), jinak dle node.mappedValues
-      if (Object.keys(objects ?? {}).length > 0) {
-        if (isIfcSystem) {
-          const getValue = (leaf: ClassificationNode): string => {
-            const o = objects![leaf.code];
-            const pt = o?.predefinedType?.mode === "ENUM" ? o?.predefinedType?.value : undefined;
-            return pt ? `${o?.ifcEntity ?? ""}::${pt}`.trim() : (o?.ifcEntity?.trim() ?? leaf.mappedValues?.[systemEntryId] ?? "");
-          };
-          return buildMappedIfcSystemTreeByValue(nodes, getValue);
-        }
-        // Autor. nástroje: objekt se zobrazí ve všech přiřazených kategoriích
-        const getValues = (leaf: ClassificationNode): string[] => {
-          const fromObject = (objects![leaf.code]?.authoringClassifications ?? [])
-            .filter((c) => c.systemEntryId === systemEntryId)
-            .map((c) => c.code)
-            .filter((c) => c?.trim());
-          if (fromObject.length > 0) return fromObject;
-          const raw = leaf.mappedValues?.[systemEntryId] ?? "";
-          return parseAuthoringValues(raw);
-        };
-        return buildMappedSystemTreeByValues(nodes, getValues);
-      }
-      return isIfcSystem ? buildMappedIfcSystemTree(nodes, systemEntryId) : buildMappedSystemTree(nodes, systemEntryId);
-    }
-    return nodes;
-  }, [classification, viewMode, objects, classificationSystemEntries, primarySystem]);
+  const baseNodes = useMemo(
+    () =>
+      getHierarchyNodesForView(
+        viewMode,
+        classification,
+        primarySystem,
+        classificationSystemEntries,
+        objects ?? {}
+      ),
+    [viewMode, classification, primarySystem, classificationSystemEntries, objects]
+  );
 
   const filteredNodes = useMemo(() => {
     if (!baseNodes.length) return [];

@@ -433,6 +433,19 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         if (!predefinedRaw) predefinedRaw = fromCodeObj.predefinedType;
       }
       const predefined = predefinedRaw ? normalizePredefinedType(predefinedRaw) : "";
+      const effectiveIfcEntity = ifcEntity || fromCodeObj?.ifcEntity || "";
+      const effectivePredefined = predefined || fromCodeObj?.predefinedType || "NOTDEFINED";
+      if (leafNode && effectiveIfcEntity) {
+        leafNode.ifcEntity = effectiveIfcEntity;
+        leafNode.predefinedType = effectivePredefined;
+        const ifcSystemId = primaryEntry.mappedSystemIds?.find((sid) =>
+          classificationEntries.some((e) => e.id === sid && e.isIfcSystem)
+        );
+        if (ifcSystemId) {
+          if (!leafNode.mappedValues) leafNode.mappedValues = {};
+          leafNode.mappedValues[ifcSystemId] = `${effectiveIfcEntity}::${effectivePredefined}`;
+        }
+      }
       const description = primaryEntry ? (findNodeByCode(primaryEntry.nodes ?? [], code)?.description ?? "") : "";
       const ifcEntityCz = colIfcEntityCz >= 0 ? getVal(row, colIfcEntityCz) : undefined;
       const predefinedCz = colPredefinedCz >= 0 ? getVal(row, colPredefinedCz) : undefined;
@@ -594,17 +607,26 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         };
         objects[code] = obj;
       } else {
-        // Doplnit IFC_entita a IFC_predefinedType z dalších řádků nebo z kódu (IfcEntity::PredefinedType)
+        // Přepsat IFC_entita a IFC_predefinedType z řádku (nebo z kódu IfcEntity::PredefinedType), aby mapování a filtrování v hierarchii fungovalo
         const fallbackFromCode = fromCode ?? parseIfcFromCode(code);
-        if (!obj.ifcEntity && (ifcEntityVal || fallbackFromCode?.ifcEntity)) {
-          obj.ifcEntity = ifcEntityVal || fallbackFromCode!.ifcEntity;
+        const newIfcEntity = ifcEntityVal || fallbackFromCode?.ifcEntity || "";
+        const newPredefined = predefinedVal ? normalizePredefinedType(predefinedVal) : (fallbackFromCode?.predefinedType || "");
+        if (newIfcEntity || newPredefined) {
+          obj.ifcEntity = newIfcEntity;
           if (ifcEntityCzVal?.trim()) obj.ifcEntityCz = ifcEntityCzVal.trim();
-        }
-        if (obj.predefinedType.mode === "NONE" && (predefinedVal || fallbackFromCode?.predefinedType)) {
-          const pt = predefinedVal ? normalizePredefinedType(predefinedVal) : fallbackFromCode!.predefinedType;
-          if (pt) {
-            obj.predefinedType = { mode: "ENUM" as const, value: pt };
-            if (predefinedCzVal?.trim()) obj.predefinedTypeCz = predefinedCzVal.trim();
+          obj.predefinedType = newPredefined ? { mode: "ENUM" as const, value: newPredefined } : { mode: "NONE" as const };
+          if (newPredefined && predefinedCzVal?.trim()) obj.predefinedTypeCz = predefinedCzVal.trim();
+          const leafNodePoz = primaryEntry ? findNodeByCode(primaryEntry.nodes ?? [], code) : undefined;
+          if (leafNodePoz && newIfcEntity) {
+            leafNodePoz.ifcEntity = newIfcEntity;
+            leafNodePoz.predefinedType = newPredefined || "NOTDEFINED";
+            const ifcSystemIdPoz = primaryEntry.mappedSystemIds?.find((sid) =>
+              classificationEntries.some((e) => e.id === sid && e.isIfcSystem)
+            );
+            if (ifcSystemIdPoz) {
+              if (!leafNodePoz.mappedValues) leafNodePoz.mappedValues = {};
+              leafNodePoz.mappedValues[ifcSystemIdPoz] = `${newIfcEntity}::${newPredefined || "NOTDEFINED"}`;
+            }
           }
         }
       }

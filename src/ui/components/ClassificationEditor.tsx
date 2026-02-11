@@ -374,7 +374,9 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
       setShowAddIfcRowDialog(true);
       return;
     }
-    const newLevel = rows.length > 0 ? rows[rows.length - 1].level : 1;
+    const searchActive = deferredSearch.trim() !== "" && filteredRows.length > 0;
+    const lastRow = searchActive ? filteredRows[filteredRows.length - 1] : rows.length > 0 ? rows[rows.length - 1] : null;
+    const newLevel = lastRow ? lastRow.level : 1;
     const base: FlatNode = {
       code: "",
       description: "",
@@ -384,6 +386,17 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
     };
     if (mappedSystemIds.length > 0) {
       base.mappedValues = Object.fromEntries(mappedSystemIds.map((id) => [id, ""]));
+    }
+    if (searchActive && lastRow) {
+      const insertAfterIndex = rows.findIndex((r) => r.code === lastRow.code && r.level === lastRow.level);
+      if (insertAfterIndex >= 0) {
+        setRows((prev) => {
+          const next = [...prev];
+          next.splice(insertAfterIndex + 1, 0, base);
+          return next;
+        });
+        return;
+      }
     }
     setRows((prev) => [...prev, base]);
   };

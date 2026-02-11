@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClassificationNode } from "../../classification/types";
+import type { ClassificationData } from "../../classification/types";
 import { collectLeaves, filterTree } from "../../classification/parser";
+import {
+  type HierarchyViewMode,
+  getHierarchyViewOptions,
+  getHierarchyNodesForView,
+} from "../../classification/hierarchyView";
 import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
 import type { SchemaIndex } from "../../schema/types";
 import { makeId } from "../../utils/id";
@@ -122,23 +128,45 @@ const PropertyRowEditDialog: React.FC<{
   );
 };
 
-/** Dialog pro duplikaci skupin vlastností do jiných objektů – hierarchie, filtrace, vyhledávání. */
+/** Dialog pro duplikaci skupin vlastností do jiných objektů – různé pohledy na hierarchii (klasifikace, IFC, namapované systémy), filtrace, vyhledávání. */
 const DuplicatePropertyGroupsDialog: React.FC<{
-  nodes: ClassificationNode[];
+  classification: ClassificationData | null;
+  classificationSystemEntries: ClassificationSystemEntry[];
   objects: Record<string, ProjectObject>;
   currentObjectCode: string;
   selectedGroupKeys: string[];
   groupLabels: Record<string, string>;
   onConfirm: (targetObjectCodes: string[]) => void;
   onClose: () => void;
-}> = ({ nodes, objects, currentObjectCode, selectedGroupKeys, groupLabels, onConfirm, onClose }) => {
+}> = ({ classification, classificationSystemEntries, objects, currentObjectCode, selectedGroupKeys, groupLabels, onConfirm, onClose }) => {
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<HierarchyViewMode>("classification");
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   /** Výstraha: cílové objekty, u kterých už existuje skupina vlastností se stejným názvem – kopírování se neprovede */
   const [conflictWarning, setConflictWarning] = useState<
     Array<{ targetCode: string; targetDescription: string; conflictingGroupKeys: string[] }> | null
   >(null);
+
+  const primarySystem = useMemo(
+    () => classificationSystemEntries.find((s) => s.isPrimary),
+    [classificationSystemEntries],
+  );
+  const hierarchyViewOptions = useMemo(
+    () => getHierarchyViewOptions(classification, primarySystem, classificationSystemEntries, objects ?? {}),
+    [classification, primarySystem, classificationSystemEntries, objects],
+  );
+  const nodes = useMemo(
+    () =>
+      getHierarchyNodesForView(
+        viewMode,
+        classification,
+        primarySystem,
+        classificationSystemEntries,
+        objects,
+      ),
+    [viewMode, classification, primarySystem, classificationSystemEntries, objects],
+  );
 
   const getGroupKey = (source: string, psetName?: string) => `${source}:${psetName || "(custom)"}`;
 
@@ -291,10 +319,26 @@ const DuplicatePropertyGroupsDialog: React.FC<{
             </p>
           )}
         </div>
-        <div className="flex flex-none items-center gap-2 border-b border-slate-200 px-4 py-2">
+        <div className="flex flex-none flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2">
+          {hierarchyViewOptions.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-slate-600">Pohled:</label>
+              <select
+                className="rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800"
+                value={viewMode}
+                onChange={(e) => setViewMode(e.target.value as HierarchyViewMode)}
+              >
+                {hierarchyViewOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <input
             type="text"
-            className="flex-1 rounded border border-slate-300 px-3 py-1.5 text-sm placeholder:text-slate-400"
+            className="flex-1 min-w-[140px] rounded border border-slate-300 px-3 py-1.5 text-sm placeholder:text-slate-400"
             placeholder="Filtrovat / vyhledat (kód, popis)..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -2832,6 +2876,55 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     setSelectedProperties(new Set());
   };
 
+  /** Zkopírovat označené skupiny a vlastnosti v rámci prvku (do stejného objektu). */
+  const copySelectedWithinElement = () => {
+    const selectedGroupsSet = selectedGroupsRef.current;
+    const selectedPropertiesSet = selectedPropertiesRef.current;
+    if (selectedGroupsSet.size === 0 && selectedPropertiesSet.size === 0) return;
+
+    updateRequirements((reqs) => {
+      const toAppend: PropertyRequirement[] = [];
+      const insertAfterIdx: { index: number; props: PropertyRequirement[] }[] = [];
+
+      for (const gkey of selectedGroupsSet) {
+        const first = reqs.properties.find((p) => groupKey(p.source, p.psetName) === gkey);
+        if (!first) continue;
+        const groupProps = reqs.properties.filter((p) => groupKey(p.source, p.psetName) === gkey);
+        const copies = groupProps.map((p) => ({ ...p, id: makeId() }));
+        if (first.source === "CUSTOM" || (first.psetName || "").startsWith("_NEW_")) {
+          const newPsetName = `_NEW_${makeId()}`;
+          copies.forEach((c) => {
+            c.psetName = newPsetName;
+          });
+          toAppend.push(...copies);
+        } else {
+          const lastIdx = reqs.properties.reduce(
+            (idx, p, i) => (groupKey(p.source, p.psetName) === gkey ? i : idx),
+            -1
+          );
+          if (lastIdx >= 0) insertAfterIdx.push({ index: lastIdx, props: copies });
+        }
+      }
+
+      for (const propId of selectedPropertiesSet) {
+        const prop = reqs.properties.find((p) => p.id === propId);
+        if (!prop) continue;
+        const gk = groupKey(prop.source, prop.psetName);
+        if (selectedGroupsSet.has(gk)) continue;
+        const copy = { ...prop, id: makeId() };
+        const idx = reqs.properties.findIndex((p) => p.id === propId);
+        insertAfterIdx.push({ index: idx, props: [copy] });
+      }
+
+      insertAfterIdx.sort((a, b) => b.index - a.index);
+      let arr = [...reqs.properties];
+      for (const { index, props } of insertAfterIdx) {
+        arr = [...arr.slice(0, index + 1), ...props, ...arr.slice(index + 1)];
+      }
+      reqs.properties = [...arr, ...toAppend];
+    });
+  };
+
   // === ATRIBUTY - výběr a mazání ===
   const toggleAttributeSelection = (attrId: string) => {
     setSelectedAttributes((prev) => {
@@ -4630,6 +4723,15 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     )}
                     {(selectedGroups.size > 0 || selectedProperties.size > 0) && (
                       <button
+                        className="rounded border border-slate-300 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                        onClick={copySelectedWithinElement}
+                        title="Zkopírovat označené skupiny nebo vlastnosti v rámci tohoto prvku"
+                      >
+                        Kopírovat v rámci prvku
+                      </button>
+                    )}
+                    {(selectedGroups.size > 0 || selectedProperties.size > 0) && (
+                      <button
                         className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                         onClick={deleteSelectedItems}
                       >
@@ -4769,7 +4871,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 value={group.properties[0]?.psetNameCz ?? ""}
                                 onChange={(e) => {
                                   const v = e.target.value || undefined;
-                                  group.properties.forEach((p) => updatePropertyField(p.id, { psetNameCz: v }));
+                                  const groupKeyVal = group.key;
+                                  updateRequirements((reqs) => {
+                                    reqs.properties = reqs.properties.map((p) =>
+                                      groupKey(p.source, p.psetName) === groupKeyVal ? { ...p, psetNameCz: v } : p
+                                    );
+                                  });
                                 }}
                                 title="Překlad skupiny do češtiny"
                               />
@@ -4818,7 +4925,12 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                 value={group.properties[0]?.psetNameCz ?? ""}
                                 onChange={(e) => {
                                   const v = e.target.value || undefined;
-                                  group.properties.forEach((p) => updatePropertyField(p.id, { psetNameCz: v }));
+                                  const groupKeyVal = group.key;
+                                  updateRequirements((reqs) => {
+                                    reqs.properties = reqs.properties.map((p) =>
+                                      groupKey(p.source, p.psetName) === groupKeyVal ? { ...p, psetNameCz: v } : p
+                                    );
+                                  });
                                 }}
                                 title="Překlad skupiny do češtiny"
                               />
@@ -4875,6 +4987,20 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               <tr>
                                 {!hiddenPropertyColumns.has(0) && (
                                   <th className="px-2 py-2 relative select-none">
+                                    {(selectedGroups.size > 0 || selectedProperties.size > 0) && (
+                                      <button
+                                        type="button"
+                                        className="mb-1 flex items-center justify-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100"
+                                        onClick={copySelectedWithinElement}
+                                        title="Zkopírovat označené v rámci prvku"
+                                      >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5 shrink-0">
+                                          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                                        </svg>
+                                        Kopírovat
+                                      </button>
+                                    )}
                                     <span className="block pr-1" />
                                     <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[0] ?? DEFAULT_PROPERTY_COL_WIDTHS[0]; }} aria-hidden />
                                   </th>
@@ -5735,7 +5861,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               )}
               {duplicatePropertyGroupsDialogOpen && project && onDuplicatePropertyGroupsToObjects && (
                 <DuplicatePropertyGroupsDialog
-                  nodes={project.classification?.nodes ?? []}
+                  classification={project.classification}
+                  classificationSystemEntries={project.classificationSystemEntries ?? []}
                   objects={project.objects}
                   currentObjectCode={object.code}
                   selectedGroupKeys={Array.from(selectedGroups)}

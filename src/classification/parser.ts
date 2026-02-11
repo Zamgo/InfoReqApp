@@ -149,10 +149,12 @@ export const filterTree = (
     current
       .map((node) => {
         const filteredChildren = recurse(node.children);
-        if (matches(node) || filteredChildren.length) {
-          return { ...node, children: filteredChildren };
+        if (matches(node)) {
+          /* Když vyhledávání sedne na rodiče, ponecháme mu všechny děti – po kliknutí lze rozbalit a zobrazit prvky pod ním. */
+          return { ...node, children: filteredChildren.length ? filteredChildren : node.children };
         }
-        return matches(node) ? { ...node, children: [] } : null;
+        if (filteredChildren.length) return { ...node, children: filteredChildren };
+        return null;
       })
       .filter(Boolean) as ClassificationNode[];
 
