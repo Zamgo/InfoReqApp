@@ -77,21 +77,79 @@ const escapeXml = (str: string): string => {
 };
 
 /**
- * Generate idsValue content (either simpleValue or restriction)
+ * Parse RANGE value format: "min:3:inclusive|max:150:inclusive" or "max:150:inclusive"
  */
-const generateIdsValueContent = (value: string, constraint?: string, indent = ""): string => {
-  if (!value) return "";
-  
-  if (constraint === "ENUM" && value.includes("|")) {
-    // Multiple values - use xs:restriction with enumeration
-    const values = value.split("|").map((v) => v.trim()).filter(Boolean);
-    const enumerations = values.map((v) => `${indent}  <xs:enumeration value="${escapeXml(v)}"/>`).join("\n");
+const parseRangeValue = (
+  value: string
+): { min?: string; minExclusive?: boolean; max?: string; maxExclusive?: boolean } => {
+  const out: { min?: string; minExclusive?: boolean; max?: string; maxExclusive?: boolean } = {};
+  const parts = value.split(/\s*\|\s*/).map((p) => p.trim()).filter(Boolean);
+  for (const part of parts) {
+    if (part.startsWith("min:")) {
+      const rest = part.slice(4).trim();
+      const [num, kind] = rest.split(":").map((s) => s.trim());
+      if (num !== undefined && num !== "") {
+        out.min = num;
+        out.minExclusive = (kind ?? "inclusive").toLowerCase() === "exclusive";
+      }
+    } else if (part.startsWith("max:")) {
+      const rest = part.slice(4).trim();
+      const [num, kind] = rest.split(":").map((s) => s.trim());
+      if (num !== undefined && num !== "") {
+        out.max = num;
+        out.maxExclusive = (kind ?? "inclusive").toLowerCase() === "exclusive";
+      }
+    }
+  }
+  return out;
+};
+
+/**
+ * Generate idsValue content (either simpleValue or restriction).
+ * For ENUM: uses allowedValues (vyčet) when present, otherwise value split by "|".
+ * Vlastnost/atribut může nabývat hodnotu jen z vyčtu – do IDS jde xs:restriction s xs:enumeration.
+ * For RANGE: outputs xs:restriction base xs:double with minInclusive/maxInclusive (or exclusive).
+ */
+const generateIdsValueContent = (
+  value: string,
+  constraint?: string,
+  indent = "",
+  allowedValues?: string[],
+  /** For RANGE: use "xs:integer" when true, else "xs:double" */
+  useIntegerBase?: boolean
+): string => {
+  if (constraint === "ENUM") {
+    const enumList = (allowedValues && allowedValues.length > 0)
+      ? allowedValues.filter(Boolean)
+      : (value || "").split("|").map((v) => v.trim()).filter(Boolean);
+    if (enumList.length === 0) return "";
+    if (enumList.length === 1) {
+      return `${indent}<ids:simpleValue>${escapeXml(enumList[0])}</ids:simpleValue>`;
+    }
+    const enumerations = enumList.map((v) => `${indent}  <xs:enumeration value="${escapeXml(v)}"/>`).join("\n");
     return `${indent}<xs:restriction base="xs:string">\n${enumerations}\n${indent}</xs:restriction>`;
-  } else if (constraint === "PATTERN") {
+  }
+  if (constraint === "PATTERN" && value) {
     return `${indent}<xs:restriction base="xs:string">\n${indent}  <xs:pattern value="${escapeXml(value)}"/>\n${indent}</xs:restriction>`;
   }
-  
-  // Simple value
+  if (constraint === "RANGE" && value) {
+    const r = parseRangeValue(value);
+    const base = useIntegerBase ? "xs:integer" : "xs:double";
+    const facets: string[] = [];
+    if (r.min != null) {
+      facets.push(r.minExclusive
+        ? `${indent}  <xs:minExclusive value="${escapeXml(r.min)}"/>`
+        : `${indent}  <xs:minInclusive value="${escapeXml(r.min)}"/>`);
+    }
+    if (r.max != null) {
+      facets.push(r.maxExclusive
+        ? `${indent}  <xs:maxExclusive value="${escapeXml(r.max)}"/>`
+        : `${indent}  <xs:maxInclusive value="${escapeXml(r.max)}"/>`);
+    }
+    if (facets.length === 0) return "";
+    return `${indent}<xs:restriction base="${base}">\n${facets.join("\n")}\n${indent}</xs:restriction>`;
+  }
+  if (!value) return "";
   return `${indent}<ids:simpleValue>${escapeXml(value)}</ids:simpleValue>`;
 };
 
@@ -201,9 +259,12 @@ const generateAttribute = (attr: AttributeRequirement, indent: string, isApplica
   lines.push(`${indent}    <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>`);
   lines.push(`${indent}  </ids:name>`);
   
-  if (attr.value) {
+  const hasValue = attr.value || (attr.constraint === "ENUM" && attr.allowedValues && attr.allowedValues.length > 0);
+  if (hasValue) {
+    const attrDataType = mapDataTypeToIds(attr.dataType);
+    const useIntegerBase = attr.constraint === "RANGE" && attrDataType === "IFCINTEGER";
     lines.push(`${indent}  <ids:value>`);
-    lines.push(generateIdsValueContent(attr.value, attr.constraint, `${indent}    `));
+    lines.push(generateIdsValueContent(attr.value ?? "", attr.constraint, `${indent}    `, attr.allowedValues, useIntegerBase));
     lines.push(`${indent}  </ids:value>`);
   }
   
@@ -218,7 +279,10 @@ const generateProperty = (prop: PropertyRequirement, indent: string, isApplicabi
   const cardinality = isApplicability ? "" : ` cardinality="${getCardinality(prop.occurrence)}"`;
   const instructions = prop.note ? ` instructions="${escapeXml(prop.note)}"` : "";
   const mappedDataType = mapDataTypeToIds(prop.dataType);
-  const dataType = mappedDataType ? ` dataType="${escapeXml(mappedDataType)}"` : "";
+  // When constraint is ENUM we output string enumerations (xs:restriction base="xs:string").
+  // Using IFCREAL/IFCINTEGER would make validators expect numeric enumeration values → use IFCLABEL.
+  const effectiveDataType = prop.constraint === "ENUM" ? "IFCLABEL" : mappedDataType;
+  const dataType = effectiveDataType ? ` dataType="${escapeXml(effectiveDataType)}"` : "";
   
   const lines: string[] = [];
   lines.push(`${indent}<ids:property${cardinality}${dataType}${instructions}>`);
@@ -229,9 +293,11 @@ const generateProperty = (prop: PropertyRequirement, indent: string, isApplicabi
   lines.push(`${indent}    <ids:simpleValue>${escapeXml(prop.propertyName)}</ids:simpleValue>`);
   lines.push(`${indent}  </ids:baseName>`);
   
-  if (prop.value) {
+  const hasValue = prop.value || (prop.constraint === "ENUM" && prop.allowedValues && prop.allowedValues.length > 0);
+  if (hasValue) {
+    const useIntegerBase = prop.constraint === "RANGE" && mappedDataType === "IFCINTEGER";
     lines.push(`${indent}  <ids:value>`);
-    lines.push(generateIdsValueContent(prop.value, prop.constraint, `${indent}    `));
+    lines.push(generateIdsValueContent(prop.value ?? "", prop.constraint, `${indent}    `, prop.allowedValues, useIntegerBase));
     lines.push(`${indent}  </ids:value>`);
   }
   
@@ -245,9 +311,10 @@ const generateProperty = (prop: PropertyRequirement, indent: string, isApplicabi
 const generateClassification = (cls: ClassificationRequirement, isApplicability: boolean, indent: string): string => {
   const cardinality = isApplicability ? "" : ` cardinality="${getCardinality(cls.occurrence ?? "required")}"`;
   const uri = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
+  const instructions = cls.note ? ` instructions="${escapeXml(cls.note)}"` : "";
   
   const lines: string[] = [];
-  lines.push(`${indent}<ids:classification${cardinality}${uri}>`);
+  lines.push(`${indent}<ids:classification${cardinality}${uri}${instructions}>`);
   
   // Value comes before system according to IDS schema
   if (cls.value || cls.identification) {
@@ -301,9 +368,10 @@ const generatePartOf = (rel: RelationRequirement, indent: string, isApplicabilit
   lines.push(`${indent}    <ids:name>`);
   lines.push(`${indent}      <ids:simpleValue>${escapeXml(entityName)}</ids:simpleValue>`);
   lines.push(`${indent}    </ids:name>`);
-  if (rel.entityPredefinedType) {
+  const pt = (rel.entityPredefinedType ?? "").trim().toUpperCase();
+  if (pt && pt !== "NOTDEFINED") {
     lines.push(`${indent}    <ids:predefinedType>`);
-    lines.push(`${indent}      <ids:simpleValue>${escapeXml(rel.entityPredefinedType.toUpperCase())}</ids:simpleValue>`);
+    lines.push(`${indent}      <ids:simpleValue>${escapeXml(pt)}</ids:simpleValue>`);
     lines.push(`${indent}    </ids:predefinedType>`);
   }
   lines.push(`${indent}  </ids:entity>`);
@@ -425,16 +493,22 @@ const generateSpecification = (
   // Applicability section
   lines.push(`      <ids:applicability minOccurs="1" maxOccurs="unbounded">`);
   
-  // Entity (required); PredefinedType only when set and phase is in predefinedTypePhases
+  // Entity (required); PredefinedType only when set and phase is in predefinedTypePhases.
+  // Do not export NOTDEFINED – invalid predefinedType in Ifc4x3 context (Error 103).
   const predefinedTypePhases = obj.predefinedTypePhases ?? obj.entityPhases;
-  const includePredefinedType = obj.predefinedType.mode === "ENUM" && obj.predefinedType.value && (!predefinedTypePhases || predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId));
+  const predefinedVal = (obj.predefinedType.value ?? "").trim().toUpperCase();
+  const includePredefinedType =
+    obj.predefinedType.mode === "ENUM" &&
+    predefinedVal &&
+    predefinedVal !== "NOTDEFINED" &&
+    (!predefinedTypePhases || predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId));
   lines.push(`        <ids:entity>`);
   lines.push(`          <ids:name>`);
   lines.push(`            <ids:simpleValue>${escapeXml(obj.ifcEntity.toUpperCase())}</ids:simpleValue>`);
   lines.push(`          </ids:name>`);
   if (includePredefinedType) {
     lines.push(`          <ids:predefinedType>`);
-    lines.push(`            <ids:simpleValue>${escapeXml(obj.predefinedType.value!.toUpperCase())}</ids:simpleValue>`);
+    lines.push(`            <ids:simpleValue>${escapeXml(predefinedVal)}</ids:simpleValue>`);
     lines.push(`          </ids:predefinedType>`);
   }
   lines.push(`        </ids:entity>`);

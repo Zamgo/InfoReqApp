@@ -23,28 +23,45 @@ export const filterObjectByPhase = (
   };
 };
 
-const translateConstraint = (constraint?: string, value?: string): string => {
+const translateConstraint = (constraint?: string, value?: string, allowedValues?: string[]): string => {
   const c = (constraint ?? "FILLED").toUpperCase();
   const val = value ?? "";
-  if (!val) return "s libovolnou hodnotou";
-  if (c === "FILLED") return `s hodnotou **${val}**`;
   if (c === "ENUM") {
-    const values = val.split("|").map((v) => v.trim()).filter(Boolean);
-    if (values.length === 1) return `s hodnotou "${values[0]}"`;
+    const values = (allowedValues && allowedValues.length > 0) ? allowedValues : val.split("|").map((v) => v.trim()).filter(Boolean);
+    if (values.length === 0) return "s libovolnou hodnotou";
+    if (values.length === 1) return `s hodnotou **${values[0]}**`;
     return `s hodnotou jednou z: ${values.join(", ")}`;
   }
+  if (!val) return "s libovolnou hodnotou";
+  if (c === "FILLED") return `s hodnotou **${val}**`;
   if (c === "PATTERN") return `s hodnotou odpovídající vzoru ${val}`;
   if (c === "RANGE") {
-    const parts = val.split(/\s*(?:AND|,|;)\s*/i);
     const conditions: string[] = [];
-    parts.forEach((part) => {
-      const trimmed = part.trim();
-      if (trimmed.startsWith(">=")) conditions.push(`větší nebo rovno ${trimmed.slice(2).trim()}`);
-      else if (trimmed.startsWith(">")) conditions.push(`větší než ${trimmed.slice(1).trim()}`);
-      else if (trimmed.startsWith("<=")) conditions.push(`menší nebo rovno ${trimmed.slice(2).trim()}`);
-      else if (trimmed.startsWith("<")) conditions.push(`menší než ${trimmed.slice(1).trim()}`);
-    });
-    if (conditions.length > 0) return `s hodnotou [${conditions.join(" a ")}]`;
+    const rangeParts = val.split(/\s*\|\s*/).map((p) => p.trim()).filter(Boolean);
+    for (const part of rangeParts) {
+      if (part.startsWith("min:")) {
+        const rest = part.slice(4).trim();
+        const [num, kind] = rest.split(":").map((s) => s.trim());
+        if (num !== undefined && num !== "") {
+          const inclusive = (kind ?? "inclusive").toLowerCase() !== "exclusive";
+          conditions.push(inclusive ? `větší nebo rovno **${num}**` : `větší než **${num}**`);
+        }
+      } else if (part.startsWith("max:")) {
+        const rest = part.slice(4).trim();
+        const [num, kind] = rest.split(":").map((s) => s.trim());
+        if (num !== undefined && num !== "") {
+          const inclusive = (kind ?? "inclusive").toLowerCase() !== "exclusive";
+          conditions.push(inclusive ? `menší nebo rovno **${num}**` : `menší než **${num}**`);
+        }
+      } else {
+        const trimmed = part.trim();
+        if (trimmed.startsWith(">=")) conditions.push(`větší nebo rovno **${trimmed.slice(2).trim()}**`);
+        else if (trimmed.startsWith(">")) conditions.push(`větší než **${trimmed.slice(1).trim()}**`);
+        else if (trimmed.startsWith("<=")) conditions.push(`menší nebo rovno **${trimmed.slice(2).trim()}**`);
+        else if (trimmed.startsWith("<")) conditions.push(`menší než **${trimmed.slice(1).trim()}**`);
+      }
+    }
+    if (conditions.length > 0) return `s hodnotou ${conditions.join(" a ")}`;
     return `s hodnotou v rozmezí ${val}`;
   }
   if (c === "LENGTH") return `s délkou ${val}`;
@@ -84,7 +101,7 @@ export const generateHumanReadable = (
     if (attr.attribute === "PredefinedType") return;
     if (!matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const occurrence = attr.occurrence === "prohibited" ? "NESMÍ" : attr.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-    const constraintText = translateConstraint(attr.constraint, attr.value);
+    const constraintText = translateConstraint(attr.constraint, attr.value, attr.allowedValues);
     const line = `atribut **${attr.attribute}** ${constraintText}${attr.dataType ? ` *(${attr.dataType})*` : ""}`;
     if (attr.isApplicability && occurrenceFilter === "all") {
       applicability.push(line);
@@ -97,7 +114,7 @@ export const generateHumanReadable = (
     if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
     if (!matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     const occurrence = prop.occurrence === "prohibited" ? "NESMÍ" : prop.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-    const constraintText = translateConstraint(prop.constraint, prop.value);
+    const constraintText = translateConstraint(prop.constraint, prop.value, prop.allowedValues);
     const psetType = prop.source === "PSET" ? "property setu" : prop.source === "QTO" ? "quantity setu" : "vlastní sady";
     const line = `vlastnost **${prop.propertyName}** ${psetType} **${prop.psetName}** ${constraintText}${prop.dataType ? ` *(${prop.dataType})*` : ""}`;
     if (prop.isApplicability && occurrenceFilter === "all") {
@@ -146,10 +163,10 @@ export const generateHumanReadable = (
   filteredObj.requirements.materials.forEach((mat) => {
     if (!matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const occurrence = mat.occurrence === "prohibited" ? "NESMÍ" : mat.occurrence === "optional" ? "MŮŽE" : "MUSÍ";
-    let categoryText = "";
-    if (mat.category && mat.categoryMode !== "NONE") {
-      categoryText = ` s kategorií **${mat.category}**`;
-    }
+    const matVal = mat.value ?? (mat.category && mat.categoryMode !== "NONE" ? mat.category : "");
+    const categoryText = matVal
+      ? ` ${translateConstraint(mat.constraint ?? "FILLED", matVal)}`
+      : (mat.category && mat.categoryMode !== "NONE" ? ` s kategorií **${mat.category}**` : "");
     const line = `materiál${categoryText}`;
     if (mat.isApplicability && occurrenceFilter === "all") {
       applicability.push(line);

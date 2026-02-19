@@ -1078,38 +1078,38 @@ const mapDataTypeToIds = (dataType?: string): string | undefined => {
   return "IFCLABEL";
 };
 
-// Generate constraint XML for IDS
+// Generate constraint XML for IDS. For ENUM uses allowedValues (vyčet) when present.
 const generateConstraintXml = (
   constraint?: string,
   value?: string,
-  indent: string = "          "
+  indent: string = "          ",
+  allowedValues?: string[]
 ): string => {
   const c = (constraint ?? "FILLED").toUpperCase();
   const val = value ?? "";
   
-  // If no value specified, no restriction
-  if (!val) {
-    return "";
-  }
-  
-  // FILLED constraint with value = simple value requirement
-  if (c === "FILLED") {
-    return `${indent}<ids:value>\n${indent}  <ids:simpleValue>${escapeXml(val)}</ids:simpleValue>\n${indent}</ids:value>`;
-  }
-  
   if (c === "ENUM") {
-    const values = val.split("|").map((v) => v.trim()).filter(Boolean);
-    if (values.length === 0) return "";
-    if (values.length === 1) {
-      return `${indent}<ids:value>\n${indent}  <ids:simpleValue>${escapeXml(values[0])}</ids:simpleValue>\n${indent}</ids:value>`;
+    const enumList = (allowedValues && allowedValues.length > 0)
+      ? allowedValues.filter(Boolean)
+      : val.split("|").map((v) => v.trim()).filter(Boolean);
+    if (enumList.length === 0) return "";
+    if (enumList.length === 1) {
+      return `${indent}<ids:value>\n${indent}  <ids:simpleValue>${escapeXml(enumList[0])}</ids:simpleValue>\n${indent}</ids:value>`;
     }
-    // Multiple values - use xs:restriction with enumeration
     let xml = `${indent}<ids:value>\n${indent}  <xs:restriction base="xs:string">`;
-    values.forEach((v) => {
+    enumList.forEach((v) => {
       xml += `\n${indent}    <xs:enumeration value="${escapeXml(v)}" />`;
     });
     xml += `\n${indent}  </xs:restriction>\n${indent}</ids:value>`;
     return xml;
+  }
+  
+  // If no value specified, no restriction (except ENUM handled above)
+  if (!val) return "";
+  
+  // FILLED constraint with value = simple value requirement
+  if (c === "FILLED") {
+    return `${indent}<ids:value>\n${indent}  <ids:simpleValue>${escapeXml(val)}</ids:simpleValue>\n${indent}</ids:value>`;
   }
   
   if (c === "PATTERN") {
@@ -1339,8 +1339,9 @@ const buildOneSpecificationXml = (
     const system = entryName || cls.system || cls.name;
     if (!system) return;
     const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
+    const instructionsAttr = cls.note ? ` instructions="${escapeXml(cls.note)}"` : "";
     spec += `
-        <ids:classification${uriAttr}>`;
+        <ids:classification${uriAttr}${instructionsAttr}>`;
     if (cls.value) {
       const constraint = cls.constraint ?? "FILLED";
       if (constraint === "ENUM") {
@@ -1376,13 +1377,17 @@ const buildOneSpecificationXml = (
 
   filteredObj.requirements.attributes.forEach((attr) => {
     if (!attr.isApplicability || attr.attribute === "PredefinedType") return;
+    const instructionsAttr = attr.note ? ` instructions="${escapeXml(attr.note)}"` : "";
     spec += `
-        <ids:attribute>
+        <ids:attribute${instructionsAttr}>
           <ids:name>
             <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>
           </ids:name>`;
-    const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ");
-    if (constraintXml) spec += `\n${constraintXml}`;
+    const hasValue = attr.value || (attr.constraint === "ENUM" && attr.allowedValues?.length);
+    if (hasValue) {
+      const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ", attr.allowedValues);
+      if (constraintXml) spec += `\n${constraintXml}`;
+    }
     spec += `
         </ids:attribute>`;
   });
@@ -1390,16 +1395,20 @@ const buildOneSpecificationXml = (
     if (!prop.isApplicability || !prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
     const dataType = mapDataTypeToIds(prop.dataType);
     const dataTypeAttr = dataType ? ` dataType="${escapeXml(dataType)}"` : "";
+    const instructionsAttr = prop.note ? ` instructions="${escapeXml(prop.note)}"` : "";
     spec += `
-        <ids:property${dataTypeAttr}>
+        <ids:property${dataTypeAttr}${instructionsAttr}>
           <ids:propertySet>
             <ids:simpleValue>${escapeXml(prop.psetName)}</ids:simpleValue>
           </ids:propertySet>
           <ids:baseName>
             <ids:simpleValue>${escapeXml(prop.propertyName)}</ids:simpleValue>
           </ids:baseName>`;
-    const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ");
-    if (constraintXml) spec += `\n${constraintXml}`;
+    const hasValue = prop.value || (prop.constraint === "ENUM" && prop.allowedValues?.length);
+    if (hasValue) {
+      const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ", prop.allowedValues);
+      if (constraintXml) spec += `\n${constraintXml}`;
+    }
     spec += `
         </ids:property>`;
   });
@@ -1426,34 +1435,14 @@ const buildOneSpecificationXml = (
   filteredObj.requirements.materials.forEach((mat) => {
     if (!mat.isApplicability) return;
     const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
+    const instructionsAttr = mat.note ? ` instructions="${escapeXml(mat.note)}"` : "";
     spec += `
-        <ids:material${uriAttr}>`;
+        <ids:material${uriAttr}${instructionsAttr}>`;
     if (mat.value || (mat.category && mat.categoryMode !== "NONE")) {
       const val = mat.value || mat.category || "";
       const constraint = mat.constraint ?? "FILLED";
-      if (constraint === "ENUM" && val.includes("|")) {
-        const values = val.split("|").map((v) => v.trim()).filter(Boolean);
-        spec += `
-          <ids:value>
-            <xs:restriction base="xs:string">`;
-        values.forEach((v) => { spec += `
-              <xs:enumeration value="${escapeXml(v)}" />`; });
-        spec += `
-            </xs:restriction>
-          </ids:value>`;
-      } else if (constraint === "PATTERN") {
-        spec += `
-          <ids:value>
-            <xs:restriction base="xs:string">
-              <xs:pattern value="${escapeXml(val)}" />
-            </xs:restriction>
-          </ids:value>`;
-      } else {
-        spec += `
-          <ids:value>
-            <ids:simpleValue>${escapeXml(val)}</ids:simpleValue>
-          </ids:value>`;
-      }
+      const constraintXml = generateConstraintXml(constraint, val, "          ");
+      if (constraintXml) spec += `\n${constraintXml}`;
     }
     spec += `
         </ids:material>`;
@@ -1467,13 +1456,17 @@ const buildOneSpecificationXml = (
     if (attr.attribute === "PredefinedType" || attr.isApplicability) return;
     if (!matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = attr.occurrence === "prohibited" ? "prohibited" : attr.occurrence === "optional" ? "optional" : "required";
+    const instructionsAttr = attr.note ? ` instructions="${escapeXml(attr.note)}"` : "";
     spec += `
-        <ids:attribute cardinality="${cardinality}">
+        <ids:attribute cardinality="${cardinality}"${instructionsAttr}>
           <ids:name>
             <ids:simpleValue>${escapeXml(attr.attribute)}</ids:simpleValue>
           </ids:name>`;
-    const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ");
-    if (constraintXml) spec += `\n${constraintXml}`;
+    const hasValue = attr.value || (attr.constraint === "ENUM" && attr.allowedValues?.length);
+    if (hasValue) {
+      const constraintXml = generateConstraintXml(attr.constraint, attr.value, "          ", attr.allowedValues);
+      if (constraintXml) spec += `\n${constraintXml}`;
+    }
     spec += `
         </ids:attribute>`;
   });
@@ -1483,16 +1476,20 @@ const buildOneSpecificationXml = (
     const cardinality: ConditionalCardinality = prop.occurrence === "prohibited" ? "prohibited" : prop.occurrence === "optional" ? "optional" : "required";
     const dataType = mapDataTypeToIds(prop.dataType);
     const dataTypeAttr = dataType ? ` dataType="${escapeXml(dataType)}"` : "";
+    const instructionsAttr = prop.note ? ` instructions="${escapeXml(prop.note)}"` : "";
     spec += `
-        <ids:property cardinality="${cardinality}"${dataTypeAttr}>
+        <ids:property cardinality="${cardinality}"${dataTypeAttr}${instructionsAttr}>
           <ids:propertySet>
             <ids:simpleValue>${escapeXml(prop.psetName)}</ids:simpleValue>
           </ids:propertySet>
           <ids:baseName>
             <ids:simpleValue>${escapeXml(prop.propertyName)}</ids:simpleValue>
           </ids:baseName>`;
-    const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ");
-    if (constraintXml) spec += `\n${constraintXml}`;
+    const hasValue = prop.value || (prop.constraint === "ENUM" && prop.allowedValues?.length);
+    if (hasValue) {
+      const constraintXml = generateConstraintXml(prop.constraint, prop.value, "          ", prop.allowedValues);
+      if (constraintXml) spec += `\n${constraintXml}`;
+    }
     spec += `
         </ids:property>`;
   });
@@ -1525,8 +1522,9 @@ const buildOneSpecificationXml = (
     if (!system) return;
     const cardinality: ConditionalCardinality = cls.occurrence === "prohibited" ? "prohibited" : cls.occurrence === "optional" ? "optional" : "required";
     const uriAttr = cls.uri ? ` uri="${escapeXml(cls.uri)}"` : "";
+    const instructionsAttr = cls.note ? ` instructions="${escapeXml(cls.note)}"` : "";
     spec += `
-        <ids:classification cardinality="${cardinality}"${uriAttr}>`;
+        <ids:classification cardinality="${cardinality}"${uriAttr}${instructionsAttr}>`;
     if (cls.value) {
       const constraint = cls.constraint ?? "FILLED";
       if (constraint === "ENUM") {
@@ -1564,10 +1562,13 @@ const buildOneSpecificationXml = (
     if (!matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = mat.occurrence === "prohibited" ? "prohibited" : mat.occurrence === "optional" ? "optional" : "required";
     const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
+    const instructionsAttr = mat.note ? ` instructions="${escapeXml(mat.note)}"` : "";
     spec += `
-        <ids:material cardinality="${cardinality}"${uriAttr}>`;
-    if (mat.category && mat.categoryMode !== "NONE") {
-      const constraintXml = generateConstraintXml(mat.categoryMode === "ENUM" ? "ENUM" : undefined, mat.category, "          ");
+        <ids:material cardinality="${cardinality}"${uriAttr}${instructionsAttr}>`;
+    const matVal = mat.value ?? (mat.category && mat.categoryMode !== "NONE" ? mat.category : "");
+    const matConstraint = mat.value != null ? (mat.constraint ?? "FILLED") : (mat.categoryMode === "ENUM" ? "ENUM" : "FILLED");
+    if (matVal) {
+      const constraintXml = generateConstraintXml(matConstraint, matVal, "          ");
       if (constraintXml) spec += `\n${constraintXml}`;
     }
     spec += `
