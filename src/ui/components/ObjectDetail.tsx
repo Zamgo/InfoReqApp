@@ -7898,7 +7898,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             onConfirm={(targetObjectCodes) => {
               const items = config.getItems();
               if (items.length > 0 && targetObjectCodes.length > 0) {
-                handler(object.code, items, targetObjectCodes);
+                (handler as (sourceObjectCode: string, items: unknown, targetObjectCodes: string[]) => void)(object.code, items, targetObjectCodes);
                 config.clearSelection();
               }
               setDuplicateToObjectsDialogType(null);

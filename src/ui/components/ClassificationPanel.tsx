@@ -4,7 +4,6 @@ import {
   type HierarchyViewMode,
   getHierarchyViewOptions,
   getHierarchyNodesForView,
-  collectIfcEntities,
 } from "../../classification/hierarchyView";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
 import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject } from "../../project/types";
@@ -29,7 +28,7 @@ const getMaxLevel = (nodes: ClassificationNode[]): number => {
  * Build a tree grouped by IFC entity types (jeden pohled – dělení dle IFC Entity).
  * Použije object.ifcEntity jako záložní zdroj, aby hierarchie odpovídala nastavení objektů i když uzel ještě nemá ifcEntity.
  */
-const buildIfcTree = (
+const _buildIfcTree = (
   nodes: ClassificationNode[],
   objects?: Record<string, ProjectObject>
 ): ClassificationNode[] => {
@@ -65,7 +64,7 @@ const buildIfcTree = (
  * Build a tree grouped by IFC predefined types (jeden pohled – dělení dle PredefinedType).
  * Použije object.predefinedType jako záložní zdroj.
  */
-const buildPredefinedTypeTree = (
+const _buildPredefinedTypeTree = (
   nodes: ClassificationNode[],
   objects?: Record<string, ProjectObject>
 ): ClassificationNode[] => {
@@ -98,7 +97,7 @@ const buildPredefinedTypeTree = (
  * Jednotný IFC pohled: úroveň 1 = IFC entity, úroveň 2 = predefined type pod správnou entitou, úroveň 3 = konkrétní prvky.
  * Používá se když IFC není primární klasifikace (jako dříve při zvláštním IFC klasifikačním systému).
  */
-const buildUnifiedIfcTree = (
+const _buildUnifiedIfcTree = (
   nodes: ClassificationNode[],
   objects?: Record<string, ProjectObject>
 ): ClassificationNode[] => {
@@ -151,7 +150,7 @@ const UNASSIGNED_LABEL = "nepřiřazeno";
 /**
  * Build a tree grouped by a mapped system's values from classification nodes (node.mappedValues)
  */
-const buildMappedSystemTree = (
+const _buildMappedSystemTree = (
   nodes: ClassificationNode[],
   systemEntryId: string
 ): ClassificationNode[] => {
@@ -182,7 +181,7 @@ const UNMAPPED_LABEL = "—";
  * Build a 3-level tree for IFC mapped system: Entity → Entity::PredefinedType → leaves.
  * Level 1 = IFC entity (e.g. IfcAirTerminal), Level 2 = entity::type (e.g. IfcAirTerminal::DIFFUSER), Level 3 = objects.
  */
-const buildMappedIfcSystemTree = (
+const _buildMappedIfcSystemTree = (
   nodes: ClassificationNode[],
   systemEntryId: string
 ): ClassificationNode[] => {
@@ -229,7 +228,7 @@ const buildMappedIfcSystemTree = (
 /**
  * Same 3-level IFC tree but value from getValue(leaf) (e.g. from object's ifcEntity + predefinedType).
  */
-const buildMappedIfcSystemTreeByValue = (
+const _buildMappedIfcSystemTreeByValue = (
   nodes: ClassificationNode[],
   getValue: (leaf: ClassificationNode) => string
 ): ClassificationNode[] => {
@@ -279,7 +278,7 @@ const buildMappedIfcSystemTreeByValue = (
  * Build a tree grouped by values – list se zobrazí ve VŠECH skupinách, do kterých patří (pro více kategorií autorských nástrojů).
  * getValues(leaf) vrací pole hodnot; prázdné pole → "nepřiřazeno".
  */
-const buildMappedSystemTreeByValues = (
+const _buildMappedSystemTreeByValues = (
   nodes: ClassificationNode[],
   getValues: (leaf: ClassificationNode) => string[]
 ): ClassificationNode[] => {
@@ -310,6 +309,17 @@ const buildMappedSystemTreeByValues = (
       .map((item) => ({ ...item, level: 2, children: [] })),
   }));
 };
+
+// Reserved for future hierarchy view modes (satisfies noUnusedLocals)
+void [
+  _buildIfcTree,
+  _buildPredefinedTypeTree,
+  _buildUnifiedIfcTree,
+  _buildMappedSystemTree,
+  _buildMappedIfcSystemTree,
+  _buildMappedIfcSystemTreeByValue,
+  _buildMappedSystemTreeByValues,
+];
 
 interface Props {
   classification: ClassificationData | null;

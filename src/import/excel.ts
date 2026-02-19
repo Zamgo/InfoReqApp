@@ -700,7 +700,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           obj.predefinedType = newPredefined ? { mode: "ENUM" as const, value: newPredefined } : { mode: "NONE" as const };
           if (newPredefined && predefinedCzVal?.trim()) obj.predefinedTypeCz = predefinedCzVal.trim();
           const leafNodePoz = primaryEntry ? findNodeByCode(primaryEntry.nodes ?? [], code) : undefined;
-          if (leafNodePoz && newIfcEntity) {
+          if (leafNodePoz && newIfcEntity && primaryEntry) {
             leafNodePoz.ifcEntity = newIfcEntity;
             leafNodePoz.predefinedType = newPredefined || "NOTDEFINED";
             const ifcSystemIdPoz = primaryEntry.mappedSystemIds?.find((sid) =>
