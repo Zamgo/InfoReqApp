@@ -17,7 +17,7 @@ import {
 } from "./classification/ifcTree";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
-import type { ClassificationSystemEntry, CodeList, Phase, Project, ProjectObject, PropertyRequirement } from "./project/types";
+import type { AttributeRequirement, ClassificationRequirement, ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "./project/types";
 import {
   createEmptyProject,
   clearProjectFromStorage,
@@ -1567,6 +1567,118 @@ const AppInner: React.FC = () => {
     [project],
   );
 
+  const onDuplicateAttributesToObjects = useCallback(
+    (sourceObjectCode: string, attributes: AttributeRequirement[], targetObjectCodes: string[]) => {
+      if (!project) return;
+      const nextObjects = { ...project.objects };
+      for (const targetCode of targetObjectCodes) {
+        if (targetCode === sourceObjectCode) continue;
+        const obj = nextObjects[targetCode];
+        if (!obj) continue;
+        const newAttrs = attributes.map((a) => ({ ...JSON.parse(JSON.stringify(a)), id: makeId() }));
+        nextObjects[targetCode] = {
+          ...obj,
+          requirements: {
+            ...obj.requirements,
+            attributes: [...obj.requirements.attributes, ...newAttrs],
+          },
+        };
+      }
+      updateProjectWithHistory({
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      });
+      setStatus(`Atributy zkopírovány do ${targetObjectCodes.length} objektů`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project],
+  );
+
+  const onDuplicateClassificationsToObjects = useCallback(
+    (sourceObjectCode: string, classifications: ClassificationRequirement[], targetObjectCodes: string[]) => {
+      if (!project) return;
+      const nextObjects = { ...project.objects };
+      for (const targetCode of targetObjectCodes) {
+        if (targetCode === sourceObjectCode) continue;
+        const obj = nextObjects[targetCode];
+        if (!obj) continue;
+        const newCls = classifications.map((c) => ({ ...JSON.parse(JSON.stringify(c)), id: makeId() }));
+        nextObjects[targetCode] = {
+          ...obj,
+          requirements: {
+            ...obj.requirements,
+            classifications: [...obj.requirements.classifications, ...newCls],
+          },
+        };
+      }
+      updateProjectWithHistory({
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      });
+      setStatus(`Klasifikace zkopírovány do ${targetObjectCodes.length} objektů`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project],
+  );
+
+  const onDuplicateMaterialsToObjects = useCallback(
+    (sourceObjectCode: string, materials: MaterialRequirement[], targetObjectCodes: string[]) => {
+      if (!project) return;
+      const nextObjects = { ...project.objects };
+      for (const targetCode of targetObjectCodes) {
+        if (targetCode === sourceObjectCode) continue;
+        const obj = nextObjects[targetCode];
+        if (!obj) continue;
+        const newMats = materials.map((m) => ({ ...JSON.parse(JSON.stringify(m)), id: makeId() }));
+        nextObjects[targetCode] = {
+          ...obj,
+          requirements: {
+            ...obj.requirements,
+            materials: [...obj.requirements.materials, ...newMats],
+          },
+        };
+      }
+      updateProjectWithHistory({
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      });
+      setStatus(`Materiálové požadavky zkopírovány do ${targetObjectCodes.length} objektů`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project],
+  );
+
+  const onDuplicateRelationsToObjects = useCallback(
+    (sourceObjectCode: string, relations: RelationRequirement[], targetObjectCodes: string[]) => {
+      if (!project) return;
+      const nextObjects = { ...project.objects };
+      for (const targetCode of targetObjectCodes) {
+        if (targetCode === sourceObjectCode) continue;
+        const obj = nextObjects[targetCode];
+        if (!obj) continue;
+        const newRels = relations.map((r) => ({ ...JSON.parse(JSON.stringify(r)), id: makeId() }));
+        nextObjects[targetCode] = {
+          ...obj,
+          requirements: {
+            ...obj.requirements,
+            relations: [...obj.requirements.relations, ...newRels],
+          },
+        };
+      }
+      updateProjectWithHistory({
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      });
+      setStatus(`Součásti (vztahy) zkopírovány do ${targetObjectCodes.length} objektů`);
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project],
+  );
+
   const canUndo = () => {
     return historyIndexRef.current > 0;
   };
@@ -1967,6 +2079,10 @@ const AppInner: React.FC = () => {
               onDeleteObject={onDeleteObject}
               onToggleLock={onToggleLockObject}
               onDuplicatePropertyGroupsToObjects={onDuplicatePropertyGroupsToObjects}
+              onDuplicateAttributesToObjects={onDuplicateAttributesToObjects}
+              onDuplicateClassificationsToObjects={onDuplicateClassificationsToObjects}
+              onDuplicateMaterialsToObjects={onDuplicateMaterialsToObjects}
+              onDuplicateRelationsToObjects={onDuplicateRelationsToObjects}
             />
           )}
         </div>

@@ -128,24 +128,25 @@ const PropertyRowEditDialog: React.FC<{
   );
 };
 
-/** Dialog pro duplikaci skupin vlastností do jiných objektů – různé pohledy na hierarchii (klasifikace, IFC, namapované systémy), filtrace, vyhledávání. */
-const DuplicatePropertyGroupsDialog: React.FC<{
+/** Obecný dialog pro výběr cílových objektů při duplikaci požadavků (vlastnosti, atributy, klasifikace, materiál, součásti). */
+const SelectObjectsForDuplicateDialog: React.FC<{
   classification: ClassificationData | null;
   classificationSystemEntries: ClassificationSystemEntry[];
   objects: Record<string, ProjectObject>;
   currentObjectCode: string;
-  selectedGroupKeys: string[];
-  groupLabels: Record<string, string>;
+  title: string;
+  description: string;
+  selectedSummary?: string;
+  getConflictsForTargets: (targetObjectCodes: string[]) => Array<{ targetCode: string; targetDescription: string; conflictingLabels: string[] }>;
   onConfirm: (targetObjectCodes: string[]) => void;
   onClose: () => void;
-}> = ({ classification, classificationSystemEntries, objects, currentObjectCode, selectedGroupKeys, groupLabels, onConfirm, onClose }) => {
+}> = ({ classification, classificationSystemEntries, objects, currentObjectCode, title, description, selectedSummary, getConflictsForTargets, onConfirm, onClose }) => {
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<HierarchyViewMode>("classification");
   const [selectedCodes, setSelectedCodes] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  /** Výstraha: cílové objekty, u kterých už existuje skupina vlastností se stejným názvem – kopírování se neprovede */
   const [conflictWarning, setConflictWarning] = useState<
-    Array<{ targetCode: string; targetDescription: string; conflictingGroupKeys: string[] }> | null
+    Array<{ targetCode: string; targetDescription: string; conflictingLabels: string[] }> | null
   >(null);
 
   const primarySystem = useMemo(
@@ -168,14 +169,11 @@ const DuplicatePropertyGroupsDialog: React.FC<{
     [viewMode, classification, primarySystem, classificationSystemEntries, objects],
   );
 
-  const getGroupKey = (source: string, psetName?: string) => `${source}:${psetName || "(custom)"}`;
-
   const filteredNodes = useMemo(
     () => (search.trim() ? filterTree(nodes, search.trim()) : nodes),
     [nodes, search],
   );
 
-  /** Všechny kódy objektů (kromě aktuálního), u kterých lze zaškrtnout výběr – plochý seznam z project.objects */
   const allObjectCodes = useMemo(
     () => Object.keys(objects).filter((code) => code !== currentObjectCode),
     [objects, currentObjectCode],
@@ -191,31 +189,12 @@ const DuplicatePropertyGroupsDialog: React.FC<{
     });
   };
 
-  const selectAll = () => {
-    setSelectedCodes(new Set(allObjectCodes));
-  };
+  const selectAll = () => setSelectedCodes(new Set(allObjectCodes));
   const deselectAll = () => setSelectedCodes(new Set());
 
   const handleConfirm = () => {
     const targetCodes = Array.from(selectedCodes);
-    const conflicts: Array<{ targetCode: string; targetDescription: string; conflictingGroupKeys: string[] }> = [];
-
-    for (const code of targetCodes) {
-      const obj = objects[code];
-      if (!obj?.requirements?.properties) continue;
-      const existingKeys = new Set(
-        obj.requirements.properties.map((p) => getGroupKey(p.source, p.psetName)),
-      );
-      const conflicting = selectedGroupKeys.filter((k) => existingKeys.has(k));
-      if (conflicting.length > 0) {
-        conflicts.push({
-          targetCode: code,
-          targetDescription: obj.description ?? code,
-          conflictingGroupKeys: conflicting,
-        });
-      }
-    }
-
+    const conflicts = getConflictsForTargets(targetCodes);
     if (conflicts.length > 0) {
       setConflictWarning(conflicts);
       return;
@@ -309,14 +288,10 @@ const DuplicatePropertyGroupsDialog: React.FC<{
         onClick={(e) => e.stopPropagation()}
       >
         <div className="border-b border-slate-200 p-4">
-          <h3 className="text-lg font-semibold text-slate-800">Duplikovat skupiny vlastností do objektů</h3>
-          <p className="mt-1 text-sm text-slate-600">
-            Vyberte objekty, do kterých se zkopírují vybrané skupiny vlastností (vždy jako nezávislé kopie).
-          </p>
-          {selectedGroupKeys.length > 0 && (
-            <p className="mt-1 text-xs text-slate-500">
-              Skupiny: {selectedGroupKeys.map((k) => groupLabels[k] ?? k).join(", ")}
-            </p>
+          <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
+          <p className="mt-1 text-sm text-slate-600">{description}</p>
+          {selectedSummary && (
+            <p className="mt-1 text-xs text-slate-500">{selectedSummary}</p>
           )}
         </div>
         <div className="flex flex-none flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2">
@@ -436,16 +411,16 @@ const DuplicatePropertyGroupsDialog: React.FC<{
         {conflictWarning && conflictWarning.length > 0 && (
           <div className="border-t border-amber-200 bg-amber-50 px-4 py-3">
             <p className="text-sm font-semibold text-amber-800">
-              Kopírování není možné: v některých vybraných objektech již existuje skupina vlastností se stejným názvem.
+              Kopírování není možné: v některých vybraných objektech již existují položky se stejným názvem.
             </p>
             <p className="mt-1 text-xs text-amber-700">
-              Odznačte tyto objekty nebo zrušte výběr skupin vlastností s konfliktním názvem.
+              Odznačte tyto objekty nebo zrušte výběr položek s konfliktním názvem.
             </p>
             <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-amber-800">
               {conflictWarning.map((c) => (
                 <li key={c.targetCode}>
-                  <span className="font-medium">{c.targetDescription}</span> ({c.targetCode}): skupiny{" "}
-                  {c.conflictingGroupKeys.map((k) => groupLabels[k] ?? k).join(", ")}
+                  <span className="font-medium">{c.targetDescription}</span> ({c.targetCode}):{" "}
+                  {c.conflictingLabels.join(", ")}
                 </li>
               ))}
             </ul>
@@ -477,6 +452,60 @@ const DuplicatePropertyGroupsDialog: React.FC<{
         </div>
       </div>
     </div>
+  );
+};
+
+/** Dialog pro duplikaci skupin vlastností do jiných objektů – používá SelectObjectsForDuplicateDialog s kontrolou konfliktů skupin. */
+const DuplicatePropertyGroupsDialog: React.FC<{
+  classification: ClassificationData | null;
+  classificationSystemEntries: ClassificationSystemEntry[];
+  objects: Record<string, ProjectObject>;
+  currentObjectCode: string;
+  selectedGroupKeys: string[];
+  groupLabels: Record<string, string>;
+  onConfirm: (targetObjectCodes: string[]) => void;
+  onClose: () => void;
+}> = (props) => {
+  const getGroupKey = (source: string, psetName?: string) => `${source}:${psetName || "(custom)"}`;
+  const getConflictsForTargets = useCallback(
+    (targetObjectCodes: string[]) => {
+      const conflicts: Array<{ targetCode: string; targetDescription: string; conflictingLabels: string[] }> = [];
+      for (const code of targetObjectCodes) {
+        const obj = props.objects[code];
+        if (!obj?.requirements?.properties) continue;
+        const existingKeys = new Set(
+          obj.requirements.properties.map((p) => getGroupKey(p.source, p.psetName)),
+        );
+        const conflicting = props.selectedGroupKeys.filter((k) => existingKeys.has(k));
+        if (conflicting.length > 0) {
+          conflicts.push({
+            targetCode: code,
+            targetDescription: obj.description ?? code,
+            conflictingLabels: conflicting.map((k) => props.groupLabels[k] ?? k),
+          });
+        }
+      }
+      return conflicts;
+    },
+    [props.objects, props.selectedGroupKeys, props.groupLabels],
+  );
+  return (
+    <SelectObjectsForDuplicateDialog
+      classification={props.classification}
+      classificationSystemEntries={props.classificationSystemEntries}
+      objects={props.objects}
+      currentObjectCode={props.currentObjectCode}
+      title="Duplikovat skupiny vlastností do objektů"
+      description="Vyberte objekty, do kterých se zkopírují vybrané skupiny vlastností (vždy jako nezávislé kopie)."
+      selectedSummary={
+        props.selectedGroupKeys.length > 0
+          ? `Skupiny: ${props.selectedGroupKeys.map((k) => props.groupLabels[k] ?? k).join(", ")}`
+          : undefined
+      }
+      getConflictsForTargets={getConflictsForTargets}
+      onConfirm={props.onConfirm}
+      onClose={props.onClose}
+    />
   );
 };
 
@@ -577,6 +606,14 @@ interface Props {
     groups: { groupKey: string; properties: PropertyRequirement[] }[],
     targetObjectCodes: string[],
   ) => void;
+  /** Duplikovat vybrané atributy do jiných objektů */
+  onDuplicateAttributesToObjects?: (sourceObjectCode: string, attributes: import("../../project/types").AttributeRequirement[], targetObjectCodes: string[]) => void;
+  /** Duplikovat vybrané klasifikace do jiných objektů */
+  onDuplicateClassificationsToObjects?: (sourceObjectCode: string, classifications: import("../../project/types").ClassificationRequirement[], targetObjectCodes: string[]) => void;
+  /** Duplikovat vybrané materiálové požadavky do jiných objektů */
+  onDuplicateMaterialsToObjects?: (sourceObjectCode: string, materials: MaterialRequirement[], targetObjectCodes: string[]) => void;
+  /** Duplikovat vybrané součásti (vztahy) do jiných objektů */
+  onDuplicateRelationsToObjects?: (sourceObjectCode: string, relations: RelationRequirement[], targetObjectCodes: string[]) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -1903,7 +1940,7 @@ const IdsSingleExportDialog: React.FC<{
   );
 };
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onCopyObject, onDeleteObject, onToggleLock, onDuplicatePropertyGroupsToObjects }) => {
+export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onCopyObject, onDeleteObject, onToggleLock, onDuplicatePropertyGroupsToObjects, onDuplicateAttributesToObjects, onDuplicateClassificationsToObjects, onDuplicateMaterialsToObjects, onDuplicateRelationsToObjects }) => {
   const isLocked = object.locked === true;
   /** Zvýraznění červeně: zkopírovaný objekt má stále stejnou entitu a predefinedType jako zdroj */
   const isIncompleteCopy = useMemo(() => {
@@ -1990,6 +2027,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [propertyRowEditDialog, setPropertyRowEditDialog] = useState<{ prop: PropertyRequirement; groupKey: string } | null>(null);
   /** Dialog pro duplikaci skupin vlastností do jiných objektů */
   const [duplicatePropertyGroupsDialogOpen, setDuplicatePropertyGroupsDialogOpen] = useState(false);
+  /** Typ dialogu pro duplikaci požadavků do jiných objektů (atributy, klasifikace, materiál, součásti) */
+  const [duplicateToObjectsDialogType, setDuplicateToObjectsDialogType] = useState<"attributes" | "classification" | "material" | "partOf" | null>(null);
   /** Šířky sloupců tabulek (index → px) */
   const [propertyTableColWidths, setPropertyTableColWidths] = useState<Record<number, number>>(() => {
     try {
@@ -4115,6 +4154,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     >
                       Označit všechny
                     </button>
+                    {selectedAttributes.size > 0 && onDuplicateAttributesToObjects && (
+                      <button
+                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        onClick={() => setDuplicateToObjectsDialogType("attributes")}
+                      >
+                        Duplikovat do…
+                      </button>
+                    )}
                     {selectedAttributes.size > 0 && (
                       <button
                         className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
@@ -6033,6 +6080,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     >
                       Označit všechny
                     </button>
+                    {selectedRelations.size > 0 && onDuplicateRelationsToObjects && (
+                      <button
+                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        onClick={() => setDuplicateToObjectsDialogType("partOf")}
+                      >
+                        Duplikovat do…
+                      </button>
+                    )}
                     {selectedRelations.size > 0 && (
                       <button
                         className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
@@ -6352,6 +6407,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     >
                       Označit všechny
                     </button>
+                    {selectedMaterials.size > 0 && onDuplicateMaterialsToObjects && (
+                      <button
+                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        onClick={() => setDuplicateToObjectsDialogType("material")}
+                      >
+                        Duplikovat do…
+                      </button>
+                    )}
                     {selectedMaterials.size > 0 && (
                       <button
                         className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
@@ -6995,6 +7058,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     >
                       Označit všechny
                     </button>
+                    {selectedClassifications.size > 0 && onDuplicateClassificationsToObjects && (
+                      <button
+                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        onClick={() => setDuplicateToObjectsDialogType("classification")}
+                      >
+                        Duplikovat do…
+                      </button>
+                    )}
                     {selectedClassifications.size > 0 && (
                       <button
                         className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
@@ -7774,7 +7845,69 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
       </div>
       </CollapsibleSection>
-      
+
+      {/* Dialog pro duplikaci požadavků (atributy, klasifikace, materiál, součásti) do jiných objektů – mimo karty, aby byl dostupný ze všech záložek */}
+      {duplicateToObjectsDialogType && project && (() => {
+        const configs = {
+          attributes: {
+            title: "Duplikovat atributy do objektů",
+            description: "Vyberte objekty, do kterých se zkopírují vybrané atributy (vždy jako nezávislé kopie).",
+            getSummary: () => `Počet: ${selectedAttributes.size} atributů`,
+            getItems: () => object.requirements.attributes.filter((a) => selectedAttributes.has(a.id)),
+            onConfirm: onDuplicateAttributesToObjects,
+            clearSelection: () => setSelectedAttributes(new Set()),
+          },
+          classification: {
+            title: "Duplikovat klasifikace do objektů",
+            description: "Vyberte objekty, do kterých se zkopírují vybrané klasifikace (vždy jako nezávislé kopie).",
+            getSummary: () => `Počet: ${selectedClassifications.size} klasifikací`,
+            getItems: () => object.requirements.classifications.filter((c) => selectedClassifications.has(c.id)),
+            onConfirm: onDuplicateClassificationsToObjects,
+            clearSelection: () => setSelectedClassifications(new Set()),
+          },
+          material: {
+            title: "Duplikovat materiálové požadavky do objektů",
+            description: "Vyberte objekty, do kterých se zkopírují vybrané materiálové požadavky (vždy jako nezávislé kopie).",
+            getSummary: () => `Počet: ${selectedMaterials.size} materiálů`,
+            getItems: () => object.requirements.materials.filter((m) => selectedMaterials.has(m.id)),
+            onConfirm: onDuplicateMaterialsToObjects,
+            clearSelection: () => setSelectedMaterials(new Set()),
+          },
+          partOf: {
+            title: "Duplikovat součásti (vztahy) do objektů",
+            description: "Vyberte objekty, do kterých se zkopírují vybrané vztahy součástí (vždy jako nezávislé kopie).",
+            getSummary: () => `Počet: ${selectedRelations.size} vztahů`,
+            getItems: () => object.requirements.relations.filter((r) => selectedRelations.has(r.id)),
+            onConfirm: onDuplicateRelationsToObjects,
+            clearSelection: () => setSelectedRelations(new Set()),
+          },
+        };
+        const config = configs[duplicateToObjectsDialogType];
+        if (!config || !config.onConfirm) return null;
+        const handler = config.onConfirm;
+        return (
+          <SelectObjectsForDuplicateDialog
+            classification={project.classification}
+            classificationSystemEntries={project.classificationSystemEntries ?? []}
+            objects={project.objects}
+            currentObjectCode={object.code}
+            title={config.title}
+            description={config.description}
+            selectedSummary={config.getSummary()}
+            getConflictsForTargets={() => []}
+            onConfirm={(targetObjectCodes) => {
+              const items = config.getItems();
+              if (items.length > 0 && targetObjectCodes.length > 0) {
+                handler(object.code, items, targetObjectCodes);
+                config.clearSelection();
+              }
+              setDuplicateToObjectsDialogType(null);
+            }}
+            onClose={() => setDuplicateToObjectsDialogType(null)}
+          />
+        );
+      })()}
+
       {/* Export IDS dialog – výběr fáze, výskytu a metadata */}
       {isExportIdsDialogOpen && activeTab === "ids" && (
         <IdsSingleExportDialog
