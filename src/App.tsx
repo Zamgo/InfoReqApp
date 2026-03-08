@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, startTransition, type MouseEvent as ReactMouseEvent } from "react";
 import { ClassificationPanel } from "./ui/components/ClassificationPanel";
 import { ObjectDetail } from "./ui/components/ObjectDetail";
 import { ProjectDetailsDialog } from "./ui/components/ProjectDetailsDialog";
@@ -20,7 +20,7 @@ import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
 import type { AttributeRequirement, ClassificationRequirement, ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "./project/types";
 import {
   createEmptyProject,
-  clearProjectFromStorage,
+  clearAllAppDataOnReset,
   ensureObject,
   exportProjectFile,
   importProjectFile,
@@ -164,7 +164,7 @@ const AppInner: React.FC = () => {
   };
 
   const clearProject = useCallback(() => {
-    clearProjectFromStorage();
+    clearAllAppDataOnReset();
     historyRef.current = [];
     historyIndexRef.current = -1;
     setProject(null);
@@ -396,24 +396,32 @@ const AppInner: React.FC = () => {
     };
   }, []);
 
+  // Načtení projektu z úložiště odložíme do dalšího ticku, aby hlavní vlákno nestrácelo čas
+  // a UI se mohlo rychle vykreslit (prevence „zmrznutí“ při otevření s velkým projektem).
   useEffect(() => {
-    const stored = loadProjectFromStorage();
-    if (stored) {
+    const runLoad = () => {
+      const stored = loadProjectFromStorage();
+      if (!stored) return;
       const migrated = migrateProject(stored);
       let withPropagation = propagateIfcFromObjectsToNodes(migrated);
       withPropagation = propagateObjectAuthoringToNodes(withPropagation);
       withPropagation = propagateMappingToObjects(withPropagation);
       withPropagation = propagateAuthoringMappingToObjects(withPropagation);
       withPropagation = propagateClassificationMappingToObjects(withPropagation);
-      setProject(withPropagation);
-      setClassification(withPropagation.classification);
       const leaves = collectLeaves(withPropagation.classification.nodes);
-      setSelectedCode(withPropagation.objects[leaves[0]?.code]?.code ?? leaves[0]?.code);
-      if (withPropagation !== migrated) {
-        saveProjectToStorage(withPropagation);
+      const firstCode = withPropagation.objects[leaves[0]?.code]?.code ?? leaves[0]?.code;
+      const needsSave = withPropagation !== migrated;
+      startTransition(() => {
+        setProject(withPropagation);
+        setClassification(withPropagation.classification);
+        setSelectedCode(firstCode);
+      });
+      if (needsSave) {
+        setTimeout(() => saveProjectToStorage(withPropagation), 0);
       }
-    }
-    // Bez uloženého projektu zůstane prázdný stav – uživatel si sám nahraje klasifikaci.
+    };
+    const id = setTimeout(runLoad, 0);
+    return () => clearTimeout(id);
   }, [propagateIfcFromObjectsToNodes, propagateObjectAuthoringToNodes, propagateMappingToObjects, propagateAuthoringMappingToObjects, propagateClassificationMappingToObjects]);
 
   const selectedNode = useMemo<ClassificationNode | undefined>(() => {

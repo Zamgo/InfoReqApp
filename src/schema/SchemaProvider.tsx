@@ -33,12 +33,22 @@ export const SchemaProvider: React.FC<{ children: React.ReactNode }> = ({
           `Schema index not found. Run "npm run build:schema" to generate it.`,
         );
       }
-      const data = (await res.json()) as SchemaIndex;
-      setIndex(data);
+      const text = await res.text();
+      // Parsování velkého JSON odložíme do dalšího ticku, aby neblokovalo hlavní vlákno.
+      setTimeout(() => {
+        try {
+          const data = JSON.parse(text) as SchemaIndex;
+          setIndex(data);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Failed to parse schema index");
+          setIndex(null);
+        } finally {
+          setLoading(false);
+        }
+      }, 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load schema index");
       setIndex(null);
-    } finally {
       setLoading(false);
     }
   };

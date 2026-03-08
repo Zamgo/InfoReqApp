@@ -106,6 +106,17 @@ export const clearProjectFromStorage = (): void => {
   localStorage.removeItem(STORAGE_KEY);
 };
 
+/** Při plném resetu projektu smaže projekt i všechna UI data z localStorage (číselníky, šířky sloupců, sekce atd.). */
+export const clearAllAppDataOnReset = (): void => {
+  localStorage.removeItem(STORAGE_KEY);
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith("infoReqApp_")) keysToRemove.push(key);
+  }
+  keysToRemove.forEach((k) => localStorage.removeItem(k));
+}
+
 export const saveProjectToStorage = (project: Project) => {
   project.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(project));
