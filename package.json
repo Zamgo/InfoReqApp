@@ -7,7 +7,10 @@
     "dev": "npm run ensure:schema && vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "build:schema": "tsx scripts/build_schema_index.ts",
+    "build:schema": "tsx scripts/build_schema_index.ts 4x3",
+    "build:schema:4": "tsx scripts/build_schema_index.ts 4",
+    "build:schema:all": "tsx scripts/build_schema_index.ts 4x3 && tsx scripts/build_schema_index.ts 4",
+    "generate:ifc4-dictionary": "tsx scripts/generate_ifc4_dictionary.ts",
     "ensure:schema": "node scripts/checkSchemaIndex.js"
   },
   "dependencies": {

@@ -1,19 +1,19 @@
 import React, { useState } from "react";
 import type { ClassificationSystem, IfcClassification } from "../../classification/types";
 import { DocLink } from "./DocLink";
+import { getIfcClassificationDocUrl, normalizeIfcSchemaVersion } from "../../schema/ifcVersionConfig";
 
 interface Props {
   classifications: ClassificationSystem[];
   primaryClassificationId: string;
+  /** IFC verze projektu – určuje odkaz na dokumentaci IfcClassification. */
+  ifcSchemaVersion?: string | null;
   onAddClassification: (system: ClassificationSystem) => void;
   onUpdateClassification: (id: string, updates: Partial<ClassificationSystem>) => void;
   onDeleteClassification: (id: string) => void;
   onSetPrimary: (id: string) => void;
   onUploadFile: (file: File, ifcMetadata?: Partial<IfcClassification>) => Promise<void>;
 }
-
-const IFC_CLASSIFICATION_DOC_URL =
-  "https://ifc43-docs.standards.buildingsmart.org/IFC/RELEASE/IFC4x3/HTML/lexical/IfcClassification.htm";
 
 interface EditingClassification {
   id: string;
@@ -23,11 +23,13 @@ interface EditingClassification {
 export const ClassificationManager: React.FC<Props> = ({
   classifications,
   primaryClassificationId,
+  ifcSchemaVersion,
   onUpdateClassification,
   onDeleteClassification,
   onSetPrimary,
   onUploadFile,
 }) => {
+  const ifcClassificationDocUrl = getIfcClassificationDocUrl(normalizeIfcSchemaVersion(ifcSchemaVersion));
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<EditingClassification | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -115,7 +117,7 @@ export const ClassificationManager: React.FC<Props> = ({
                 IFC 4x3
               </span>
               <DocLink 
-                href={IFC_CLASSIFICATION_DOC_URL}
+                href={ifcClassificationDocUrl}
                 label="IfcClassification"
                 type="ifc"
               />
@@ -123,7 +125,7 @@ export const ClassificationManager: React.FC<Props> = ({
             <p className="mt-1 text-xs text-slate-600">
               Správa klasifikačních systémů dle entity{" "}
               <a
-                href={IFC_CLASSIFICATION_DOC_URL}
+                href={ifcClassificationDocUrl}
                 target="_blank"
                 rel="noreferrer"
                 className="font-medium text-indigo-600 hover:underline"
@@ -217,7 +219,7 @@ export const ClassificationManager: React.FC<Props> = ({
                 <div className="mb-2 flex items-center gap-2 border-b border-slate-200 pb-2">
                   <span className="text-xs font-semibold text-slate-600">Atributy IfcClassification</span>
                   <DocLink 
-                    href={IFC_CLASSIFICATION_DOC_URL}
+                    href={ifcClassificationDocUrl}
                     label="IfcClassification"
                     type="ifc"
                     className="scale-75"
@@ -276,7 +278,7 @@ export const ClassificationManager: React.FC<Props> = ({
                 <div className="mb-2 flex items-center gap-2 border-b border-indigo-200 pb-2">
                   <span className="text-xs font-semibold text-indigo-700">Editace atributů IfcClassification</span>
                   <DocLink 
-                    href={IFC_CLASSIFICATION_DOC_URL}
+                    href={ifcClassificationDocUrl}
                     label="IfcClassification"
                     type="ifc"
                     className="scale-75"
@@ -430,7 +432,7 @@ export const ClassificationManager: React.FC<Props> = ({
               <p className="text-xs text-slate-600">
                 Vyplňte <strong>atributy entity IfcClassification</strong> dle schématu IFC 4x3.{" "}
                 <a
-                  href={IFC_CLASSIFICATION_DOC_URL}
+                  href={ifcClassificationDocUrl}
                   target="_blank"
                   rel="noreferrer"
                   className="font-medium text-indigo-600 hover:underline"

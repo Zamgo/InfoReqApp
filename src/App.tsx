@@ -17,6 +17,7 @@ import {
 } from "./classification/ifcTree";
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
+import { normalizeIfcSchemaVersion } from "./schema/ifcVersionConfig";
 import type { AttributeRequirement, ClassificationRequirement, ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "./project/types";
 import {
   createEmptyProject,
@@ -62,10 +63,14 @@ const applyCodeListPropagation = (project: Project, list: CodeList): Project => 
   return changed ? { ...project, objects: nextObjects } : project;
 };
 
-const AppInner: React.FC = () => {
+interface AppInnerProps {
+  project: Project | null;
+  setProject: React.Dispatch<React.SetStateAction<Project | null>>;
+}
+
+const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
   const { index: schemaIndex, loading: schemaLoading, error: schemaError } = useSchema();
   const [classification, setClassification] = useState<ClassificationData | null>(null);
-  const [project, setProject] = useState<Project | null>(null);
   const [selectedCode, setSelectedCode] = useState<string>();
   const [selectedObject, setSelectedObject] = useState<ProjectObject | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -2139,10 +2144,14 @@ const AppInner: React.FC = () => {
   );
 };
 
-const App: React.FC = () => (
-  <SchemaProvider>
-    <AppInner />
-  </SchemaProvider>
-);
+const App: React.FC = () => {
+  const [project, setProject] = useState<Project | null>(null);
+  const schemaVersion = normalizeIfcSchemaVersion(project?.ifcSchemaVersion);
+  return (
+    <SchemaProvider version={schemaVersion}>
+      <AppInner project={project} setProject={setProject} />
+    </SchemaProvider>
+  );
+};
 
 export default App;

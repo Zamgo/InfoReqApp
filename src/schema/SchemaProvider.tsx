@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import type { SchemaIndex } from "./types";
+import { getSchemaIndexUrl, normalizeIfcSchemaVersion, type IfcSchemaVersion } from "./ifcVersionConfig";
 
 interface SchemaContextValue {
   index: SchemaIndex | null;
@@ -14,20 +15,28 @@ const SchemaContext = createContext<SchemaContextValue>({
   reload: () => undefined,
 });
 
-const SCHEMA_URL = "/ifc/schema_index_ifc4x3.json";
+export interface SchemaProviderProps {
+  children: React.ReactNode;
+  /** Aktuální IFC verze pro načtení schema (např. z projektu). Výchozí IFC4X3. */
+  version?: IfcSchemaVersion | string | null;
+}
 
-export const SchemaProvider: React.FC<{ children: React.ReactNode }> = ({
+export const SchemaProvider: React.FC<SchemaProviderProps> = ({
   children,
+  version,
 }) => {
   const [index, setIndex] = useState<SchemaIndex | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
 
+  const schemaVersion = normalizeIfcSchemaVersion(version ?? undefined);
+  const schemaUrl = getSchemaIndexUrl(schemaVersion);
+
   const load = async () => {
     setLoading(true);
     setError(undefined);
     try {
-      const res = await fetch(SCHEMA_URL);
+      const res = await fetch(schemaUrl);
       if (!res.ok) {
         throw new Error(
           `Schema index not found. Run "npm run build:schema" to generate it.`,
@@ -55,7 +64,7 @@ export const SchemaProvider: React.FC<{ children: React.ReactNode }> = ({
 
   useEffect(() => {
     load();
-  }, []);
+  }, [schemaUrl]);
 
   return (
     <SchemaContext.Provider value={{ index, loading, error, reload: load }}>

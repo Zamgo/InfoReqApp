@@ -6,6 +6,7 @@ import type { SchemaIndex } from "../../schema/types";
 import { collectLeaves } from "../../classification/parser";
 import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
 import { parseAuthoringValues, joinAuthoringValues } from "../../project/authoring";
+import { EntitySelect } from "./EntitySelect";
 
 interface Props {
   system: ClassificationSystemEntry;
@@ -863,18 +864,16 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                             )}
                             {schemaIndex ? (
                               row.level === 1 ? (
-                                <select
-                                  className="min-w-[140px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                <EntitySelect
+                                  schemaIndex={schemaIndex}
                                   value={row.ifcEntity || ""}
-                                  onChange={(e) => {
-                                    const newEntity = e.target.value;
+                                  onChange={(newEntity) => {
                                     handleChangeRow(index, {
                                       ifcEntity: newEntity,
                                       code: newEntity,
                                       description: newEntity,
                                       predefinedType: "",
                                     });
-                                    // Synchronizovat následující řádky úrovně 2 (až do další úrovně 1) na novou entitu
                                     const actualIndex = search.trim()
                                       ? rows.findIndex((r) => r.code === filteredRows[index].code)
                                       : index;
@@ -893,14 +892,9 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                       return next;
                                     });
                                   }}
-                                >
-                                  <option value="">—</option>
-                                  {schemaEntityNames.map((name) => (
-                                    <option key={name} value={name}>
-                                      {name}
-                                    </option>
-                                  ))}
-                                </select>
+                                  placeholder="—"
+                                  className="min-w-[140px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                />
                               ) : (
                                 <span className="text-sm font-medium text-slate-800" title="Entita je stejná jako na úrovni 1">
                                   {parentEntity || "—"}
@@ -1042,11 +1036,10 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                         const effectiveType = ptOptions.includes(typeDisplay) ? typeDisplay : (ptOptions[0] ?? "NOTDEFINED");
                         return [
                           <td key={`${entry.id}-entity`} className="border border-slate-200 px-1 py-1">
-                            <select
-                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            <EntitySelect
+                              schemaIndex={schemaIndex}
                               value={entityPart || ""}
-                              onChange={(e) => {
-                                const newEntity = e.target.value;
+                              onChange={(newEntity) => {
                                 const opts = getPredefinedTypeOptions(newEntity);
                                 const newValue = newEntity
                                   ? opts.length
@@ -1055,14 +1048,9 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                   : "";
                                 handleMappedChange(index, entry.id, newValue);
                               }}
-                            >
-                              <option value="">—</option>
-                              {schemaEntityNames.map((name) => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
-                            </select>
+                              placeholder="—"
+                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
                           </td>,
                           <td key={`${entry.id}-type`} className="border border-slate-200 px-1 py-1">
                             <select
@@ -1236,21 +1224,16 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
               <div className="space-y-3">
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-600">IFC Entita</label>
-                  <select
-                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  <EntitySelect
+                    schemaIndex={schemaIndex}
                     value={addIfcEntity}
-                    onChange={(e) => {
-                      setAddIfcEntity(e.target.value);
+                    onChange={(entity) => {
+                      setAddIfcEntity(entity);
                       setAddIfcPredefinedType("NOTDEFINED");
                     }}
-                  >
-                    <option value="">— Vyberte entitu —</option>
-                    {schemaEntityNames.map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="— Vyberte entitu —"
+                    className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm"
+                  />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-slate-600">IFC PredefinedType</label>

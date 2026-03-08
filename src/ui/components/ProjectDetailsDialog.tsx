@@ -1,5 +1,12 @@
 import React, { useEffect, useState } from "react";
 import type { Project } from "../../project/types";
+import {
+  SUPPORTED_IFC_VERSIONS,
+  getDisplayLabel,
+  getIfcDocumentationBaseUrl,
+  normalizeIfcSchemaVersion,
+  type IfcSchemaVersion,
+} from "../../schema/ifcVersionConfig";
 
 interface Props {
   project: Project;
@@ -8,13 +15,13 @@ interface Props {
   onSave: (updates: Partial<Project>) => void;
 }
 
-const DEFAULT_IFC_DOC_URL = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/";
 const DEFAULT_MVD_DATABASE_URL = "https://technical.buildingsmart.org/standards/ifc/mvd/mvd-database/";
 
 interface FormData {
   name: string;
   author: string;
   description: string;
+  ifcSchemaVersion: IfcSchemaVersion;
   ifcDocumentationUrl: string;
   modelDefinitionViewMvd: string;
 }
@@ -25,22 +32,27 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
   onClose,
   onSave,
 }) => {
+  const defaultDocUrlForVersion = (v: IfcSchemaVersion) => getIfcDocumentationBaseUrl(v);
+
   const [formData, setFormData] = useState<FormData>({
     name: project.name || "",
     author: project.author || "",
     description: project.description || "",
-    ifcDocumentationUrl: project.ifcDocumentationUrl || DEFAULT_IFC_DOC_URL,
+    ifcSchemaVersion: normalizeIfcSchemaVersion(project.ifcSchemaVersion),
+    ifcDocumentationUrl: project.ifcDocumentationUrl || defaultDocUrlForVersion(normalizeIfcSchemaVersion(project.ifcSchemaVersion)),
     modelDefinitionViewMvd: project.modelDefinitionViewMvd || "Reference View",
   });
 
   // Reset form when project changes or dialog opens
   useEffect(() => {
     if (isOpen) {
+      const version = normalizeIfcSchemaVersion(project.ifcSchemaVersion);
       setFormData({
         name: project.name || "",
         author: project.author || "",
         description: project.description || "",
-        ifcDocumentationUrl: project.ifcDocumentationUrl || DEFAULT_IFC_DOC_URL,
+        ifcSchemaVersion: version,
+        ifcDocumentationUrl: project.ifcDocumentationUrl || defaultDocUrlForVersion(version),
         modelDefinitionViewMvd: project.modelDefinitionViewMvd || "Reference View",
       });
     }
@@ -57,10 +69,20 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
       name: formData.name.trim(),
       author: formData.author.trim() || undefined,
       description: formData.description.trim() || undefined,
+      ifcSchemaVersion: formData.ifcSchemaVersion,
+      ifcSchemaVersionDisplay: getDisplayLabel(formData.ifcSchemaVersion),
       ifcDocumentationUrl: formData.ifcDocumentationUrl.trim() || undefined,
       modelDefinitionViewMvd: formData.modelDefinitionViewMvd.trim() || undefined,
     });
     onClose();
+  };
+
+  const handleVersionChange = (version: IfcSchemaVersion) => {
+    setFormData((prev) => ({
+      ...prev,
+      ifcSchemaVersion: version,
+      ifcDocumentationUrl: defaultDocUrlForVersion(version),
+    }));
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -155,23 +177,27 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
               />
             </div>
 
-            {/* IFC Version (read-only) */}
+            {/* IFC Version */}
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">
-                Verze IFC
+                Verze IFC schématu
               </label>
-              <input
-                type="text"
-                className="w-full rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
-                value={project.ifcSchemaVersionDisplay || "IFC 4.3 ADD2 TC1"}
-                disabled
-                readOnly
-              />
+              <select
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                value={formData.ifcSchemaVersion}
+                onChange={(e) => handleVersionChange(e.target.value as IfcSchemaVersion)}
+              >
+                {SUPPORTED_IFC_VERSIONS.map((v) => (
+                  <option key={v} value={v}>
+                    {getDisplayLabel(v)}
+                  </option>
+                ))}
+              </select>
               <p className="mt-1 text-xs text-slate-500">
-                Verze IFC schématu nelze změnit
+                Ovlivní načtené schema, export IDS a odkazy na dokumentaci.
               </p>
               <a
-                href={formData.ifcDocumentationUrl || DEFAULT_IFC_DOC_URL}
+                href={formData.ifcDocumentationUrl || defaultDocUrlForVersion(formData.ifcSchemaVersion)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-1 inline-block text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
@@ -180,7 +206,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
               </a>
             </div>
 
-            {/* IFC Documentation URL (editable for future schema changes) */}
+            {/* IFC Documentation URL (editable) */}
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">
                 URL IFC dokumentace
@@ -190,7 +216,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
                 className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 value={formData.ifcDocumentationUrl}
                 onChange={(e) => setFormData({ ...formData, ifcDocumentationUrl: e.target.value })}
-                placeholder={DEFAULT_IFC_DOC_URL}
+                placeholder={defaultDocUrlForVersion(formData.ifcSchemaVersion)}
               />
             </div>
 

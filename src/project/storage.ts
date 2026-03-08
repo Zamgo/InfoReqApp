@@ -2,6 +2,7 @@ import type { ClassificationData, ClassificationSystem } from "../classification
 import { makeId } from "../utils/id";
 import type { Project, ProjectObject } from "./types";
 import { ensureProjectPhases, getDefaultPhases } from "./phases";
+import { DEFAULT_IFC_SCHEMA_VERSION, getDisplayLabel } from "../schema/ifcVersionConfig";
 
 const STORAGE_KEY = "inforeqapp:project";
 
@@ -30,9 +31,11 @@ export const createEmptyProject = (classification: ClassificationData): Project 
     description: "",
     createdAt: now,
     updatedAt: now,
-    ifcSchemaVersion: "IFC4X3",
-    ifcSchemaVersionDisplay: "IFC 4.3 ADD2 TC1",
-    ifcDocumentationUrl: "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/",
+    ifcSchemaVersion: DEFAULT_IFC_SCHEMA_VERSION,
+    ifcSchemaVersionDisplay: getDisplayLabel(DEFAULT_IFC_SCHEMA_VERSION),
+    ifcDocumentationUrl: DEFAULT_IFC_SCHEMA_VERSION === "IFC4X3"
+      ? "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/"
+      : "https://standards.buildingsmart.org/IFC/RELEASE/IFC4/",
     modelDefinitionViewMvd: "Reference View",
     classification,
     classifications: [primary],

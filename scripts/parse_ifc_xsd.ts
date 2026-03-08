@@ -148,7 +148,36 @@ export function parseIfcXsd(xsdPath: string): {
     }
   }
 
-  return { enums, entityAttributes };
+  // 4. Extract abstract flag from xs:element (element has @_abstract, complexType does not)
+  const entityAbstract = new Map<string, boolean>();
+  const elList = schema["xs:element"];
+  const elArr = elList ? (Array.isArray(elList) ? elList : [elList]) : [];
+  for (const el of elArr) {
+    const name = el?.["@_name"] ?? el?.name;
+    if (!name || !name.startsWith("Ifc")) continue;
+    const abs = el?.["@_abstract"] ?? el?.abstract;
+    entityAbstract.set(name, abs === true || abs === "true");
+  }
+
+  // entityBases: name -> direct base (from complexTypes)
+  const entityBases = new Map<string, string | null>();
+  for (const [name, def] of complexTypes) {
+    entityBases.set(name, def.base ?? null);
+  }
+
+  return { enums, entityAttributes, entityBases, entityAbstract };
+}
+
+/** Returns true if `name` is the same as `ancestor` or has `ancestor` in its inheritance chain (via base). */
+export function isDescendantOf(
+  name: string,
+  ancestor: string,
+  entityBases: Map<string, string | null>,
+): boolean {
+  if (name === ancestor) return true;
+  const base = entityBases.get(name);
+  if (!base) return false;
+  return isDescendantOf(base, ancestor, entityBases);
 }
 
 /** Get attributes for an entity, suitable for schema index. */

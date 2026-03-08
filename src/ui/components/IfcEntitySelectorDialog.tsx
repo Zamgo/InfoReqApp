@@ -135,9 +135,22 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
   onClose,
 }) => {
   const entityNames = useMemo(
-    () => Object.keys(schemaIndex.entities).sort(),
+    () => schemaIndex.entityListOrder ?? Object.keys(schemaIndex.entities).sort(),
     [schemaIndex],
   );
+
+  const getEntityDepth = useCallback((name: string): number => {
+    const entities = schemaIndex.entities;
+    let depth = 0;
+    let current: string | undefined = name;
+    while (current) {
+      const parent = entities[current]?.parent;
+      if (!parent) break;
+      depth += 1;
+      current = parent;
+    }
+    return depth;
+  }, [schemaIndex.entities]);
 
   const initialSelected = useMemo(() => {
     const leaves = collectLeaves(currentNodes);
@@ -165,7 +178,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
   const getEntityCodes = useCallback(
     (entityName: string): string[] => {
       const entity = schemaIndex.entities[entityName];
-      if (!entity) return [];
+      if (!entity || entity.abstract) return [];
       const types = entity.predefinedTypeValues ?? [];
       if (types.length === 0) return [entityName];
       return [`${entityName}::NOTDEFINED`, ...types.map((pt) => `${entityName}::${pt}`)];
@@ -431,16 +444,19 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
             {filteredEntityNames.map((entityName) => {
               const entity = schemaIndex.entities[entityName];
               if (!entity) return null;
+              const isAbstract = entity.abstract === true;
               const types = entity.predefinedTypeValues ?? [];
               const hasTypes = types.length > 0;
               const expanded = expandedEntities.has(entityName);
               const full = isEntityFullySelected(entityName);
               const partial = isEntityPartiallySelected(entityName);
+              const depth = getEntityDepth(entityName);
+              const indentPx = depth * 12;
 
               return (
                 <li key={entityName} className="rounded border border-slate-100 bg-slate-50/50">
-                  <div className="flex items-center gap-2 py-1 pr-2">
-                    {hasTypes && (
+                  <div className="flex items-center gap-2 py-1 pr-2" style={{ paddingLeft: indentPx }}>
+                    {hasTypes && !isAbstract && (
                       <button
                         type="button"
                         className="flex h-6 w-6 flex-shrink-0 items-center justify-center text-slate-500 hover:text-slate-700"
@@ -450,19 +466,26 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
                         {expanded ? "−" : "+"}
                       </button>
                     )}
-                    {!hasTypes && <span className="w-6 flex-shrink-0" />}
-                    <label className="flex flex-1 cursor-pointer items-center gap-2 py-1">
+                    {(!hasTypes || isAbstract) && <span className="w-6 flex-shrink-0" />}
+                    <label
+                      className={`flex flex-1 items-center gap-2 py-1 ${isAbstract ? "cursor-not-allowed text-slate-400" : "cursor-pointer"}`}
+                      title={isAbstract ? "Abstraktní entita – nelze vybrat" : undefined}
+                    >
                       <input
                         type="checkbox"
                         ref={(el) => {
-                          if (el) el.indeterminate = hasTypes && partial && !full;
+                          if (el && !isAbstract) el.indeterminate = hasTypes && partial && !full;
                         }}
-                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
                         checked={hasTypes ? full : selectedCodes.has(entityName)}
-                        onChange={(e) => toggleEntity(entityName, e.target.checked)}
+                        onChange={(e) => !isAbstract && toggleEntity(entityName, e.target.checked)}
+                        disabled={isAbstract}
                       />
-                      <span className="font-medium text-slate-800">{entityName}</span>
-                      {hasTypes && (
+                      <span className={isAbstract ? "font-medium text-slate-400" : "font-medium text-slate-800"}>{entityName}</span>
+                      {isAbstract && (
+                        <span className="text-xs text-slate-400">(abstraktní)</span>
+                      )}
+                      {hasTypes && !isAbstract && (
                         <span className="text-xs text-slate-500">
                           ({types.length} typů)
                         </span>

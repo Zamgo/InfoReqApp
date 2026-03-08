@@ -13,6 +13,7 @@ import type {
 import type { ClassificationNode } from "../classification/types";
 import { ENUM_CODELIST_ID_KEY } from "../project/enumeration";
 import { collectLeaves, getPathToNode, findNodeByCode } from "../classification/parser";
+import { getIfcDocumentationBaseUrl, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
 
 /**
  * Konvence pojmenování v exportu:
@@ -183,7 +184,7 @@ const createProjectSheet = (workbook: ExcelJS.Workbook, project: Project) => {
     project.author || "",
     project.description || "",
     ifcSchema,
-    project.ifcDocumentationUrl || "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/",
+    project.ifcDocumentationUrl || getIfcDocumentationBaseUrl(normalizeIfcSchemaVersion(project.ifcSchemaVersion)),
     project.modelDefinitionViewMvd || "Reference View",
   ]);
   styleDataRow(dataRow);

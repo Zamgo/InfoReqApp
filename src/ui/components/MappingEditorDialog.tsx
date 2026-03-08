@@ -3,6 +3,7 @@ import type { ClassificationSystemEntry } from "../../project/types";
 import type { ClassificationNode } from "../../classification/types";
 import type { SchemaIndex } from "../../schema/types";
 import { flattenNodesToRows, updateLeafMappedValue } from "../../classification/parser";
+import { EntitySelect } from "./EntitySelect";
 
 interface Props {
   primarySystem: ClassificationSystemEntry;
@@ -67,11 +68,6 @@ export const MappingEditorDialog: React.FC<Props> = ({
     });
     return counts;
   }, [rows]);
-
-  const schemaEntityNames = useMemo(
-    () => (schemaIndex ? Object.keys(schemaIndex.entities).sort() : []),
-    [schemaIndex],
-  );
 
   const handleCellChange = (code: string, systemId: string, value: string) => {
     const nodes = primarySystem.nodes ?? [];
@@ -301,23 +297,17 @@ export const MappingEditorDialog: React.FC<Props> = ({
                         const effectiveType = ptOptions.includes(typeDisplay) ? typeDisplay : (ptOptions[0] ?? "NOTDEFINED");
                         return [
                           <td key={`${entry.id}-entity`} className="border border-slate-200 px-1 py-1">
-                            <select
-                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            <EntitySelect
+                              schemaIndex={schemaIndex}
                               value={entityPart || ""}
-                              onChange={(e) => {
-                                const newEntity = e.target.value;
+                              onChange={(newEntity) => {
                                 const opts = getPredefinedTypeOptions(schemaIndex, newEntity);
                                 const newValue = newEntity ? (opts.length ? `${newEntity}::NOTDEFINED` : newEntity) : "";
                                 handleCellChange(node.code, entry.id, newValue);
                               }}
-                            >
-                              <option value="">—</option>
-                              {schemaEntityNames.map((name) => (
-                                <option key={name} value={name}>
-                                  {name}
-                                </option>
-                              ))}
-                            </select>
+                              placeholder="—"
+                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            />
                           </td>,
                           <td key={`${entry.id}-type`} className="border border-slate-200 px-1 py-1">
                             <select

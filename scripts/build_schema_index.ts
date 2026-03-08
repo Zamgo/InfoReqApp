@@ -1,7 +1,18 @@
 import fs from "fs";
 import path from "path";
 import { XMLParser } from "fast-xml-parser";
-import { parseIfcXsd, getEntityAttributesFromXsd } from "./parse_ifc_xsd";
+import { parseIfcXsd, getEntityAttributesFromXsd, isDescendantOf } from "./parse_ifc_xsd";
+
+/**
+ * Jednotný postup pro obě verze (IFC 4.3 a IFC4) – pouze z oficiálních zdrojů buildingSMART (XSD + XML):
+ *
+ * 1. Seznam entit: z XSD – všechny třídy, pro které isDescendantOf(name, "IfcObjectDefinition", entityBases).
+ * 2. Pro každou entitu: atributy a PredefinedType enum z XSD; parent a abstract z XSD.
+ * 3. Pset/Qto přiřazení: z XML ApplicableClasses (4.3: IFC/IFC_4_3_ADD2/pSet_XSD; 4: IFC/IFC_4_ADD2_TC1/ZIP/psd + ZIP/qto).
+ * 4. Společné dokončení: USERDEFINED v predefinedTypeValues, atribut PredefinedType pokud chybí, finalizePsetsQtos.
+ *
+ * Žádný bSDD JSON – obě verze stejně z XSD a XML v repozitáři (opakovatelné, dohledatelné).
+ */
 
 type PropertyDefinition = {
   name: string;
@@ -35,6 +46,8 @@ type SchemaEntity = {
   standardPsets: PsetAssignment[];
   standardQtoSets: PsetAssignment[];
   predefinedTypeValues: string[];
+  parent?: string;
+  abstract?: boolean;
 };
 
 type SchemaIndex = {
@@ -42,13 +55,45 @@ type SchemaIndex = {
   psets: Record<string, PropertySetDefinition>;
   qtos: Record<string, QuantitySetDefinition>;
   dataTypes: string[];
+  entityListOrder?: string[];
 };
 
-const INPUT_PATH = path.resolve("IFC_4x3.json");
-const PSET_QTO_DIR = path.resolve("IFC_4x3_Pset_Qto_Def");
-const XSD_PATH = path.resolve("IFC_4x3", "IFC4X3_ADD2.xsd");
-const OUTPUT_DIR = path.resolve("public/ifc");
-const OUTPUT_PATH = path.join(OUTPUT_DIR, "schema_index_ifc4x3.json");
+/** Paths resolved from project root (run from repo root). */
+const ROOT = path.resolve(process.cwd());
+
+/** Version-specific input/output config. Výstup (schema_index_*.json) má u obou verzí stejnou strukturu. */
+export type SchemaBuildVersion = "4x3" | "4";
+
+/** Zdroj: buildingSMART – XSD schéma a Pset/Qto XML v repozitáři (IFC/). Žádný bSDD JSON. */
+const BUILD_CONFIG: Record<
+  SchemaBuildVersion,
+  {
+    xsdPath: string;
+    /** Jednotný adresář Pset_ + Qto_ (4.3). */
+    psetQtoDir?: string;
+    /** Oddělené adresáře Pset vs Qto (4). */
+    psdDir?: string;
+    qtoDir?: string;
+    outputName: string;
+  }
+> = {
+  "4x3": {
+    xsdPath: path.join(ROOT, "IFC", "IFC_4_3_ADD2", "XSD", "IFC4X3_ADD2.xsd"),
+    psetQtoDir: path.join(ROOT, "IFC", "IFC_4_3_ADD2", "pSet_XSD"),
+    outputName: "schema_index_ifc4x3.json",
+  },
+  "4": {
+    xsdPath: path.join(ROOT, "IFC", "IFC_4_ADD2_TC1", "XSD", "IFC4.xsd"),
+    psdDir: path.join(ROOT, "IFC", "IFC_4_ADD2_TC1", "ZIP", "psd"),
+    qtoDir: path.join(ROOT, "IFC", "IFC_4_ADD2_TC1", "ZIP", "qto"),
+    outputName: "schema_index_ifc4.json",
+  },
+};
+
+// Fallback: 4x3 pokud pSet_XSD neexistuje, zkusit legacy složku (starší rozložení)
+const LEGACY_PSET_QTO_4X3 = path.join(ROOT, "IFC_4x3_Pset_Qto_Def");
+
+const OUTPUT_DIR = path.join(ROOT, "public", "ifc");
 
 const fallbackDataTypes = [
   "IfcLabel",
@@ -82,14 +127,6 @@ const ensureDir = (dir: string) => {
   }
 };
 
-const readJson = (file: string) => {
-  if (!fs.existsSync(file)) {
-    throw new Error(`Nenalezen vstupní soubor ${file}`);
-  }
-  const content = fs.readFileSync(file, "utf-8");
-  return JSON.parse(content);
-};
-
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "",
@@ -117,60 +154,8 @@ const addAssignment = (
       if (assignmentKey(item.name, item.forPredefinedType) === key) return;
     }
   }
-
-  // Keep backward compatibility: store plain string when no PredefinedType is needed.
   if (!forPredefinedType) list.push(name);
   else list.push({ name, forPredefinedType });
-};
-
-const loadPsetXml = (name: string): PropertyDefinition[] | null => {
-  const file = path.join(PSET_QTO_DIR, `${name}.xml`);
-  if (!fs.existsSync(file)) return null;
-  try {
-    const xml = fs.readFileSync(file, "utf-8");
-    const parsed = parser.parse(xml);
-    const defs = parsed?.PropertySetDef?.PropertyDefs?.PropertyDef;
-    if (!defs) return null;
-    const arr = Array.isArray(defs) ? defs : [defs];
-    const properties: PropertyDefinition[] = [];
-    for (const d of arr) {
-      const propName = d?.Name;
-      if (!propName) continue;
-      const pt = d?.PropertyType;
-      let dataType = "UNKNOWN";
-      let allowedValues: string[] | undefined;
-      if (pt?.TypePropertySingleValue?.DataType?.type) {
-        dataType = pt.TypePropertySingleValue.DataType.type;
-      } else if (pt?.TypePropertyEnumeratedValue?.EnumList) {
-        const list = pt.TypePropertyEnumeratedValue.EnumList;
-        dataType = list?.name || "ENUM";
-        const items = list?.EnumItem;
-        if (items) {
-          allowedValues = (Array.isArray(items) ? items : [items]).map(String);
-        }
-      }
-      properties.push({ name: propName, dataType, allowedValues });
-    }
-    return properties;
-  } catch (err) {
-    console.warn(`⚠️ Nepodařilo se načíst ${file}:`, err);
-    return null;
-  }
-};
-
-const loadApplicableClasses = (name: string): string[] => {
-  const file = path.join(PSET_QTO_DIR, `${name}.xml`);
-  if (!fs.existsSync(file)) return [];
-  try {
-    const xml = fs.readFileSync(file, "utf-8");
-    const parsed = parser.parse(xml);
-    const root = parsed?.PropertySetDef ?? parsed?.QtoSetDef;
-    const classNames = root?.ApplicableClasses?.ClassName;
-    return normalizeToArray(classNames).map(String).filter(Boolean);
-  } catch (err) {
-    console.warn(`⚠️ Nepodařilo se načíst Applicability z ${file}:`, err);
-    return [];
-  }
 };
 
 const QTO_TYPE_MAP: Record<string, string> = {
@@ -182,171 +167,149 @@ const QTO_TYPE_MAP: Record<string, string> = {
   Q_TIME: "IfcQuantityTime",
 };
 
-const loadQtoXml = (name: string): PropertyDefinition[] | null => {
-  const file = path.join(PSET_QTO_DIR, `${name}.xml`);
+/** Get root Pset or Qto element; handles default namespace in IFC4 XML. */
+function getPsetQtoRoot(parsed: any): any {
+  if (parsed?.PropertySetDef) return parsed.PropertySetDef;
+  if (parsed?.QtoSetDef) return parsed.QtoSetDef;
+  const first = Object.values(parsed ?? {})[0];
+  if (first && typeof first === "object") return first;
+  return null;
+}
+
+function loadPsetXmlFromDir(
+  dir: string,
+  name: string,
+): PropertyDefinition[] | null {
+  const file = path.join(dir, `${name}.xml`);
   if (!fs.existsSync(file)) return null;
   try {
     const xml = fs.readFileSync(file, "utf-8");
     const parsed = parser.parse(xml);
-    const defs = parsed?.QtoSetDef?.QtoDefs?.QtoDef;
+    const root = getPsetQtoRoot(parsed);
+    const defs = root?.PropertyDefs?.PropertyDef ?? root?.propertyDefs?.propertyDef;
+    if (!defs) return null;
+    const arr = Array.isArray(defs) ? defs : [defs];
+    const properties: PropertyDefinition[] = [];
+    for (const d of arr) {
+      const propName = d?.Name ?? d?.name;
+      if (!propName) continue;
+      const pt = d?.PropertyType ?? d?.propertyType;
+      let dataType = "UNKNOWN";
+      let allowedValues: string[] | undefined;
+      const single = pt?.TypePropertySingleValue ?? pt?.typePropertySingleValue;
+      const enumVal = pt?.TypePropertyEnumeratedValue ?? pt?.typePropertyEnumeratedValue;
+      if (single?.DataType?.type ?? single?.dataType?.type) {
+        dataType = (single.DataType ?? single.dataType)?.type ?? dataType;
+      } else if (enumVal?.EnumList ?? enumVal?.enumList) {
+        const list = enumVal.EnumList ?? enumVal.enumList;
+        dataType = list?.name ?? list?.Name ?? "ENUM";
+        const items = list?.EnumItem ?? list?.enumItem;
+        if (items) {
+          allowedValues = (Array.isArray(items) ? items : [items]).map((e: any) => String(e?.value ?? e?.Value ?? e));
+        }
+      }
+      properties.push({ name: String(propName), dataType, allowedValues });
+    }
+    return properties;
+  } catch (err) {
+    console.warn(`⚠️ Nepodařilo se načíst ${file}:`, err);
+    return null;
+  }
+}
+
+function loadQtoXmlFromDir(
+  dir: string,
+  name: string,
+): PropertyDefinition[] | null {
+  const file = path.join(dir, `${name}.xml`);
+  if (!fs.existsSync(file)) return null;
+  try {
+    const xml = fs.readFileSync(file, "utf-8");
+    const parsed = parser.parse(xml);
+    const root = getPsetQtoRoot(parsed);
+    const defs = root?.QtoDefs?.QtoDef ?? root?.qtoDefs?.qtoDef;
     if (!defs) return null;
     const arr = Array.isArray(defs) ? defs : [defs];
     const quantities: PropertyDefinition[] = [];
     for (const d of arr) {
-      const qtoName = d?.Name;
+      const qtoName = d?.Name ?? d?.name;
       if (!qtoName) continue;
-      const qtoType = d?.QtoType ?? "UNKNOWN";
-      const dataType = QTO_TYPE_MAP[qtoType] ?? qtoType;
-      quantities.push({ name: qtoName, dataType });
+      const qtoType = d?.QtoType ?? d?.qtoType ?? "UNKNOWN";
+      quantities.push({
+        name: String(qtoName),
+        dataType: QTO_TYPE_MAP[qtoType] ?? qtoType,
+      });
     }
     return quantities;
   } catch (err) {
     console.warn(`⚠️ Nepodařilo se načíst ${file}:`, err);
     return null;
   }
-};
+}
 
-const derivePredefined = (
-  classCode: string,
-  propertiesByCode: Map<string, any>,
-): string[] => {
-  const enumName = `${classCode}TypeEnum`;
-  const propertyEnumName = `${classCode.replace(/^Ifc/, "")}TypeEnum`;
-  const candidates = [enumName, propertyEnumName];
-  for (const candidate of candidates) {
-    const prop = propertiesByCode.get(candidate);
-    if (prop?.AllowedValues?.length) {
-      return prop.AllowedValues.map((v: any) => v.Value || v.Code).filter(Boolean);
+function loadApplicableClassesFromFile(filePath: string): string[] {
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    const xml = fs.readFileSync(filePath, "utf-8");
+    const parsed = parser.parse(xml);
+    const root = getPsetQtoRoot(parsed);
+    const classNames = root?.ApplicableClasses?.ClassName ?? root?.applicableClasses?.className;
+    return normalizeToArray(classNames).map(String).filter(Boolean);
+  } catch (err) {
+    console.warn(`⚠️ Nepodařilo se načíst Applicability z ${filePath}:`, err);
+    return [];
+  }
+}
+
+const HIERARCHY_ROOT = "IfcObjectDefinition";
+
+/** Pre-order traversal: build ordered list of entity names by hierarchy (parent -> children). */
+function buildEntityListOrder(entities: Record<string, SchemaEntity>): string[] {
+  const childMap: Record<string, string[]> = {};
+  const keySet = new Set(Object.keys(entities));
+  const roots: string[] = [];
+  for (const name of Object.keys(entities)) {
+    const p = entities[name].parent;
+    if (p != null && keySet.has(p)) {
+      if (!childMap[p]) childMap[p] = [];
+      childMap[p].push(name);
+    } else {
+      roots.push(name);
     }
   }
-  return [];
-};
-
-const buildIndex = (): SchemaIndex => {
-  const raw = readJson(INPUT_PATH);
-  const classes: any[] = raw.Classes ?? [];
-  const properties: any[] = raw.Properties ?? [];
-
-  // Parse XSD for entity attributes and enums (fallback to empty if XSD missing)
-  let xsdParsed: ReturnType<typeof parseIfcXsd> | null = null;
-  if (fs.existsSync(XSD_PATH)) {
-    try {
-      xsdParsed = parseIfcXsd(XSD_PATH);
-    } catch (err) {
-      console.warn("⚠️ Nepodařilo se načíst IFC XSD, atributy budou omezené:", err);
-    }
-  }
-
-  const propertiesByCode = new Map<string, any>();
-  properties.forEach((p) => {
-    if (p?.Code) propertiesByCode.set(p.Code, p);
+  for (const arr of Object.values(childMap)) arr.sort();
+  roots.sort((a, b) => {
+    if (a === HIERARCHY_ROOT) return -1;
+    if (b === HIERARCHY_ROOT) return 1;
+    return a.localeCompare(b);
   });
-
-  const dataTypeSet = new Set<string>(
-    properties.map((p) => p.DataType).filter(Boolean) as string[],
-  );
-  fallbackDataTypes.forEach((dt) => dataTypeSet.add(dt));
-
-  const psets = new Map<string, PropertySetDefinition>();
-  const qtos = new Map<string, QuantitySetDefinition>();
-  const entities: Record<string, SchemaEntity> = {};
-  const predefinedByParent = new Map<string, Set<string>>();
-
-  const isPredefinedVariant = (cls: any) =>
-    typeof cls?.Description === "string" &&
-    cls.Description.toLowerCase().includes("predefined type") &&
-    !!cls.ParentClassCode;
-
-  // Resolve attributes for entity: prefer XSD, fallback to base list
-  const getAttributesForEntity = (entityCode: string): AttributeDefinition[] => {
-    if (xsdParsed) {
-      const attrs = getEntityAttributesFromXsd(entityCode, xsdParsed);
-      if (attrs.length > 0) return attrs;
+  const order: string[] = [];
+  function walk(key: string) {
+    for (const n of childMap[key] ?? []) {
+      order.push(n);
+      walk(n);
     }
-    // Fallback: base attributes only when XSD has no match
-    return [
-      { name: "GlobalId", dataType: "IfcGloballyUniqueId", isOptional: false },
-      { name: "Name", dataType: "IfcLabel", isOptional: true },
-      { name: "Description", dataType: "IfcText", isOptional: true },
-      { name: "Tag", dataType: "IfcIdentifier", isOptional: true },
-      { name: "ObjectType", dataType: "IfcLabel", isOptional: true },
-    ];
-  };
-
-  // First pass: create main entities (skip predefined variants)
-  for (const cls of classes) {
-    if (!cls?.Code || isPredefinedVariant(cls)) continue;
-    const entity: SchemaEntity = {
-      name: cls.Code,
-      attributes: getAttributesForEntity(cls.Code),
-      standardPsets: [],
-      standardQtoSets: [],
-      predefinedTypeValues: [],
-    };
-    const psetSeen = new Set<string>();
-    const qtoSeen = new Set<string>();
-
-    const classProps: any[] = cls.ClassProperties ?? [];
-    for (const cp of classProps) {
-      const setName: string | undefined = cp.PropertySet;
-      if (!setName) continue;
-      const propCode: string = cp.PropertyCode;
-      const propDef = propertiesByCode.get(propCode);
-      const def: PropertyDefinition = {
-        name: propCode,
-        dataType: propDef?.DataType ?? "UNKNOWN",
-        unit: propDef?.Unit,
-        allowedValues: propDef?.AllowedValues?.map((v: any) => v.Value || v.Code),
-      };
-
-      if (setName.startsWith("Qto_")) {
-        if (!qtos.has(setName)) {
-          qtos.set(setName, { name: setName, quantities: [] });
-        }
-        qtos.get(setName)!.quantities.push(def);
-        if (!qtoSeen.has(setName)) {
-          entity.standardQtoSets.push(setName);
-          qtoSeen.add(setName);
-        }
-      } else {
-        if (!psets.has(setName)) {
-          psets.set(setName, { name: setName, properties: [] });
-        }
-        psets.get(setName)!.properties.push(def);
-        if (!psetSeen.has(setName)) {
-          entity.standardPsets.push(setName);
-          psetSeen.add(setName);
-        }
-      }
-    }
-
-    const predefined = derivePredefined(cls.Code, propertiesByCode);
-    entity.predefinedTypeValues = Array.from(new Set([...predefined]));
-    entities[cls.Code] = entity;
   }
-
-  // Second pass: fold predefined variant classes into parent predefined enums
-  for (const cls of classes) {
-    if (!isPredefinedVariant(cls)) continue;
-    const parent = cls.ParentClassCode;
-    if (!parent) continue;
-    const val = cls.Name || cls.Code.replace(parent, "");
-    if (!predefinedByParent.has(parent)) predefinedByParent.set(parent, new Set());
-    if (val) predefinedByParent.get(parent)!.add(String(val));
+  for (const root of roots) {
+    order.push(root);
+    walk(root);
   }
+  return order;
+}
 
-  // Finalize predefined type lists with USERDEFINED
-  for (const [code, entity] of Object.entries(entities)) {
-    const collected = predefinedByParent.get(code);
-    if (collected) {
-      collected.forEach((v) => entity.predefinedTypeValues.push(v));
-    }
-    if (!entity.predefinedTypeValues.includes("USERDEFINED")) {
-      entity.predefinedTypeValues.push("USERDEFINED");
-    }
-    entity.predefinedTypeValues = Array.from(new Set(entity.predefinedTypeValues));
+/** Resolve Pset/Qto dir for 4x3: IFC_4_3_ADD2/pSet_XSD (buildingSMART), fallback legacy. */
+function getPsetQtoDir4x3(config: typeof BUILD_CONFIG["4x3"]): string | undefined {
+  if (config.psetQtoDir && fs.existsSync(config.psetQtoDir)) return config.psetQtoDir;
+  if (fs.existsSync(LEGACY_PSET_QTO_4X3)) return LEGACY_PSET_QTO_4X3;
+  return undefined;
+}
 
-    // Add PredefinedType attribute for entities that have predefined types but don't have it yet
+/** Společné dokončení entit: USERDEFINED v predefinedTypeValues, atribut PredefinedType pokud chybí. */
+function finalizeSchemaEntities(entities: Record<string, SchemaEntity>): void {
+  for (const entity of Object.values(entities)) {
+    if (entity.predefinedTypeValues.length > 0 && !entity.predefinedTypeValues.includes("USERDEFINED")) {
+      entity.predefinedTypeValues = Array.from(new Set([...entity.predefinedTypeValues, "USERDEFINED"]));
+    }
     const hasPredefinedAttr = entity.attributes.some((a) => a.name === "PredefinedType");
     if (!hasPredefinedAttr && entity.predefinedTypeValues.length > 0) {
       entity.attributes.push({
@@ -357,87 +320,202 @@ const buildIndex = (): SchemaIndex => {
       });
     }
   }
+}
 
-  // Override pset definitions from XML source when available
-  for (const [name, def] of psets.entries()) {
-    const xmlProps = loadPsetXml(name);
-    if (xmlProps && xmlProps.length) {
-      psets.set(name, { ...def, properties: xmlProps });
+/** Dědění Pset/Qto od rodiče: potomci dostanou přiřazení z předků (XML často uvádí jen základní třídu). */
+function inheritPsetQtoFromParents(entities: Record<string, SchemaEntity>, order: string[]): void {
+  const key = (n: PsetAssignment) =>
+    `${typeof n === "string" ? n : n?.name ?? ""}|${typeof n === "string" ? "" : n?.forPredefinedType ?? ""}`;
+  for (const name of order) {
+    const entity = entities[name];
+    if (!entity?.parent || !entities[entity.parent]) continue;
+    const parent = entities[entity.parent];
+    const existingP = new Set(entity.standardPsets.map(key));
+    const existingQ = new Set(entity.standardQtoSets.map(key));
+    for (const p of parent.standardPsets) {
+      if (!existingP.has(key(p))) {
+        existingP.add(key(p));
+        entity.standardPsets.unshift(p);
+      }
+    }
+    for (const q of parent.standardQtoSets) {
+      if (!existingQ.has(key(q))) {
+        existingQ.add(key(q));
+        entity.standardQtoSets.unshift(q);
+      }
     }
   }
+}
 
-  // Override qto definitions from XML source when available
-  for (const [name, def] of qtos.entries()) {
-    const xmlQtos = loadQtoXml(name);
-    if (xmlQtos && xmlQtos.length) {
-      qtos.set(name, { ...def, quantities: xmlQtos });
-    }
+/** Společné dokončení Pset/Qto: odstranění "Attributes" z přiřazení i z mapy. */
+function finalizePsetsQtos(entities: Record<string, SchemaEntity>, psets: Map<string, PropertySetDefinition>): void {
+  for (const entity of Object.values(entities)) {
+    entity.standardPsets = entity.standardPsets.filter((n) =>
+      typeof n === "string" ? n !== "Attributes" : n?.name !== "Attributes",
+    );
   }
+  psets.delete("Attributes");
+}
 
-  // Add missing Pset/Qto definitions and entity assignments from XML files.
-  // This is required for type-driven override sets such as:
-  // - ApplicableClasses: IfcWasteTerminal/WASTETRAP -> Pset_WasteTerminalTypeWasteTrap
-  const xmlFiles = fs
-    .readdirSync(PSET_QTO_DIR)
-    .filter((f) => f.toLowerCase().endsWith(".xml"));
-
-  for (const file of xmlFiles) {
+/**
+ * Aplikuje ApplicableClasses z XML souborů v daném adresáři na entities (standardPsets/standardQtoSets).
+ * Jednotný postup pro 4.3 (jeden adresář s Pset_ i Qto_) i 4 (jeden adresář pouze Pset nebo pouze Qto).
+ * Pokud isPsetDir === undefined, rozlišení podle názvu souboru (Pset_ vs Qto_).
+ */
+function applyApplicableClassesFromDir(
+  dir: string,
+  entities: Record<string, SchemaEntity>,
+  psets: Map<string, PropertySetDefinition>,
+  qtos: Map<string, QuantitySetDefinition>,
+  isPsetDir?: boolean,
+): void {
+  if (!fs.existsSync(dir)) return;
+  const files = fs.readdirSync(dir).filter((f) => f.toLowerCase().endsWith(".xml"));
+  for (const file of files) {
     const setName = path.basename(file, ".xml");
-    const isPset = setName.startsWith("Pset_");
-    const isQto = setName.startsWith("Qto_");
-    if (!isPset && !isQto) continue;
-
+    const filePath = path.join(dir, file);
+    const isPset = isPsetDir ?? setName.startsWith("Pset_");
     if (isPset) {
-      if (!psets.has(setName)) {
-        const xmlProps = loadPsetXml(setName);
-        psets.set(setName, { name: setName, properties: xmlProps ?? [] });
-      }
-    } else if (isQto) {
-      if (!qtos.has(setName)) {
-        const xmlQtos = loadQtoXml(setName);
-        qtos.set(setName, { name: setName, quantities: xmlQtos ?? [] });
-      }
+      const xmlProps = loadPsetXmlFromDir(dir, setName);
+      if (xmlProps?.length) psets.set(setName, { name: setName, properties: xmlProps });
+    } else {
+      const xmlQtos = loadQtoXmlFromDir(dir, setName);
+      if (xmlQtos?.length) qtos.set(setName, { name: setName, quantities: xmlQtos });
     }
-
-    const applicable = loadApplicableClasses(setName);
-    if (!applicable.length) continue;
-
+    const applicable = loadApplicableClassesFromFile(filePath);
     for (const entry of applicable) {
       const [entityNameRaw, predefinedRaw] = entry.split("/");
       const entityName = (entityNameRaw ?? "").trim();
       const forPredefinedType = (predefinedRaw ?? "").trim() || undefined;
       const entity = entities[entityName];
       if (!entity) continue;
-
       if (isPset) addAssignment(entity.standardPsets, setName, forPredefinedType);
-      if (isQto) addAssignment(entity.standardQtoSets, setName, forPredefinedType);
+      else addAssignment(entity.standardQtoSets, setName, forPredefinedType);
     }
   }
+}
 
-  // Filter out "Attributes" from standardPsets (it's not a real Pset)
-  for (const entity of Object.values(entities)) {
-    entity.standardPsets = entity.standardPsets.filter((n) =>
-      typeof n === "string" ? n !== "Attributes" : n?.name !== "Attributes",
-    );
+/** Build schema index pro IFC 4.3 pouze z XSD + XML (buildingSMART zdroje v repozitáři). */
+function buildIndex4x3FromXsd(config: typeof BUILD_CONFIG["4x3"]): SchemaIndex {
+  if (!fs.existsSync(config.xsdPath)) {
+    throw new Error(`XSD nenalezen: ${config.xsdPath}`);
   }
-  // Also remove "Attributes" from psets map entirely
-  psets.delete("Attributes");
+  const xsdParsed = parseIfcXsd(config.xsdPath);
+  const entities: Record<string, SchemaEntity> = {};
+  const psets = new Map<string, PropertySetDefinition>();
+  const qtos = new Map<string, QuantitySetDefinition>();
+  const { entityBases, entityAbstract } = xsdParsed;
+
+  for (const [name] of xsdParsed.entityAttributes) {
+    if (!isDescendantOf(name, "IfcObjectDefinition", entityBases)) continue;
+    const attrs = getEntityAttributesFromXsd(name, xsdParsed);
+    const predefinedTypeAttr = attrs.find((a) => a.name === "PredefinedType");
+    const predefinedTypeValues = predefinedTypeAttr?.allowedValues ?? [];
+    const withUser = predefinedTypeValues.includes("USERDEFINED")
+      ? predefinedTypeValues
+      : [...predefinedTypeValues, "USERDEFINED"];
+
+    entities[name] = {
+      name,
+      attributes: attrs,
+      standardPsets: [],
+      standardQtoSets: [],
+      predefinedTypeValues: Array.from(new Set(withUser)),
+      parent: entityBases.get(name) ?? undefined,
+      abstract: entityAbstract.get(name) ?? false,
+    };
+  }
+
+  finalizeSchemaEntities(entities);
+
+  const PSET_QTO_DIR = getPsetQtoDir4x3(config);
+  if (PSET_QTO_DIR) {
+    applyApplicableClassesFromDir(PSET_QTO_DIR, entities, psets, qtos);
+  }
+  inheritPsetQtoFromParents(entities, buildEntityListOrder(entities));
+  finalizePsetsQtos(entities, psets);
 
   return {
     entities,
     psets: Object.fromEntries(psets.entries()),
     qtos: Object.fromEntries(qtos.entries()),
-    dataTypes: Array.from(dataTypeSet),
+    dataTypes: Array.from(new Set(fallbackDataTypes)),
+    entityListOrder: buildEntityListOrder(entities),
   };
-};
+}
+
+/** Build schema index pro IFC4 pouze z XSD + XML (buildingSMART zdroje v repozitáři). */
+function buildIndex4(config: typeof BUILD_CONFIG["4"]): SchemaIndex {
+  const xsdPath = config.xsdPath;
+  if (!fs.existsSync(xsdPath)) {
+    throw new Error(`XSD nenalezen: ${xsdPath}`);
+  }
+
+  const xsdParsed = parseIfcXsd(xsdPath);
+  const entities: Record<string, SchemaEntity> = {};
+  const psets = new Map<string, PropertySetDefinition>();
+  const qtos = new Map<string, QuantitySetDefinition>();
+  const { entityBases, entityAbstract } = xsdParsed;
+
+  for (const [name] of xsdParsed.entityAttributes) {
+    if (!isDescendantOf(name, "IfcObjectDefinition", entityBases)) continue;
+    const attrs = getEntityAttributesFromXsd(name, xsdParsed);
+    const predefinedTypeAttr = attrs.find((a) => a.name === "PredefinedType");
+    const predefinedTypeValues = predefinedTypeAttr?.allowedValues ?? [];
+    const withUser = predefinedTypeValues.includes("USERDEFINED")
+      ? predefinedTypeValues
+      : [...predefinedTypeValues, "USERDEFINED"];
+
+    entities[name] = {
+      name,
+      attributes: attrs,
+      standardPsets: [],
+      standardQtoSets: [],
+      predefinedTypeValues: Array.from(new Set(withUser)),
+      parent: entityBases.get(name) ?? undefined,
+      abstract: entityAbstract.get(name) ?? false,
+    };
+  }
+
+  finalizeSchemaEntities(entities);
+
+  if (config.psdDir) applyApplicableClassesFromDir(config.psdDir, entities, psets, qtos, true);
+  if (config.qtoDir) applyApplicableClassesFromDir(config.qtoDir, entities, psets, qtos, false);
+  inheritPsetQtoFromParents(entities, buildEntityListOrder(entities));
+  finalizePsetsQtos(entities, psets);
+
+  return {
+    entities,
+    psets: Object.fromEntries(psets.entries()),
+    qtos: Object.fromEntries(qtos.entries()),
+    dataTypes: Array.from(new Set(fallbackDataTypes)),
+    entityListOrder: buildEntityListOrder(entities),
+  };
+}
+
+function buildIndex(version: SchemaBuildVersion): SchemaIndex {
+  const config = BUILD_CONFIG[version];
+  if (version === "4x3") {
+    return buildIndex4x3FromXsd(config as typeof BUILD_CONFIG["4x3"]);
+  }
+  return buildIndex4(config as typeof BUILD_CONFIG["4"]);
+}
 
 const main = () => {
-  console.log("🔧 Generuji schema index z IFC_4x3.json ...");
-  const index = buildIndex();
+  const version = (process.argv[2] ?? "4x3") as SchemaBuildVersion;
+  if (version !== "4x3" && version !== "4") {
+    console.error("Použití: tsx scripts/build_schema_index.ts [4x3|4]");
+    process.exit(1);
+  }
+
+  const config = BUILD_CONFIG[version];
+  console.log(`🔧 Generuji schema index pro IFC ${version} ...`);
+  const index = buildIndex(version);
   ensureDir(OUTPUT_DIR);
-  fs.writeFileSync(OUTPUT_PATH, JSON.stringify(index, null, 2), "utf-8");
+  const outputPath = path.join(OUTPUT_DIR, config.outputName);
+  fs.writeFileSync(outputPath, JSON.stringify(index, null, 2), "utf-8");
   console.log(
-    `✅ Hotovo. Zapsáno do ${OUTPUT_PATH} (${Object.keys(index.entities).length} entit)`,
+    `✅ Hotovo. Zapsáno do ${outputPath} (${Object.keys(index.entities).length} entit)`,
   );
 };
 

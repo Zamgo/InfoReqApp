@@ -307,7 +307,8 @@ export interface Project {
   description?: string;
   createdAt: string;
   updatedAt: string;
-  ifcSchemaVersion: "IFC4X3";
+  /** IFC verze schématu: IFC4 nebo IFC4X3 (4.3 ADD2). */
+  ifcSchemaVersion: "IFC4" | "IFC4X3";
   /** Display version of IFC schema (e.g., "IFC 4.3 ADD2 TC1") */
   ifcSchemaVersionDisplay?: string;
   /** URL dokumentace IFC schématu (např. https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/) */

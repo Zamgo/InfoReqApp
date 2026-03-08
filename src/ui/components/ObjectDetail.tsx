@@ -9,11 +9,19 @@ import {
 } from "../../classification/hierarchyView";
 import { EMPTY_PLACEHOLDER } from "../../classification/sampleXlsx";
 import type { SchemaIndex } from "../../schema/types";
+import {
+  getIdsIfcVersion,
+  getIfcLexicalDocUrl,
+  getIfcPropertyDocUrl,
+  getIfcPsetDocUrl,
+  normalizeIfcSchemaVersion,
+} from "../../schema/ifcVersionConfig";
 import { makeId } from "../../utils/id";
 import { generateHumanReadable, filterObjectByPhase, matchesOccurrenceFilter } from "../../utils/humanReadableIds";
 import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
+import { EntitySelect } from "./EntitySelect";
 import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition, fetchClassDefinition, getEntityClassUri, getPredefinedTypeClassUri } from "../../translation/translators/BsddTranslator";
 import { translateViaApi } from "../../translation/translators/MtApiTranslator";
 import { translate } from "../../translation/TranslationService";
@@ -22,9 +30,6 @@ import { useTranslation } from "../../translation/TranslationContext";
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable" | "metadata";
 type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
-
-const IFC_DOC_BASE = "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical";
-const getIfcDocUrl = (identifier: string | undefined) => (identifier ? `${IFC_DOC_BASE}/${identifier}.htm` : undefined);
 
 const PhaseSelector: React.FC<{ phases: Phase[]; value?: string[]; onChange: (ids: string[]) => void }> = ({ phases, value, onChange }) => {
   const selected = new Set(value ?? []);
@@ -1955,7 +1960,8 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [isExportIdsDialogOpen, setIsExportIdsDialogOpen] = useState(false);
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null); // null = "Vše"
   const [occurrenceFilter, setOccurrenceFilter] = useState<OccurrenceFilter>("all");
-  const selectedIfcVersion: IdsIfcVersion = (project?.ifcSchemaVersion === "IFC4X3" ? "IFC4X3_ADD2" : "IFC4X3_ADD2") as IdsIfcVersion;
+  const ifcSchemaVersion = normalizeIfcSchemaVersion(project?.ifcSchemaVersion);
+  const selectedIfcVersion: IdsIfcVersion = getIdsIfcVersion(ifcSchemaVersion);
   const [enumDraftByPropId, setEnumDraftByPropId] = useState<Record<string, string>>({});
   const [enumSaveDialog, setEnumSaveDialog] = useState<null | { propertyId: string; name: string; values: string[]; type?: "property" | "attribute" }>(null);
   const [unitModeByPropId, setUnitModeByPropId] = useState<Record<string, string>>({});
@@ -1965,7 +1971,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   /** Počet prázdných slotů pro třídění autorských nástrojů (přidáno přes +) – klíč = systemEntryId */
   const [extraAuthoringSlots, setExtraAuthoringSlots] = useState<Record<string, number>>({});
 
-  const entities = useMemo(() => (schema ? Object.keys(schema.entities).sort() : []), [schema]);
   const selectedEntity = object.ifcEntity ? schema?.entities[object.ifcEntity] : undefined;
   const selectedPredefinedValue =
     object.predefinedType.mode === "ENUM" || object.predefinedType.mode === "USERDEFINED"
@@ -3624,19 +3629,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 label="Entity Facet"
                 type="ids"
               />
-              <DocLink href={getIfcDocUrl(object.ifcEntity)} label="IFC" type="ifc" />
+              <DocLink href={getIfcLexicalDocUrl(ifcSchemaVersion, object.ifcEntity)} label="IFC" type="ifc" />
             </div>
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="text-xs text-slate-600 shrink-0">IfcEntity</label>
-                <select className="min-w-[140px] max-w-[220px] rounded border border-slate-300 px-2 py-1 text-sm" value={object.ifcEntity} onChange={(e) => handleIfcEntityChange(e.target.value)}>
-                  <option value="">-- Vyberte entitu --</option>
-                  {entities.map((ent) => (
-                    <option key={ent} value={ent}>
-                      {ent}
-                    </option>
-                  ))}
-                </select>
+                <EntitySelect
+                  schemaIndex={schema}
+                  value={object.ifcEntity ?? ""}
+                  onChange={handleIfcEntityChange}
+                  placeholder="-- Vyberte entitu --"
+                />
                 {showCzTranslations && object.ifcEntity && (
                   <input
                     className="min-w-[100px] max-w-[140px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
@@ -4840,7 +4843,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   isSchemaBound && !!group.psetName && !isTempGroup && !isGroupAllowed(group.source, group.psetName);
                   const docHref =
                     isSchemaBound && group.psetName && !isTempGroup
-                      ? `https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/lexical/${group.psetName}.htm`
+                      ? getIfcPsetDocUrl(ifcSchemaVersion, group.psetName)
                       : undefined;
 
                 const groupColors = {
@@ -5209,7 +5212,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                         <div className="flex items-center gap-2">
                                           {prop.propertyName && (
                                             <DocLink
-                                              href={`https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/HTML/property/${prop.propertyName}.htm`}
+                                              href={getIfcPropertyDocUrl(ifcSchemaVersion, prop.propertyName)}
                                               label={prop.propertyName}
                                               type="ifc"
                                             />
@@ -6229,26 +6232,19 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           {!hiddenPartOfColumns.has(2) && (
                             <td className="px-2 py-2">
                             <div className="flex flex-col gap-0.5">
-                              <select
-                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                              <EntitySelect
+                                schemaIndex={schema}
                                 value={rel.entityType ?? ""}
-                                onChange={(e) => {
-                                  // When entity changes, reset predefinedType
-                                  updateRelationField(rel.id, { 
-                                    entityType: e.target.value,
+                                onChange={(entity) => {
+                                  updateRelationField(rel.id, {
+                                    entityType: entity,
                                     entityPredefinedType: "NOTDEFINED",
-                                    // Also update legacy targetType for backwards compatibility
-                                    targetType: e.target.value
+                                    targetType: entity,
                                   });
                                 }}
-                              >
-                                <option value="">-- Vyberte entitu --</option>
-                                {entities.map((ent) => (
-                                  <option key={ent} value={ent}>
-                                    {ent}
-                                  </option>
-                                ))}
-                              </select>
+                                placeholder="-- Vyberte entitu --"
+                                className="w-full rounded border border-slate-300 px-2 py-1 text-sm min-w-0 max-w-none"
+                              />
                               {showCzTranslations && (
                                 <input
                                   className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"

@@ -35,6 +35,10 @@ export interface SchemaEntity {
   standardPsets: PsetAssignment[];
   standardQtoSets: PsetAssignment[];
   predefinedTypeValues: string[];
+  /** Direct parent in IFC hierarchy (from XSD base). */
+  parent?: string;
+  /** True if entity is abstract and cannot be instantiated. */
+  abstract?: boolean;
 }
 
 export interface SchemaIndex {
@@ -42,4 +46,6 @@ export interface SchemaIndex {
   psets: Record<string, PropertySetDefinition>;
   qtos: Record<string, QuantitySetDefinition>;
   dataTypes: string[];
+  /** Entity names in tree order (pre-order) for hierarchical dropdown. */
+  entityListOrder?: string[];
 }

@@ -10,6 +10,7 @@ import type {
   IdsMetadata,
   IdsSpecMetadata,
 } from "../project/types";
+import { getIdsIfcVersion, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
 
 const IDS_NAMESPACE = "http://standards.buildingsmart.org/IDS";
 const XS_NAMESPACE = "http://www.w3.org/2001/XMLSchema";
@@ -432,7 +433,8 @@ const generateSpecification = (
   phaseName: string,
   phaseCode: string,
   occurrenceFilter: OccurrenceFilter,
-  classificationSystemEntries: ClassificationSystemEntry[]
+  classificationSystemEntries: ClassificationSystemEntry[],
+  ifcVersion: string
 ): string | null => {
   // Filter requirements for this phase
   const attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute && r.attribute !== "PredefinedType");
@@ -478,7 +480,6 @@ const generateSpecification = (
   ].filter(Boolean).join("_");
   const specName = meta?.name ?? derivedSpecName;
   const specDescription = meta?.description ?? `Požadavky pro fázi ${phaseName}`;
-  const ifcVersion = "IFC4X3_ADD2";
   const specAttrs = [
     `name="${escapeXml(specName)}"`,
     `ifcVersion="${ifcVersion}"`,
@@ -583,10 +584,11 @@ export const generateIDS = (options: IDSExportOptions): string => {
       : [occurrenceFilter];
 
   const classificationSystemEntries = project.classificationSystemEntries ?? [];
+  const ifcVersion = getIdsIfcVersion(normalizeIfcSchemaVersion(project.ifcSchemaVersion));
   const specifications: string[] = [];
   for (const obj of objectsToExport) {
     for (const occ of occurrenceTypes) {
-      const spec = generateSpecification(obj, phaseId, phase.name, phaseCode, occ, classificationSystemEntries);
+      const spec = generateSpecification(obj, phaseId, phase.name, phaseCode, occ, classificationSystemEntries, ifcVersion);
       if (spec) specifications.push(spec);
     }
   }

@@ -30,3 +30,8 @@ Thumbs.db
 # Coverage / tests
 coverage/
 *.lcov
+
+# Staré IFC release soubory (tisíce HTML/PNG/XML) – nechceme je v Gitu
+IFC_4x3/
+IFC_4x3_*/
+IFC_4x3.json

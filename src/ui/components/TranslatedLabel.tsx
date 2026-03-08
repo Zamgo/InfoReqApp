@@ -28,7 +28,7 @@ export const TranslatedLabel: React.FC<Props> = ({
   inline,
   translationOnly = false,
 }) => {
-  const { translationMode } = useTranslation();
+  const { translationMode, ifcSchemaVersion } = useTranslation();
   const [result, setResult] = useState<{ translated: string | null; source: "bsdd" | "auto" | null }>({ translated: null, source: null });
   const [loading, setLoading] = useState(true);
 
@@ -50,7 +50,7 @@ export const TranslatedLabel: React.FC<Props> = ({
   }, [translationMode, type, officialName, context?.entity, context?.psetName, showTranslation]);
 
   const { translated, source } = result;
-  const bsddUrl = getBsddUrl(type, officialName, context);
+  const bsddUrl = getBsddUrl(type, officialName, context, ifcSchemaVersion);
   /** Normalizace pro srovnání: camelCase→slova, podtržítka→mezery, lowercase. bSDD vrací anglické názvy jako fallback. */
   const normalizeForComparison = (s: string) => {
     const withSpaces = s
