@@ -1808,14 +1808,14 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
         <div>
           <div className="text-xs uppercase text-slate-500">InfoReqApp</div>
           <button
-            className="text-lg font-semibold text-slate-800 hover:text-indigo-600 flex items-center gap-2 group"
+            className="text-lg font-semibold text-slate-800 hover:text-controlis-primary flex items-center gap-2 group"
             onClick={() => setIsProjectDetailsOpen(true)}
             disabled={!project}
             title="Klikněte pro úpravu údajů projektu"
           >
             {project?.name || "Nový projekt"}
             <svg 
-              className="w-4 h-4 text-slate-400 group-hover:text-indigo-500" 
+              className="w-4 h-4 text-slate-400 group-hover:text-red-500" 
               fill="none" 
               stroke="currentColor" 
               viewBox="0 0 24 24"
@@ -1934,7 +1934,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
           {/* Export dropdown */}
           <div className="relative" ref={exportMenuRef}>
             <button
-              className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500 flex items-center gap-1"
+              className="rounded bg-red-600 px-3 py-1 text-sm font-semibold text-white hover:bg-red-500 flex items-center gap-1"
               onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
               disabled={!project}
             >
@@ -2004,7 +2004,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
           <button
             type="button"
             onClick={toggleLeftPanel}
-            className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-8 h-16 rounded-r-md border border-slate-300 bg-white shadow-md hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-indigo-600 transition-colors"
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-20 w-8 h-16 rounded-r-md border border-slate-300 bg-white shadow-md hover:bg-slate-50 flex items-center justify-center text-slate-600 hover:text-controlis-primary transition-colors"
             title="Zobrazit levý panel"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2046,7 +2046,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
         {/* Resize handle and hide panel button */}
         <div className="flex items-stretch flex-shrink-0">
           <div
-            className="w-1 cursor-col-resize bg-slate-200 hover:bg-indigo-400 active:bg-indigo-500 transition-colors"
+            className="w-1 cursor-col-resize bg-slate-200 hover:bg-red-400 active:bg-red-500 transition-colors"
             onMouseDown={handleResizeStart}
             title="Táhněte pro změnu šířky panelu"
           />

@@ -131,7 +131,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
           {isIfcPrimary && onOpenIfcSelector && (
             <button
               type="button"
-              className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-sm text-indigo-700 hover:bg-indigo-100"
+              className="rounded border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100"
               onClick={onOpenIfcSelector}
               title="Vybrat IFC entity a PredefinedType do hierarchie projektu"
             >
@@ -154,7 +154,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
           </select>
           <button
             type="button"
-            className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+            className="rounded bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
             onClick={handleAdd}
             disabled={!addSystemId}
           >
@@ -172,14 +172,14 @@ export const MappingEditorDialog: React.FC<Props> = ({
               <tr className="border-b border-slate-300">
                 <th
                   colSpan={3}
-                  className={`border border-slate-200 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide ${isIfcPrimary ? "bg-indigo-100 text-indigo-800" : "bg-slate-200/80 text-slate-700"}`}
+                  className={`border border-slate-200 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide ${isIfcPrimary ? "bg-red-100 text-red-800" : "bg-slate-200/80 text-slate-700"}`}
                 >
                   {isIfcPrimary ? "Třídění dle IFC (primární)" : "Klasifikační systém (primární)"}
                 </th>
                 {mappedEntries.length > 0 && (
                   <th
                     colSpan={mappedEntries.reduce((s, e) => s + (e.isIfcSystem ? 2 : 1), 0)}
-                    className="border border-slate-200 bg-indigo-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-indigo-800"
+                    className="border border-slate-200 bg-red-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-red-800"
                   >
                     Namapované systémy
                   </th>
@@ -216,13 +216,13 @@ export const MappingEditorDialog: React.FC<Props> = ({
                     ? [
                         <th
                           key={`${entry.id}-entity`}
-                          className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-indigo-700"
+                          className="border border-slate-200 bg-red-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-red-700"
                         >
                           {entry.name} – IFC Entita
                         </th>,
                         <th
                           key={`${entry.id}-type`}
-                          className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-indigo-700"
+                          className="border border-slate-200 bg-red-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-red-700"
                         >
                           {entry.name} – IFC PredefinedType
                         </th>,
@@ -230,7 +230,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
                     : [
                         <th
                           key={entry.id}
-                          className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-indigo-700"
+                          className="border border-slate-200 bg-red-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-red-700"
                         >
                           {entry.name}
                         </th>,
@@ -244,7 +244,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
                 const levelBg =
                   node.level === 1 ? "bg-slate-100/50" : node.level === 2 ? "bg-slate-50/50" : "";
                 return (
-                  <tr key={node.code} className={`hover:bg-indigo-50/30 ${levelBg}`}>
+                  <tr key={node.code} className={`hover:bg-red-50/30 ${levelBg}`}>
                     {isIfcPrimary ? (
                       <>
                         <td className="border border-slate-200 px-1 py-1 text-center">
@@ -306,12 +306,12 @@ export const MappingEditorDialog: React.FC<Props> = ({
                                 handleCellChange(node.code, entry.id, newValue);
                               }}
                               placeholder="—"
-                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                             />
                           </td>,
                           <td key={`${entry.id}-type`} className="border border-slate-200 px-1 py-1">
                             <select
-                              className="w-full min-w-[100px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                              className="w-full min-w-[100px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                               value={effectiveType}
                               disabled={!entityPart || ptOptions.length === 0}
                               onChange={(e) => {
@@ -335,7 +335,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
                           <td key={`${entry.id}-entity`} className="border border-slate-200 px-1 py-1">
                             <input
                               type="text"
-                              className="w-full min-w-[100px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:ring-1 focus:ring-indigo-500"
+                              className="w-full min-w-[100px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:ring-1 focus:ring-red-500"
                               value={value}
                               onChange={(e) => handleCellChange(node.code, entry.id, e.target.value)}
                               placeholder="např. IfcWall::SOLIDWALL"
@@ -350,7 +350,7 @@ export const MappingEditorDialog: React.FC<Props> = ({
                         <td key={entry.id} className="border border-slate-200 px-1 py-1">
                           <input
                             type="text"
-                            className="w-full min-w-[100px] rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                            className="w-full min-w-[100px] rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-red-500"
                             value={value}
                             onChange={(e) => handleCellChange(node.code, entry.id, e.target.value)}
                             placeholder="—"

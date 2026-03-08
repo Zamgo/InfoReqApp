@@ -114,12 +114,6 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
   const effectiveSystemKind = (e: ClassificationSystemEntry): "ifc" | "authoring" | "classification" =>
     e.systemKind ?? (e.isIfcSystem ? "ifc" : "classification");
 
-  /** Seznam IFC entit ze schématu (pro dropdowny při namapovaném IFC) */
-  const schemaEntityNames = useMemo(
-    () => (schemaIndex ? Object.keys(schemaIndex.entities).sort() : []),
-    [schemaIndex],
-  );
-
   /** Pro danou entitu vrátí možnosti PredefinedType (NOTDEFINED + hodnoty ze schématu) */
   const getPredefinedTypeOptions = (entityName: string): string[] => {
     if (!schemaIndex?.entities[entityName]) return [];
@@ -555,7 +549,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                 type="text"
                 value={systemName}
                 onChange={(e) => setSystemName(e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                 placeholder="např. CCI-CZ, Uniclass 2015"
               />
             </div>
@@ -567,7 +561,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                 type="text"
                 value={systemUri}
                 onChange={(e) => setSystemUri(e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                 placeholder="https://example.com/classification"
               />
             </div>
@@ -579,7 +573,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                 type="text"
                 value={systemDescription}
                 onChange={(e) => setSystemDescription(e.target.value)}
-                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-2 py-1.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                 placeholder="Popis klasifikačního systému"
               />
             </div>
@@ -596,7 +590,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
             className="rounded border border-slate-300 px-2 py-1 text-sm"
           />
           <button
-            className="rounded bg-indigo-600 px-3 py-1 text-sm font-medium text-white hover:bg-indigo-500"
+            className="rounded bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-500"
             onClick={handleAddRow}
           >
             + Přidat řádek
@@ -608,7 +602,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
             <div className="relative ml-2">
               <button
                 type="button"
-                className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
+                className="rounded border border-red-300 bg-red-50 px-3 py-1 text-sm text-red-700 hover:bg-red-100 disabled:opacity-50"
                 onClick={() => setShowMapDropdown((v) => !v)}
                 disabled={availableToMap.length === 0}
                 title="Mapování probíhá v záložce Klasifikační systémy a mapování tlačítkem Mapovat"
@@ -666,7 +660,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                 {!isIfcSystem && !isPure && (
                   <th
                     colSpan={2}
-                    className="border border-slate-200 bg-indigo-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-indigo-800"
+                    className="border border-slate-200 bg-red-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-red-800"
                   >
                     IFC mapování
                   </th>
@@ -674,7 +668,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                 {mappedEntries.length > 0 && (
                   <th
                     colSpan={mappedEntries.reduce((s, e) => s + (e.isIfcSystem ? 2 : 1), 0)}
-                    className="border border-slate-200 bg-indigo-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-indigo-800"
+                    className="border border-slate-200 bg-red-100 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-red-800"
                   >
                     Namapované systémy
                   </th>
@@ -689,40 +683,40 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                   <>
                     <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 relative select-none">
                       <span className="block pr-1">Úroveň</span>
-                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(0); }} aria-hidden />
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(0); }} aria-hidden />
                     </th>
                     <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                       <span className="block pr-1">IFC Entita</span>
-                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(1); }} aria-hidden />
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(1); }} aria-hidden />
                     </th>
                     <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                       <span className="block pr-1">IFC PredefinedType</span>
-                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(2); }} aria-hidden />
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(2); }} aria-hidden />
                     </th>
                   </>
                 ) : (
                   <>
                     <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                       <span className="block pr-1">Kód</span>
-                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(0); }} aria-hidden />
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(0); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(0); }} aria-hidden />
                     </th>
                     <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                       <span className="block pr-1">Popis</span>
-                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(1); }} aria-hidden />
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(1); }} aria-hidden />
                     </th>
                     <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 relative select-none">
                       <span className="block pr-1">Úroveň</span>
-                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(2); }} aria-hidden />
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(2); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(2); }} aria-hidden />
                     </th>
                     {!isPure && (
                       <>
                         <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                           <span className="block pr-1">IFC Entita</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(3); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(3); }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(3); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(3); }} aria-hidden />
                         </th>
                         <th className="border border-slate-200 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                           <span className="block pr-1">IFC PredefinedType</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(4); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(4); }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(4); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(4); }} aria-hidden />
                         </th>
                       </>
                     )}
@@ -736,7 +730,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                   const typeCol = entry.isIfcSystem ? entityCol + 1 : entityCol;
                   if (entry.isIfcSystem) {
                     return [
-                      <th key={`${entry.id}-entity`} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <th key={`${entry.id}-entity`} className="border border-slate-200 bg-red-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                         <div className="flex items-center justify-between gap-1 pr-1">
                           <span>{entry.name} – IFC Entita</span>
                           <button
@@ -748,16 +742,16 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                             ×
                           </button>
                         </div>
-                        <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(entityCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(entityCol); }} aria-hidden />
+                        <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(entityCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(entityCol); }} aria-hidden />
                       </th>,
-                      <th key={`${entry.id}-type`} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                      <th key={`${entry.id}-type`} className="border border-slate-200 bg-red-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                         <span className="block pr-1">{entry.name} – IFC PredefinedType</span>
-                        <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(typeCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(typeCol); }} aria-hidden />
+                        <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(typeCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(typeCol); }} aria-hidden />
                       </th>,
                     ];
                   }
                   return (
-                    <th key={entry.id} className="border border-slate-200 bg-indigo-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
+                    <th key={entry.id} className="border border-slate-200 bg-red-50/50 px-2 py-2 text-left text-xs font-semibold uppercase text-slate-600 relative select-none">
                       <div className="flex flex-col gap-1 pr-1">
                         <div className="flex items-center justify-between gap-1">
                           <span>{entry.name}</span>
@@ -777,7 +771,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                 type="checkbox"
                                 checked={isAuthoringTool}
                                 onChange={() => toggleAuthoringTool(entry.id)}
-                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                className="h-3.5 w-3.5 rounded border-slate-300 text-red-600 focus:ring-red-500"
                               />
                               <span>Třídění nástrojů</span>
                             </label>
@@ -791,13 +785,13 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                           </span>
                         )}
                       </div>
-                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(entityCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(entityCol); }} aria-hidden />
+                      <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(entityCol); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(entityCol); }} aria-hidden />
                     </th>
                   );
                 })}
                 <th className="border border-slate-200 px-2 py-2 text-center text-xs font-semibold uppercase text-slate-600 relative select-none" style={{ width: getColWidth(columnConfig.length - 1) }}>
                   <span className="block pr-1">Akce</span>
-                  <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(columnConfig.length - 1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(columnConfig.length - 1); }} aria-hidden />
+                  <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingCol(columnConfig.length - 1); resizingStartX.current = e.clientX; resizingStartW.current = getColWidth(columnConfig.length - 1); }} aria-hidden />
                 </th>
               </tr>
             </thead>
@@ -826,7 +820,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                 return (
                   <tr
                     key={row.code + "|" + index}
-                    className={`hover:bg-indigo-50/30 ${levelBg}`}
+                    className={`hover:bg-red-50/30 ${levelBg}`}
                     style={{
                       height: `${virtualRow.size}px`,
                       transform: `translate3d(0, ${virtualRow.start - vi * virtualRow.size}px, 0)`,
@@ -893,7 +887,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                     });
                                   }}
                                   placeholder="—"
-                                  className="min-w-[140px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                  className="min-w-[140px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                                 />
                               ) : (
                                 <span className="text-sm font-medium text-slate-800" title="Entita je stejná jako na úrovni 1">
@@ -914,7 +908,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                               const effectiveType = ptOptions.includes(currentType) ? currentType : (ptOptions[0] ?? "NOTDEFINED");
                               return (
                                 <select
-                                  className="min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                  className="min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                                   value={effectiveType}
                                   disabled={ptOptions.length === 0}
                                   onChange={(e) => {
@@ -955,7 +949,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                               type="text"
                               value={row.code}
                               onChange={(e) => handleChange(index, "code", e.target.value)}
-                              className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm font-medium focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                              className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm font-medium focus:bg-white focus:ring-1 focus:ring-red-500"
                               placeholder="Kód"
                             />
                           </div>
@@ -966,7 +960,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                               type="text"
                               value={row.description}
                               onChange={(e) => handleChange(index, "description", e.target.value)}
-                              className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                              className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-red-500"
                               placeholder="Popis"
                             />
                           </div>
@@ -1004,7 +998,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                   type="text"
                                   value={row.ifcEntity}
                                   onChange={(e) => handleChange(index, "ifcEntity", e.target.value)}
-                                  className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                                  className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-red-500"
                                   placeholder="např. IfcWall"
                                 />
                               )}
@@ -1017,7 +1011,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                   type="text"
                                   value={row.predefinedType}
                                   onChange={(e) => handleChange(index, "predefinedType", e.target.value)}
-                                  className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-indigo-500"
+                                  className="w-full rounded border-0 bg-transparent px-1 py-0.5 text-sm focus:bg-white focus:ring-1 focus:ring-red-500"
                                   placeholder="např. SOLIDWALL"
                                 />
                               )}
@@ -1049,12 +1043,12 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                                 handleMappedChange(index, entry.id, newValue);
                               }}
                               placeholder="—"
-                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                             />
                           </td>,
                           <td key={`${entry.id}-type`} className="border border-slate-200 px-1 py-1">
                             <select
-                              className="w-full min-w-[100px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                              className="w-full min-w-[100px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                               value={effectiveType}
                               disabled={!entityPart || ptOptions.length === 0}
                               onChange={(e) => {
@@ -1077,7 +1071,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                         return [
                           <td key={`${entry.id}-entity`} className="border border-slate-200 px-1 py-1">
                             <select
-                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-xs focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                              className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-xs focus:border-red-500 focus:ring-1 focus:ring-red-500"
                               value={value}
                               onChange={(e) => handleMappedChange(index, entry.id, e.target.value)}
                             >
@@ -1110,7 +1104,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                               {vals.map((v, vi) => (
                                 <div key={vi} className="flex items-center gap-0.5">
                                   <select
-                                    className="min-w-[100px] max-w-[160px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                                    className="min-w-[100px] max-w-[160px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                                     value={v}
                                     onChange={(e) => handleAuthoringMappedChange(index, entry.id, vi, e.target.value)}
                                   >
@@ -1138,7 +1132,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                       return (
                         <td key={entry.id} className="border border-slate-200 px-1 py-1">
                           <select
-                            className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                            className="w-full min-w-[120px] rounded border border-slate-300 px-1 py-0.5 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500"
                             value={value}
                             onChange={(e) => handleMappedChange(index, entry.id, e.target.value)}
                           >
@@ -1209,7 +1203,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
             Zrušit
           </button>
           <button
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+            className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
             onClick={handleSave}
           >
             Uložit změny
@@ -1261,7 +1255,7 @@ export const ClassificationEditor: React.FC<Props> = ({ system, allSystems = [],
                 </button>
                 <button
                   type="button"
-                  className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                  className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
                   disabled={!addIfcEntity}
                   onClick={handleConfirmAddIfcRow}
                 >

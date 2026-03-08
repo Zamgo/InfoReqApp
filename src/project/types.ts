@@ -289,8 +289,14 @@ export interface ClassificationSystemEntry {
   systemKind?: "ifc" | "authoring" | "classification";
 }
 
-/** Režim překladů IFC názvů: vypnuto, automatický, bSDD */
-export type TranslationMode = "OFF" | "AUTO" | "BSDD";
+/** Režim překladů IFC názvů: vypnuto, bSDD, vlastní z Excelu */
+export type TranslationMode = "OFF" | "BSDD" | "CUSTOM";
+
+/** Vlastní překlady nahrané z Excelu, uložené v projektu. Klíč u predefinedTypes: "entity::value" (např. IfcWall::SOLIDWALL). */
+export interface CustomTranslations {
+  entities: Record<string, string>;
+  predefinedTypes: Record<string, string>;
+}
 
 export interface Project {
   projectId: string;
@@ -301,8 +307,10 @@ export interface Project {
   translationMode?: TranslationMode;
   /** Zobrazit políčka překladů CZ vedle hodnot v kartách požadavků */
   showCzTranslations?: boolean;
-  /** Zdroj pro automatický překlad prázdných políček CZ: OFF / BSDD / AUTO */
+  /** Zdroj pro automatický překlad prázdných políček CZ: OFF / BSDD / CUSTOM (Excel) */
   czTranslationSource?: TranslationMode;
+  /** Vlastní překlady z nahraného Excelu (entity + predefined types). */
+  customTranslations?: CustomTranslations;
   /** Project description */
   description?: string;
   createdAt: string;

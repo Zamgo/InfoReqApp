@@ -2,7 +2,7 @@ import type { ClassificationData, ClassificationSystem } from "../classification
 import { makeId } from "../utils/id";
 import type { Project, ProjectObject } from "./types";
 import { ensureProjectPhases, getDefaultPhases } from "./phases";
-import { DEFAULT_IFC_SCHEMA_VERSION, getDisplayLabel } from "../schema/ifcVersionConfig";
+import { DEFAULT_IFC_SCHEMA_VERSION, getDisplayLabel, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
 
 const STORAGE_KEY = "inforeqapp:project";
 
@@ -99,7 +99,13 @@ export const loadProjectFromStorage = (): Project | null => {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as Project;
-    return ensureProjectPhases(parsed);
+    const version = normalizeIfcSchemaVersion(parsed.ifcSchemaVersion);
+    const normalized: Project = {
+      ...ensureProjectPhases(parsed),
+      ifcSchemaVersion: version,
+      ifcSchemaVersionDisplay: getDisplayLabel(version),
+    };
+    return normalized;
   } catch {
     return null;
   }
@@ -144,5 +150,11 @@ export const exportProjectFile = (project: Project, filename?: string) => {
 export const importProjectFile = async (file: File): Promise<Project> => {
   const text = await file.text();
   const parsed = JSON.parse(text) as Project;
-  return ensureProjectPhases(parsed);
+  const version = normalizeIfcSchemaVersion(parsed.ifcSchemaVersion);
+  const normalized: Project = {
+    ...ensureProjectPhases(parsed),
+    ifcSchemaVersion: version,
+    ifcSchemaVersionDisplay: getDisplayLabel(version),
+  };
+  return normalized;
 };

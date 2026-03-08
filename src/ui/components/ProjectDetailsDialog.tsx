@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import type { Project } from "../../project/types";
 import {
   SUPPORTED_IFC_VERSIONS,
@@ -43,9 +43,12 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
     modelDefinitionViewMvd: project.modelDefinitionViewMvd || "Reference View",
   });
 
-  // Reset form when project changes or dialog opens
+  // Reset form pouze při otevření dialogu, ne při každé změně project – jinak by se přepsal výběr verze IFC
+  const prevOpenRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
+    const justOpened = isOpen && !prevOpenRef.current;
+    prevOpenRef.current = isOpen;
+    if (justOpened) {
       const version = normalizeIfcSchemaVersion(project.ifcSchemaVersion);
       setFormData({
         name: project.name || "",
@@ -56,7 +59,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
         modelDefinitionViewMvd: project.modelDefinitionViewMvd || "Reference View",
       });
     }
-  }, [project, isOpen]);
+  }, [isOpen, project]);
 
   const isAuthorValid = (v: string) => {
     const t = v.trim();
@@ -135,7 +138,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
               </label>
               <input
                 type="text"
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder="Zadejte název projektu"
@@ -152,7 +155,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
                 className={`w-full rounded border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
                   formData.author.trim() && !isAuthorValid(formData.author)
                     ? "border-red-400 focus:border-red-500 focus:ring-red-500"
-                    : "border-slate-300 focus:border-indigo-500 focus:ring-indigo-500"
+                    : "border-slate-300 focus:border-red-500 focus:ring-red-500"
                 }`}
                 value={formData.author}
                 onChange={(e) => setFormData({ ...formData, author: e.target.value })}
@@ -169,7 +172,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
                 Popis
               </label>
               <textarea
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 rows={3}
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -183,7 +186,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
                 Verze IFC schématu
               </label>
               <select
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 value={formData.ifcSchemaVersion}
                 onChange={(e) => handleVersionChange(e.target.value as IfcSchemaVersion)}
               >
@@ -200,7 +203,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
                 href={formData.ifcDocumentationUrl || defaultDocUrlForVersion(formData.ifcSchemaVersion)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-1 inline-block text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                className="mt-1 inline-block text-xs text-red-600 hover:text-red-800 hover:underline"
               >
                 IFC dokumentace ↗
               </a>
@@ -213,7 +216,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
               </label>
               <input
                 type="url"
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 value={formData.ifcDocumentationUrl}
                 onChange={(e) => setFormData({ ...formData, ifcDocumentationUrl: e.target.value })}
                 placeholder={defaultDocUrlForVersion(formData.ifcSchemaVersion)}
@@ -227,7 +230,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
               </label>
               <input
                 type="text"
-                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 value={formData.modelDefinitionViewMvd}
                 onChange={(e) => setFormData({ ...formData, modelDefinitionViewMvd: e.target.value })}
                 placeholder="Reference View"
@@ -236,7 +239,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
                 href={DEFAULT_MVD_DATABASE_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-1 inline-block text-xs text-indigo-600 hover:text-indigo-800 hover:underline"
+                className="mt-1 inline-block text-xs text-red-600 hover:text-red-800 hover:underline"
               >
                 MVD databáze buildingSMART ↗
               </a>
@@ -273,7 +276,7 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
             Zrušit
           </button>
           <button
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
             onClick={handleSave}
             disabled={!formData.name.trim() || !isAuthorValid(formData.author)}
           >

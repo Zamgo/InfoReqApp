@@ -88,7 +88,7 @@ export const PhaseManager: React.FC<Props> = ({
       </div>
       <div className="flex-shrink-0">
         <button
-          className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500"
+          className="rounded bg-red-600 px-3 py-1 text-sm font-semibold text-white hover:bg-red-500"
           onClick={handleAdd}
         >
           Přidat fázi
@@ -111,7 +111,7 @@ export const PhaseManager: React.FC<Props> = ({
                   <>
                     <td className="px-3 py-2">
                       <input
-                        className="w-full rounded border border-indigo-300 px-2 py-1 text-sm font-semibold"
+                        className="w-full rounded border border-red-300 px-2 py-1 text-sm font-semibold"
                         value={editingPhase.code}
                         onChange={(e) => setEditingPhase({ ...editingPhase, code: e.target.value })}
                         placeholder="Kód"
@@ -119,7 +119,7 @@ export const PhaseManager: React.FC<Props> = ({
                     </td>
                     <td className="px-3 py-2">
                       <input
-                        className="w-full rounded border border-indigo-300 px-2 py-1 text-sm"
+                        className="w-full rounded border border-red-300 px-2 py-1 text-sm"
                         value={editingPhase.name}
                         onChange={(e) => setEditingPhase({ ...editingPhase, name: e.target.value })}
                         placeholder="Název"
@@ -127,7 +127,7 @@ export const PhaseManager: React.FC<Props> = ({
                     </td>
                     <td className="px-3 py-2">
                       <input
-                        className="w-full rounded border border-indigo-300 px-2 py-1 text-sm"
+                        className="w-full rounded border border-red-300 px-2 py-1 text-sm"
                         value={editingPhase.description}
                         onChange={(e) => setEditingPhase({ ...editingPhase, description: e.target.value })}
                         placeholder="Popis"
@@ -135,7 +135,7 @@ export const PhaseManager: React.FC<Props> = ({
                     </td>
                     <td className="px-3 py-2 text-right text-xs whitespace-nowrap">
                       <button
-                        className="mr-2 rounded bg-indigo-600 px-2 py-1 text-white hover:bg-indigo-500"
+                        className="mr-2 rounded bg-red-600 px-2 py-1 text-white hover:bg-red-500"
                         onClick={handleSaveEdit}
                         title="Uložit změny"
                       >

@@ -22,9 +22,9 @@ const IDS_IFC_VERSION: Record<IfcSchemaVersion, IdsIfcVersion> = {
   IFC4X3: "IFC4X3_ADD2",
 };
 
-/** Zobrazovací label verze pro UI. */
+/** Zobrazovací label verze pro UI (oficiální názvy buildingSMART). */
 const DISPLAY_LABEL: Record<IfcSchemaVersion, string> = {
-  IFC4: "IFC4 (ADD2 TC1)",
+  IFC4: "IFC 4 ADD2 TC1",
   IFC4X3: "IFC 4.3 ADD2 TC1",
 };
 
@@ -139,11 +139,22 @@ export function getDisplayLabel(version: IfcSchemaVersion): string {
 
 /**
  * Normalizuje hodnotu z projektu nebo storage na IfcSchemaVersion.
- * Staré projekty mohou mít "IFC4X3" jako string; typová shoda s IFC4X3.
+ * Přijímá i hodnoty z IDS (IFC4X3_ADD2), exportu a starých projektů.
  */
 export function normalizeIfcSchemaVersion(
   value: string | undefined | null,
 ): IfcSchemaVersion {
-  if (value === "IFC4" || value === "IFC4X3") return value;
+  const v = (value ?? "").trim().toUpperCase();
+  if (v === "IFC4") return "IFC4";
+  if (v === "IFC4X3" || v === "IFC4X3_ADD2") return "IFC4X3";
+  if (v === "IFC2X3") return "IFC4"; // IFC2X3 není podporováno v UI/schema, mapujeme na IFC4
   return DEFAULT_IFC_SCHEMA_VERSION;
+}
+
+/**
+ * Mapuje hodnotu ifcVersion z IDS (specification element) na vnitřní IfcSchemaVersion.
+ * Použití při importu IDS pro nastavení verze projektu.
+ */
+export function idsIfcVersionToSchemaVersion(idsVersion: string | undefined | null): IfcSchemaVersion {
+  return normalizeIfcSchemaVersion(idsVersion);
 }

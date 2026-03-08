@@ -18,6 +18,7 @@ import type {
 } from "../project/types";
 import { makeId } from "../utils/id";
 import { ensureProjectPhases, getDefaultPhases } from "../project/phases";
+import { getDisplayLabel, idsIfcVersionToSchemaVersion } from "../schema/ifcVersionConfig";
 import { buildClassificationFromSchemaFiltered } from "../classification/ifcTree";
 import { collectLeaves } from "../classification/parser";
 import type { ClassificationData } from "../classification/types";
@@ -830,6 +831,10 @@ export function mergeIdsIntoProject(
         milestone: info.milestone,
       }
     : undefined;
+  // Verze IFC z první specification v IDS (ifcVersion), aby projekt odpovídal importovanému souboru
+  const idsVersion = parsed.specifications.find((s) => s.ifcVersion)?.ifcVersion;
+  const ifcSchemaVersion = idsIfcVersionToSchemaVersion(idsVersion);
+  const ifcSchemaVersionDisplay = getDisplayLabel(ifcSchemaVersion);
   let project: Project;
   if (existingProject) {
     project = ensureProjectPhases({
@@ -839,6 +844,8 @@ export function mergeIdsIntoProject(
       classificationSystemEntries: updatedEntriesWithPrimary,
       primaryClassificationId: primaryId,
       objects,
+      ifcSchemaVersion,
+      ifcSchemaVersionDisplay,
       updatedAt: now,
     });
   } else {
@@ -850,8 +857,8 @@ export function mergeIdsIntoProject(
       idsMetadata: importedIdsMetadata,
       createdAt: now,
       updatedAt: now,
-      ifcSchemaVersion: "IFC4X3",
-      ifcSchemaVersionDisplay: "IFC 4.3 ADD2 TC1",
+      ifcSchemaVersion,
+      ifcSchemaVersionDisplay,
       classification: classificationData,
       classifications: [],
       primaryClassificationId: primaryId,

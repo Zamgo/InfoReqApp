@@ -142,7 +142,7 @@ export const EntitySelect: React.FC<EntitySelectProps> = ({
         aria-haspopup="listbox"
         className={
           className ||
-          "min-w-[140px] max-w-[220px] rounded border border-slate-300 bg-white px-2 py-1 text-left text-sm hover:border-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
+          "min-w-[140px] max-w-[220px] rounded border border-slate-300 bg-white px-2 py-1 text-left text-sm hover:border-slate-400 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500 disabled:bg-slate-100 disabled:cursor-not-allowed"
         }
         onClick={() => !disabled && setOpen((o) => !o)}
         disabled={disabled}
@@ -168,7 +168,7 @@ export const EntitySelect: React.FC<EntitySelectProps> = ({
             <div className="border-b border-slate-200 p-1.5">
               <input
                 type="text"
-                className="w-full rounded border border-slate-200 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full rounded border border-slate-200 px-2 py-1 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 placeholder="Vyhledat..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -194,7 +194,7 @@ export const EntitySelect: React.FC<EntitySelectProps> = ({
                         isAbstract
                           ? "cursor-not-allowed text-slate-400"
                           : "hover:bg-slate-100 text-slate-800"
-                      } ${value === name ? "bg-indigo-50 text-indigo-800" : ""}`}
+                      } ${value === name ? "bg-red-50 text-red-800" : ""}`}
                       style={{ paddingLeft: 12 + depth * INDENT_PX }}
                       onClick={() => handleSelect(name)}
                       disabled={isAbstract}

@@ -421,7 +421,7 @@ const TreeItem: React.FC<{
         <div className="flex-1">
           <div
             className={`flex cursor-pointer items-center justify-between rounded px-2 py-1 hover:bg-slate-100 ${
-              isIncompleteCopy ? "bg-red-100 text-red-800" : isSelected ? "bg-indigo-100 text-indigo-700" : "text-slate-800"
+              isIncompleteCopy ? "bg-red-100 text-red-800" : isSelected ? "bg-red-100 text-red-700" : "text-slate-800"
             }`}
             onClick={() => {
               if (isSelectableLeaf) onSelectLeaf(node);
@@ -590,7 +590,7 @@ export const ClassificationPanel: React.FC<Props> = ({
           <button
             key={tab.key}
             className={`rounded-t px-3 py-2 text-sm ${
-              activeTab === tab.key ? "bg-white text-indigo-600 shadow-inner" : "text-slate-600"
+              activeTab === tab.key ? "bg-white text-red-600 shadow-inner" : "text-slate-600"
             }`}
             onClick={() => setActiveTab(tab.key as typeof activeTab)}
           >
@@ -638,7 +638,7 @@ export const ClassificationPanel: React.FC<Props> = ({
                   onClick={() => handleExpandToLevel(level - 1)}
                   className={`rounded border px-2 py-0.5 text-xs hover:bg-slate-100 ${
                     expandLevel === level - 1
-                      ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                      ? "border-red-400 bg-red-50 text-red-700"
                       : "border-slate-300 text-slate-600"
                   }`}
                   title={`Zobrazit do úrovně ${level}`}
@@ -722,7 +722,7 @@ export const ClassificationPanel: React.FC<Props> = ({
                   {search && (
                     <button
                       onClick={() => setSearch("")}
-                      className="ml-2 text-indigo-600 hover:underline"
+                      className="ml-2 text-red-600 hover:underline"
                     >
                       Zrušit hledání
                     </button>

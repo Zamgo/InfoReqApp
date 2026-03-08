@@ -141,7 +141,7 @@ export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onIm
           />
           <div>
             <button
-              className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500"
+              className="rounded bg-red-600 px-3 py-1 text-sm font-semibold text-white hover:bg-red-500"
               onClick={handleAdd}
               disabled={!name.trim()}
             >
@@ -230,7 +230,7 @@ export const CodeListManager: React.FC<Props> = ({ codeLists, usage, onAdd, onIm
                                       {clUsage.map((u, idx) => (
                                         <span
                                           key={`${u.objectCode}:${u.propertyLabel ?? ""}:${idx}`}
-                                          className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] text-indigo-700"
+                                          className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] text-red-700"
                                           title={`${u.objectDescription ?? u.objectCode}${u.propertyLabel ? ` • ${u.propertyLabel}` : ""}`}
                                         >
                                           {u.objectCode}{u.propertyLabel ? ` • ${u.propertyLabel}` : ""}

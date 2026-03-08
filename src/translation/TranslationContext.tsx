@@ -12,6 +12,8 @@ interface TranslationContextValue {
   czTranslationSource: TranslationMode;
   /** IFC verze projektu – pro odkazy na bSDD a dokumentaci */
   ifcSchemaVersion: IfcSchemaVersion;
+  /** Projekt (pro CUSTOM překlady z customTranslations) */
+  project: Project | null;
 }
 
 const TranslationContext = createContext<TranslationContextValue>({
@@ -19,6 +21,7 @@ const TranslationContext = createContext<TranslationContextValue>({
   showCzTranslations: false,
   czTranslationSource: "OFF",
   ifcSchemaVersion: "IFC4X3",
+  project: null,
 });
 
 export function TranslationProvider({
@@ -30,14 +33,16 @@ export function TranslationProvider({
 }) {
   const value = useMemo(() => {
     const showCz = project?.showCzTranslations ?? false;
-    const czSource = project?.czTranslationSource ?? "OFF";
+    const raw = (project?.czTranslationSource ?? "OFF") as string;
+    const czSource = (raw === "AUTO" ? "OFF" : raw) as TranslationMode;
     return {
       translationMode: showCz ? czSource : (project?.translationMode ?? "OFF"),
       showCzTranslations: showCz,
       czTranslationSource: czSource,
       ifcSchemaVersion: normalizeIfcSchemaVersion(project?.ifcSchemaVersion),
+      project: project ?? null,
     };
-  }, [project?.translationMode, project?.showCzTranslations, project?.czTranslationSource, project?.ifcSchemaVersion]);
+  }, [project]);
   return (
     <TranslationContext.Provider value={value}>
       {children}

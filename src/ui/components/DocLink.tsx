@@ -8,29 +8,28 @@ interface DocLinkProps {
 }
 
 /**
- * Component for displaying documentation links with appropriate logos
- * - IFC links: Shows IFC logo for buildingSMART IFC technical documentation
- * - IDS links: Shows IDS logo for buildingSMART IDS documentation on GitHub
+ * Component for displaying documentation links with text badges IDS / IFC
+ * - IFC links: buildingSMART IFC technical documentation
+ * - IDS links: buildingSMART IDS documentation on GitHub
  */
 export const DocLink: React.FC<DocLinkProps> = ({ href, label, type, className = "" }) => {
   if (!href) return null;
-  
-  // Determine logo type based on URL if not explicitly provided
-  const logoType = type || (href.includes('github.com/buildingSMART/IDS') ? 'ids' : 'ifc');
-  const logoSrc = logoType === 'ids' ? '/img/IDS-logo.png' : '/img/IFC-logo.png';
-  const tooltipText = logoType === 'ids' 
-    ? `Otevřít IDS dokumentaci: ${label}` 
+
+  const docType = type || (href.includes('github.com/buildingSMART/IDS') ? 'ids' : 'ifc');
+  const badge = docType.toUpperCase();
+  const tooltipText = docType === 'ids'
+    ? `Otevřít IDS dokumentaci: ${label}`
     : `Otevřít IFC dokumentaci pro ${label}`;
-  
+
   return (
-    <a 
-      href={href} 
-      target="_blank" 
-      rel="noreferrer" 
-      className={`inline-flex items-center shrink-0 opacity-60 hover:opacity-100 transition-opacity ${className}`}
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className={`inline-flex items-center shrink-0 rounded px-2 py-1 text-xs font-semibold uppercase tracking-wide bg-slate-200 text-slate-600 hover:bg-red-700 hover:text-white transition-colors ${className}`}
       title={tooltipText}
     >
-      <img src={logoSrc} alt={`${logoType.toUpperCase()} logo`} className="h-5 w-auto shrink-0 object-contain" />
+      {badge}
     </a>
   );
 };

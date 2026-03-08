@@ -178,7 +178,7 @@ const RequirementsPreview: React.FC<{
         {applicability.length > 0 && (
           <div>
             <div className="font-semibold text-slate-800 mb-2">
-              Model <span className="text-indigo-600">MUSÍ</span> obsahovat entity, které mají:
+              Model <span className="text-red-600">MUSÍ</span> obsahovat entity, které mají:
             </div>
             <ul className="list-disc pl-5 space-y-1">
               {applicability.map((item, idx) => (
@@ -198,7 +198,7 @@ const RequirementsPreview: React.FC<{
                   key={idx}
                   dangerouslySetInnerHTML={{
                     __html: item
-                      .replace(/\*\*MUSÍ\*\*/g, '<strong class="text-indigo-600">MUSÍ</strong>')
+                      .replace(/\*\*MUSÍ\*\*/g, '<strong class="text-red-600">MUSÍ</strong>')
                       .replace(/\*\*NESMÍ\*\*/g, '<strong class="text-red-600">NESMÍ</strong>')
                       .replace(/\*\*MŮŽE\*\*/g, '<strong class="text-amber-600">MŮŽE</strong>')
                       .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-slate-900">$1</strong>')
@@ -465,7 +465,7 @@ export const IDSExportDialog: React.FC<Props> = ({
         {/* Metadata souboru IDS – auto-filled from project */}
         <div className="flex-shrink-0 border-b border-slate-200 px-6 py-2">
           <button
-            className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-indigo-600"
+            className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-red-600"
             onClick={() => setMetadataExpanded((v) => !v)}
           >
             <span className={metadataExpanded ? "rotate-90" : ""}>▶</span>
@@ -573,7 +573,7 @@ export const IDSExportDialog: React.FC<Props> = ({
                 <select
                   value={selectedPhaseId}
                   onChange={(e) => setSelectedPhaseId(e.target.value)}
-                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 >
                   {project.phases.map((phase) => (
                     <option key={phase.id} value={phase.id}>
@@ -613,13 +613,13 @@ export const IDSExportDialog: React.FC<Props> = ({
                 <label className="mb-1 block text-sm font-medium text-slate-700">Zobrazení</label>
                 <div className="flex rounded border border-slate-300 overflow-hidden">
                   <button
-                    className={`px-3 py-2 text-sm ${viewMode === "human" ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                    className={`px-3 py-2 text-sm ${viewMode === "human" ? "bg-red-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
                     onClick={() => setViewMode("human")}
                   >
                     Lidská řeč
                   </button>
                   <button
-                    className={`px-3 py-2 text-sm border-l border-slate-300 ${viewMode === "ids" ? "bg-indigo-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
+                    className={`px-3 py-2 text-sm border-l border-slate-300 ${viewMode === "ids" ? "bg-red-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"}`}
                     onClick={() => setViewMode("ids")}
                   >
                     IDS schéma
@@ -636,7 +636,7 @@ export const IDSExportDialog: React.FC<Props> = ({
                   placeholder="Filtrovat dle názvu..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  className="flex-1 rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
                 />
                 <button
                   className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
@@ -675,7 +675,7 @@ export const IDSExportDialog: React.FC<Props> = ({
                               type="checkbox"
                               checked={selectedObjects.has(obj.code)}
                               onChange={() => handleToggleObject(obj.code)}
-                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 mt-1"
+                              className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 mt-1"
                             />
                             <button
                               className="flex-1 flex items-center justify-between hover:bg-slate-50 text-left min-w-0"
@@ -736,7 +736,7 @@ export const IDSExportDialog: React.FC<Props> = ({
             Zrušit
           </button>
           <button
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
             onClick={handleExport}
             disabled={
               isExporting ||

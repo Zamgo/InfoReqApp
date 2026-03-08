@@ -108,12 +108,12 @@ export const ClassificationManager: React.FC<Props> = ({
   return (
     <div className="space-y-3">
       {/* Header with IFC entity info */}
-      <div className="rounded border border-indigo-100 bg-indigo-50/50 p-3">
+      <div className="rounded border border-red-100 bg-red-50/50 p-3">
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold text-slate-800">IfcClassification</h3>
-              <span className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+              <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
                 IFC 4x3
               </span>
               <DocLink 
@@ -128,14 +128,14 @@ export const ClassificationManager: React.FC<Props> = ({
                 href={ifcClassificationDocUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="font-medium text-indigo-600 hover:underline"
+                className="font-medium text-red-600 hover:underline"
               >
                 IfcClassification
               </a>{" "}
               ze schématu IFC 4x3 (buildingSMART)
             </p>
           </div>
-          <label className="inline-flex cursor-pointer items-center gap-1 rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500">
+          <label className="inline-flex cursor-pointer items-center gap-1 rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500">
             <input
               type="file"
               accept=".txt"
@@ -161,7 +161,7 @@ export const ClassificationManager: React.FC<Props> = ({
         return (
           <div
             key={cls.id}
-            className={`rounded border ${isPrimary ? "border-indigo-300 bg-indigo-50/30" : "border-slate-200 bg-white"} p-3`}
+            className={`rounded border ${isPrimary ? "border-red-300 bg-red-50/30" : "border-slate-200 bg-white"} p-3`}
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -177,7 +177,7 @@ export const ClassificationManager: React.FC<Props> = ({
                       {cls.ifcClassification.Name}
                     </span>
                     {isPrimary && (
-                      <span className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                         PRIMÁRNÍ
                       </span>
                     )}
@@ -260,7 +260,7 @@ export const ClassificationManager: React.FC<Props> = ({
                           href={cls.ifcClassification.Specification}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-indigo-600 hover:underline"
+                          className="text-red-600 hover:underline"
                         >
                           {cls.ifcClassification.Specification}
                         </a>
@@ -274,9 +274,9 @@ export const ClassificationManager: React.FC<Props> = ({
             )}
 
             {isExpanded && isEditing && editing && (
-              <div className="mt-3 space-y-2 rounded border border-indigo-200 bg-indigo-50/50 p-3">
-                <div className="mb-2 flex items-center gap-2 border-b border-indigo-200 pb-2">
-                  <span className="text-xs font-semibold text-indigo-700">Editace atributů IfcClassification</span>
+              <div className="mt-3 space-y-2 rounded border border-red-200 bg-red-50/50 p-3">
+                <div className="mb-2 flex items-center gap-2 border-b border-red-200 pb-2">
+                  <span className="text-xs font-semibold text-red-700">Editace atributů IfcClassification</span>
                   <DocLink 
                     href={ifcClassificationDocUrl}
                     label="IfcClassification"
@@ -287,7 +287,7 @@ export const ClassificationManager: React.FC<Props> = ({
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-600">
-                      <span className="text-indigo-700">Name</span> <span className="text-red-500">*</span>
+                      <span className="text-red-700">Name</span> <span className="text-red-500">*</span>
                       <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcLabel)</span>
                     </label>
                     <input
@@ -305,7 +305,7 @@ export const ClassificationManager: React.FC<Props> = ({
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-600">
-                      <span className="text-indigo-700">Source</span>
+                      <span className="text-red-700">Source</span>
                       <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcLabel)</span>
                     </label>
                     <input
@@ -323,7 +323,7 @@ export const ClassificationManager: React.FC<Props> = ({
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-600">
-                      <span className="text-indigo-700">Edition</span>
+                      <span className="text-red-700">Edition</span>
                       <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcLabel)</span>
                     </label>
                     <input
@@ -341,7 +341,7 @@ export const ClassificationManager: React.FC<Props> = ({
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-medium text-slate-600">
-                      <span className="text-indigo-700">EditionDate</span>
+                      <span className="text-red-700">EditionDate</span>
                       <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcDate)</span>
                     </label>
                     <input
@@ -358,7 +358,7 @@ export const ClassificationManager: React.FC<Props> = ({
                   </div>
                   <div className="col-span-2">
                     <label className="mb-1 block text-xs font-medium text-slate-600">
-                      <span className="text-indigo-700">Description</span>
+                      <span className="text-red-700">Description</span>
                       <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcText)</span>
                     </label>
                     <textarea
@@ -376,7 +376,7 @@ export const ClassificationManager: React.FC<Props> = ({
                   </div>
                   <div className="col-span-2">
                     <label className="mb-1 block text-xs font-medium text-slate-600">
-                      <span className="text-indigo-700">Specification</span>
+                      <span className="text-red-700">Specification</span>
                       <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcURIReference)</span>
                     </label>
                     <input
@@ -401,7 +401,7 @@ export const ClassificationManager: React.FC<Props> = ({
                     Zrušit
                   </button>
                   <button
-                    className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500"
+                    className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500"
                     onClick={saveEditing}
                   >
                     Uložit
@@ -421,21 +421,21 @@ export const ClassificationManager: React.FC<Props> = ({
               <h3 className="text-lg font-semibold text-slate-800">
                 Nová IfcClassification
               </h3>
-              <span className="rounded bg-indigo-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+              <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
                 IFC 4x3
               </span>
             </div>
             <p className="mb-2 text-sm text-slate-600">
               Soubor hierarchie: <span className="font-medium">{pendingFile?.name}</span>
             </p>
-            <div className="mb-4 rounded border border-indigo-100 bg-indigo-50/50 p-3">
+            <div className="mb-4 rounded border border-red-100 bg-red-50/50 p-3">
               <p className="text-xs text-slate-600">
                 Vyplňte <strong>atributy entity IfcClassification</strong> dle schématu IFC 4x3.{" "}
                 <a
                   href={ifcClassificationDocUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="font-medium text-indigo-600 hover:underline"
+                  className="font-medium text-red-600 hover:underline"
                 >
                   Viz buildingSMART dokumentace →
                 </a>
@@ -444,7 +444,7 @@ export const ClassificationManager: React.FC<Props> = ({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">
-                  <span className="text-indigo-700">Name</span> <span className="text-red-500">*</span>
+                  <span className="text-red-700">Name</span> <span className="text-red-500">*</span>
                   <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcLabel)</span>
                 </label>
                 <input
@@ -459,7 +459,7 @@ export const ClassificationManager: React.FC<Props> = ({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">
-                  <span className="text-indigo-700">Source</span>
+                  <span className="text-red-700">Source</span>
                   <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcLabel)</span>
                 </label>
                 <input
@@ -474,7 +474,7 @@ export const ClassificationManager: React.FC<Props> = ({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">
-                  <span className="text-indigo-700">Edition</span>
+                  <span className="text-red-700">Edition</span>
                   <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcLabel)</span>
                 </label>
                 <input
@@ -489,7 +489,7 @@ export const ClassificationManager: React.FC<Props> = ({
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">
-                  <span className="text-indigo-700">EditionDate</span>
+                  <span className="text-red-700">EditionDate</span>
                   <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcDate)</span>
                 </label>
                 <input
@@ -503,7 +503,7 @@ export const ClassificationManager: React.FC<Props> = ({
               </div>
               <div className="col-span-2">
                 <label className="mb-1 block text-xs font-medium text-slate-600">
-                  <span className="text-indigo-700">Description</span>
+                  <span className="text-red-700">Description</span>
                   <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcText)</span>
                 </label>
                 <textarea
@@ -518,7 +518,7 @@ export const ClassificationManager: React.FC<Props> = ({
               </div>
               <div className="col-span-2">
                 <label className="mb-1 block text-xs font-medium text-slate-600">
-                  <span className="text-indigo-700">Specification</span>
+                  <span className="text-red-700">Specification</span>
                   <span className="ml-1 text-[10px] font-normal text-slate-400">(IfcURIReference)</span>
                 </label>
                 <input
@@ -540,7 +540,7 @@ export const ClassificationManager: React.FC<Props> = ({
                 Zrušit
               </button>
               <button
-                className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
                 onClick={confirmAddClassification}
                 disabled={!newClassificationMetadata.Name}
               >

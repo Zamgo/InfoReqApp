@@ -18,7 +18,7 @@ interface Props {
 
 /**
  * Zobrazí oficiální IFC název a pod ním kurzívou překlad.
- * Při režimu BSDD/AUTO zobrazí odkaz na bSDD stránku.
+ * Při režimu BSDD zobrazí odkaz na bSDD stránku; při CUSTOM jen překlad.
  */
 export const TranslatedLabel: React.FC<Props> = ({
   type,
@@ -28,8 +28,8 @@ export const TranslatedLabel: React.FC<Props> = ({
   inline,
   translationOnly = false,
 }) => {
-  const { translationMode, ifcSchemaVersion } = useTranslation();
-  const [result, setResult] = useState<{ translated: string | null; source: "bsdd" | "auto" | null }>({ translated: null, source: null });
+  const { translationMode, ifcSchemaVersion, project } = useTranslation();
+  const [result, setResult] = useState<{ translated: string | null; source: "bsdd" | "auto" | "custom" | null }>({ translated: null, source: null });
   const [loading, setLoading] = useState(true);
 
   /** Když showCzTranslations je zapnuto: používáme editovatelná *_CZ políčka místo TranslatedLabel.
@@ -43,11 +43,11 @@ export const TranslatedLabel: React.FC<Props> = ({
       return;
     }
     setLoading(true);
-    translate(translationMode, { type, officialName, context })
+    translate(translationMode, { type, officialName, context }, project)
       .then((r) => setResult({ translated: r.translated, source: r.source }))
       .catch(() => setResult({ translated: null, source: null }))
       .finally(() => setLoading(false));
-  }, [translationMode, type, officialName, context?.entity, context?.psetName, showTranslation]);
+  }, [translationMode, type, officialName, context?.entity, context?.psetName, showTranslation, project]);
 
   const { translated, source } = result;
   const bsddUrl = getBsddUrl(type, officialName, context, ifcSchemaVersion);
@@ -75,10 +75,10 @@ export const TranslatedLabel: React.FC<Props> = ({
       return derivedNorm === transNorm;
     })();
   const notRealTranslation = isSameAsOfficial || isDerivedFromEntity;
-  const hasAutoTranslation = source === "auto" && translated && !notRealTranslation;
+  const hasCustomTranslation = source === "custom" && translated && !notRealTranslation;
   const hasBsddTranslation = source === "bsdd" && translated && !notRealTranslation;
   const noTranslationInBsdd = source === "bsdd" && (!translated || notRealTranslation);
-  const showBsddLink = !noLink && bsddUrl && (hasBsddTranslation || noTranslationInBsdd);
+  const showBsddLink = !noLink && bsddUrl && source !== "custom" && (hasBsddTranslation || noTranslationInBsdd);
 
   if (!officialName) return null;
 
@@ -87,7 +87,7 @@ export const TranslatedLabel: React.FC<Props> = ({
     if (loading) return translationOnly ? <span className="text-slate-400 italic">načítám…</span> : <>{officialName}</>;
 
     if (translationOnly) {
-      const displayText = hasBsddTranslation || hasAutoTranslation ? translated : noTranslationInBsdd ? "Nepřeloženo v bSDD" : "";
+      const displayText = hasBsddTranslation || hasCustomTranslation ? translated : noTranslationInBsdd ? "Nepřeloženo v bSDD" : "";
       if (!displayText) return null;
 
       const content = <span className="italic text-slate-600">{displayText}</span>;
@@ -97,20 +97,16 @@ export const TranslatedLabel: React.FC<Props> = ({
             href={bsddUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="italic text-indigo-600 hover:text-indigo-800 hover:underline"
+            className="italic text-red-600 hover:text-red-800 hover:underline"
             title="Otevřít v buildingSMART Data Dictionary"
           >
             {content}
           </a>
         );
       }
-      return (
-        <span title={hasAutoTranslation ? "Překlad automaticky generován" : undefined}>
-          {content}
-        </span>
-      );
+      return <>{content}</>;
     }
-    const displayText = hasBsddTranslation || hasAutoTranslation ? translated : noTranslationInBsdd ? "Nepřeloženo v bSDD" : "";
+    const displayText = hasBsddTranslation || hasCustomTranslation ? translated : noTranslationInBsdd ? "Nepřeloženo v bSDD" : "";
     if (!displayText) return <>{officialName}</>;
     const content = (
       <>
@@ -120,26 +116,22 @@ export const TranslatedLabel: React.FC<Props> = ({
     );
     if (showBsddLink) {
       return (
-        <a href={bsddUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline">
+        <a href={bsddUrl} target="_blank" rel="noopener noreferrer" className="text-red-600 hover:underline">
           {content}
         </a>
       );
     }
-    return (
-      <span title={hasAutoTranslation ? "Překlad automaticky generován" : undefined}>
-        {content}
-      </span>
-    );
+    return <>{content}</>;
   }
 
-  const blockDisplayText = hasBsddTranslation || hasAutoTranslation ? translated : noTranslationInBsdd ? "Nepřeloženo v bSDD" : null;
+  const blockDisplayText = hasBsddTranslation || hasCustomTranslation ? translated : noTranslationInBsdd ? "Nepřeloženo v bSDD" : null;
   const content = (
     <div className="flex flex-col">
       <span className="font-medium text-slate-800">{officialName}</span>
       {showTranslation && (loading ? (
         <span className="text-xs italic text-slate-400">načítám…</span>
       ) : blockDisplayText ? (
-        <span className="text-sm italic text-slate-600" title={hasAutoTranslation ? "Překlad automaticky generován" : undefined}>{blockDisplayText}</span>
+        <span className="text-sm italic text-slate-600">{blockDisplayText}</span>
       ) : null)}
     </div>
   );
@@ -150,7 +142,7 @@ export const TranslatedLabel: React.FC<Props> = ({
         href={bsddUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-indigo-600 hover:text-indigo-800 hover:underline focus:outline-none focus:ring-1 focus:ring-indigo-500 rounded"
+        className="text-red-600 hover:text-red-800 hover:underline focus:outline-none focus:ring-1 focus:ring-red-500 rounded"
         title="Otevřít v buildingSMART Data Dictionary"
       >
         {content}

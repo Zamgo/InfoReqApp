@@ -362,7 +362,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
               <div className="rounded-lg bg-white px-8 py-6 shadow-xl">
                 <div className="flex items-center gap-3">
-                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-red-500 border-t-transparent" />
                   <span className="text-sm text-slate-600">Načítání editoru…</span>
                 </div>
               </div>
@@ -390,7 +390,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
               const isIfc = sys.isIfcSystem === true;
               return (
                 <React.Fragment key={sys.id}>
-                  <tr className={`border-t border-slate-200 ${sys.isPrimary ? "bg-indigo-50/50" : ""}`}>
+                  <tr className={`border-t border-slate-200 ${sys.isPrimary ? "bg-red-50/50" : ""}`}>
                     <td className="px-3 py-2 align-top">
                       {isIfc ? (
                         <span className="text-xs font-medium text-slate-700">IFC</span>
@@ -435,7 +435,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                           <div className="flex items-center gap-2">
                             <span className="font-medium">{sys.name}</span>
                             {sys.isPrimary && (
-                              <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-indigo-700">
+                              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-red-700">
                                 Primární
                               </span>
                             )}
@@ -446,7 +446,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                             </span>
                           )}
                           {sys.isPrimary && (sys.mappedSystemIds?.length ?? 0) > 0 && (
-                            <span className="mt-0.5 text-[11px] text-indigo-600">
+                            <span className="mt-0.5 text-[11px] text-red-600">
                               Mapování: {(sys.mappedSystemIds ?? []).map((id) => systems.find((s) => s.id === id)?.name ?? id).join(", ")}
                             </span>
                           )}
@@ -483,7 +483,7 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                           </span>
                         ) : (
                           <button
-                            className="rounded border border-indigo-300 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50"
+                            className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
                             onClick={() => handleSetPrimary(sys.id)}
                             title="Nastavit jako primární"
                           >

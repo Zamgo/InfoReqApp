@@ -3,8 +3,9 @@
 @tailwind utilities;
 
 :root {
-  color: #0f172a;
-  background-color: #f8fafc;
+  /* Controlis vizuální styl – barvy z manuálu */
+  color: #1b1b1b;
+  background-color: #eeeded;
 }
 
 body {

@@ -144,7 +144,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
     let depth = 0;
     let current: string | undefined = name;
     while (current) {
-      const parent = entities[current]?.parent;
+      const parent: string | undefined = entities[current]?.parent;
       if (!parent) break;
       depth += 1;
       current = parent;
@@ -402,7 +402,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
                     </span>
                     <button
                       type="button"
-                      className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="rounded bg-red-600 px-2 py-1 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
                       onClick={applyParsedSelection}
                       disabled={!canApplyParsed}
                       title={hasInvalidParsed ? "Nejdříve opravte nebo odstraňte neplatné položky" : undefined}
@@ -476,7 +476,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
                         ref={(el) => {
                           if (el && !isAbstract) el.indeterminate = hasTypes && partial && !full;
                         }}
-                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:cursor-not-allowed"
+                        className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 disabled:cursor-not-allowed"
                         checked={hasTypes ? full : selectedCodes.has(entityName)}
                         onChange={(e) => !isAbstract && toggleEntity(entityName, e.target.checked)}
                         disabled={isAbstract}
@@ -498,7 +498,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
                         <label className="flex cursor-pointer items-center gap-2 py-0.5">
                           <input
                             type="checkbox"
-                            className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            className="h-3.5 w-3.5 rounded border-slate-300 text-red-600 focus:ring-red-500"
                             checked={selectedCodes.has(`${entityName}::NOTDEFINED`)}
                             onChange={(e) => toggleCode(`${entityName}::NOTDEFINED`, e.target.checked)}
                           />
@@ -513,7 +513,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
                             <label className="flex cursor-pointer items-center gap-2 py-0.5">
                               <input
                                 type="checkbox"
-                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                className="h-3.5 w-3.5 rounded border-slate-300 text-red-600 focus:ring-red-500"
                                 checked={checked}
                                 onChange={(e) => toggleCode(code, e.target.checked)}
                               />
@@ -545,7 +545,7 @@ export const IfcEntitySelectorDialog: React.FC<Props> = ({
           </button>
           <button
             type="button"
-            className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleSave}
             disabled={hasInvalidParsed}
             title={hasInvalidParsed ? "Nejdříve opravte nebo zrušte neplatné položky ve vloženém seznamu" : undefined}

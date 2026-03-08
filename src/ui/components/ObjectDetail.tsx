@@ -23,7 +23,7 @@ import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../p
 import { DocLink } from "./DocLink";
 import { EntitySelect } from "./EntitySelect";
 import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition, fetchClassDefinition, getEntityClassUri, getPredefinedTypeClassUri } from "../../translation/translators/BsddTranslator";
-import { translateViaApi } from "../../translation/translators/MtApiTranslator";
+import { getBsddUrl } from "../../translation/getBsddUrl";
 import { translate } from "../../translation/TranslationService";
 import { useTranslation } from "../../translation/TranslationContext";
 
@@ -124,7 +124,7 @@ const PropertyRowEditDialog: React.FC<{
           <button type="button" className="rounded border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50" onClick={onClose}>
             Zrušit
           </button>
-          <button type="button" className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500" onClick={handleSave}>
+          <button type="button" className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500" onClick={handleSave}>
             Uložit
           </button>
         </div>
@@ -248,7 +248,7 @@ const SelectObjectsForDuplicateDialog: React.FC<{
               <input
                 id={inputId}
                 type="checkbox"
-                className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                className="h-4 w-4 shrink-0 rounded border-slate-300 text-red-600 focus:ring-red-500"
                 checked={selectedCodes.has(node.code)}
                 onChange={(e) => {
                   e.stopPropagation();
@@ -360,7 +360,7 @@ const SelectObjectsForDuplicateDialog: React.FC<{
                       <input
                         id={`dup-flat-${code}`}
                         type="checkbox"
-                        className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        className="h-4 w-4 shrink-0 rounded border-slate-300 text-red-600 focus:ring-red-500"
                         checked={selectedCodes.has(code)}
                         onChange={() => toggleCode(code)}
                       />
@@ -400,7 +400,7 @@ const SelectObjectsForDuplicateDialog: React.FC<{
                         <input
                           id={`dup-list-${code}`}
                           type="checkbox"
-                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          className="h-4 w-4 shrink-0 rounded border-slate-300 text-red-600 focus:ring-red-500"
                           checked={selectedCodes.has(code)}
                           onChange={() => toggleCode(code)}
                         />
@@ -448,7 +448,7 @@ const SelectObjectsForDuplicateDialog: React.FC<{
           </button>
           <button
             type="button"
-            className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
             onClick={handleConfirm}
             disabled={selectedCodes.size === 0}
           >
@@ -1829,7 +1829,7 @@ const IdsSingleExportDialog: React.FC<{
           <div>
             <button
               type="button"
-              className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-indigo-600"
+              className="flex items-center gap-2 text-sm font-medium text-slate-700 hover:text-red-600"
               onClick={() => setMetadataExpanded((v) => !v)}
             >
               <span className={metadataExpanded ? "rotate-90" : ""}>▶</span>
@@ -1933,7 +1933,7 @@ const IdsSingleExportDialog: React.FC<{
           </button>
           <button
             type="button"
-            className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={handleExport}
             disabled={phasesForExport.length === 0 || !isAuthorValid(effectiveAuthor)}
           >
@@ -2098,7 +2098,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [classificationColumnMenuOpen, setClassificationColumnMenuOpen] = useState(false);
   /** Načítání Definition pro popis objektu: "entity" | "typ" | null */
   const [loadingObjectDefinition, setLoadingObjectDefinition] = useState<"entity" | "typ" | null>(null);
-  const { translationMode, showCzTranslations, czTranslationSource } = useTranslation();
+  const { showCzTranslations, czTranslationSource } = useTranslation();
   /** Kontext roztahování: tabulka + index sloupce */
   const [resizingContext, setResizingContext] = useState<{ table: "attribute" | "partOf" | "material" | "classification" | "property"; col: number } | null>(null);
   const resizingStartX = useRef(0);
@@ -2467,24 +2467,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     }
   };
 
-  const looksLikeCzech = (t: string) => /[ěščřžýáíéúůďťň]/i.test(t);
-
-  /** Stáhne Definition IFC entity z bSDD a přidá do popisu objektu (odděleno řádkem). Při režimu AUTO/BSDD se angl. text přeloží. */
+  /** Stáhne Definition IFC entity z bSDD a přidá do popisu objektu (odděleno řádkem). */
   const fetchEntityDefinitionToPopis = useCallback(async () => {
     if (!object.ifcEntity?.trim()) return;
     setLoadingObjectDefinition("entity");
     try {
       const uri = getEntityClassUri(object.ifcEntity);
       if (!uri) return;
-      let def = await fetchClassDefinition(uri);
-      if (def && (translationMode === "AUTO" || translationMode === "BSDD") && !looksLikeCzech(def)) {
-        try {
-          const translated = await translateViaApi(def.trim(), "cs");
-          if (translated) def = translated;
-        } catch {
-          // ponechat původní
-        }
-      }
+      const def = await fetchClassDefinition(uri);
       if (def) {
         const current = (object.popis ?? "").trim();
         const next = current ? `${current}\n\n${def}` : def;
@@ -2493,9 +2483,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     } finally {
       setLoadingObjectDefinition(null);
     }
-  }, [object.ifcEntity, object.popis, updateObject, translationMode]);
+  }, [object.ifcEntity, object.popis, updateObject]);
 
-  /** Stáhne Definition PredefinedType z bSDD a přidá do popisu objektu (odděleno řádkem). Při režimu AUTO/BSDD se angl. text přeloží. */
+  /** Stáhne Definition PredefinedType z bSDD a přidá do popisu objektu (odděleno řádkem). */
   const fetchTypDefinitionToPopis = useCallback(async () => {
     const pt = object.predefinedType;
     const value = pt?.mode === "ENUM" || pt?.mode === "USERDEFINED" ? pt?.value?.trim() : "";
@@ -2504,15 +2494,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     try {
       const uri = getPredefinedTypeClassUri(object.ifcEntity, value);
       if (!uri) return;
-      let def = await fetchClassDefinition(uri);
-      if (def && (translationMode === "AUTO" || translationMode === "BSDD") && !looksLikeCzech(def)) {
-        try {
-          const translated = await translateViaApi(def.trim(), "cs");
-          if (translated) def = translated;
-        } catch {
-          // ponechat původní
-        }
-      }
+      const def = await fetchClassDefinition(uri);
       if (def) {
         const current = (object.popis ?? "").trim();
         const next = current ? `${current}\n\n${def}` : def;
@@ -2521,29 +2503,35 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     } finally {
       setLoadingObjectDefinition(null);
     }
-  }, [object.ifcEntity, object.predefinedType, object.popis, updateObject, translationMode]);
+  }, [object.ifcEntity, object.predefinedType, object.popis, updateObject]);
 
   /** Automatické vyplnění prázdných políček CZ z nastaveného zdroje překladu */
-  const shouldAutoFillCz = showCzTranslations && (czTranslationSource === "BSDD" || czTranslationSource === "AUTO");
+  const shouldAutoFillCz = showCzTranslations && (czTranslationSource === "BSDD" || czTranslationSource === "CUSTOM");
+  const projectCustomTranslations = project?.customTranslations;
 
+  /** Při změně entity nebo predefined type vyplní obě CZ políčka v jednom updateObject. Odloženo do dalšího tiku, aby přepnutí entity neblokovalo hlavní vlákno. */
   useEffect(() => {
-    if (!shouldAutoFillCz || !object.ifcEntity?.trim() || object.ifcEntityCz?.trim()) return;
+    if (!shouldAutoFillCz || !object.ifcEntity?.trim()) return;
+    const pt = object.predefinedType?.mode === "ENUM" || object.predefinedType?.mode === "USERDEFINED" ? object.predefinedType?.value?.trim() : "";
     const cancelled = { current: false };
-    translate(czTranslationSource, { type: "entity", officialName: object.ifcEntity }).then((r) => {
-      if (!cancelled.current && r.translated?.trim()) updateObject({ ifcEntityCz: r.translated.trim() });
-    });
-    return () => { cancelled.current = true; };
-  }, [shouldAutoFillCz, object.ifcEntity, object.ifcEntityCz, czTranslationSource, updateObject]);
-
-  useEffect(() => {
-    const pt = object.predefinedType?.mode === "ENUM" ? object.predefinedType?.value?.trim() : "";
-    if (!shouldAutoFillCz || !object.ifcEntity?.trim() || !pt || object.predefinedTypeCz?.trim()) return;
-    const cancelled = { current: false };
-    translate(czTranslationSource, { type: "predefinedType", officialName: pt, context: { entity: object.ifcEntity } }).then((r) => {
-      if (!cancelled.current && r.translated?.trim()) updateObject({ predefinedTypeCz: r.translated.trim() });
-    });
-    return () => { cancelled.current = true; };
-  }, [shouldAutoFillCz, object.ifcEntity, object.predefinedType, object.predefinedTypeCz, czTranslationSource, updateObject]);
+    const run = () => {
+      const entityPromise = translate(czTranslationSource, { type: "entity", officialName: object.ifcEntity }, project);
+      const ptPromise = pt
+        ? translate(czTranslationSource, { type: "predefinedType", officialName: pt, context: { entity: object.ifcEntity } }, project)
+        : Promise.resolve({ translated: null, source: null });
+      Promise.all([entityPromise, ptPromise]).then(([entityRes, ptRes]) => {
+        if (cancelled.current) return;
+        const ifcEntityCz = entityRes.translated?.trim() || undefined;
+        const predefinedTypeCz = pt ? (ptRes.translated?.trim() || undefined) : undefined;
+        updateObject({ ifcEntityCz, predefinedTypeCz });
+      });
+    };
+    const id = setTimeout(run, 0);
+    return () => {
+      cancelled.current = true;
+      clearTimeout(id);
+    };
+  }, [shouldAutoFillCz, object.ifcEntity, object.predefinedType?.mode, object.predefinedType?.value, czTranslationSource, projectCustomTranslations, updateObject]);
 
   const getAttributeDefinition = (attrName: string) => {
     const attrs = object.ifcEntity && schema?.entities[object.ifcEntity]?.attributes;
@@ -2680,8 +2668,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         let definitions: Record<string, string> = await fetchPsetOrQtoPropertyDefinitions(group.psetName);
         if (!definitions || typeof definitions !== "object") definitions = {};
         const updates = new Map<string, string>();
-        const shouldTranslate = translationMode === "AUTO" || translationMode === "BSDD";
-        const looksLikeCzech = (t: string) => /[ěščřžýáíéúůďťň]/i.test(t);
         for (const prop of group.properties) {
           const pn = (prop.propertyName ?? "").trim();
           if (!pn) continue;
@@ -2691,14 +2677,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             if (single) def = single;
           }
           if (def != null && typeof def === "string") {
-            if (shouldTranslate && def.trim() && !looksLikeCzech(def)) {
-              try {
-                const translated = await translateViaApi(def.trim(), "cs");
-                if (translated) def = translated;
-              } catch {
-                // ponechat původní
-              }
-            }
             updates.set(prop.id, def);
           }
         }
@@ -2716,7 +2694,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         setFillingDescriptionsGroupKey(null);
       }
     },
-    [propertyGroups, updateRequirements, translationMode]
+    [propertyGroups, updateRequirements]
   );
 
   const addAllFromSchema = (groupKeyValue: string) => {
@@ -3345,40 +3323,57 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const looksLikePlaceholderCz = useCallback((s: string | undefined) =>
     !!s?.trim() && /^NOVÝ\s+[0-9a-fA-F-]+/i.test(s.trim()), []);
 
-  /** Automatické vyplnění prázdných CZ políček u požadavků */
+  /** Jednorázové vyplnění prázdných CZ políček u požadavků – jedna dávková aktualizace, aby nedošlo k zavěšení (RESULT_CODE_HUNG). */
   useEffect(() => {
     if (!shouldAutoFillCz) return;
-    const fill = async () => {
-      for (const attr of object.requirements.attributes) {
+    const run = async () => {
+      const reqs = object.requirements;
+      const attrUpdates = new Map<string, string>();
+      const propPsetUpdates = new Map<string, string>();
+      const propNameUpdates = new Map<string, string>();
+      const relUpdates = new Map<string, string>();
+
+      for (const attr of reqs.attributes) {
         if (attr.attribute?.trim() && (!attr.attributeCz?.trim() || looksLikePlaceholderCz(attr.attributeCz))) {
-          const r = await translate(czTranslationSource, { type: "property", officialName: attr.attribute, context: { entity: object.ifcEntity } });
-          if (r.translated?.trim()) updateAttributeField(attr.id, { attributeCz: r.translated.trim() });
+          const r = await translate(czTranslationSource, { type: "property", officialName: attr.attribute, context: { entity: object.ifcEntity } }, project);
+          if (r.translated?.trim()) attrUpdates.set(attr.id, r.translated.trim());
         }
       }
-      for (const prop of object.requirements.properties) {
-        // Pro CUSTOM skupiny nepoužíváme bSDD, pouze AUTO překlad
-        const propCzSource = prop.source === "CUSTOM" && czTranslationSource === "BSDD" ? "AUTO" : czTranslationSource;
+      for (const prop of reqs.properties) {
         const needsPsetCz = prop.psetName?.trim() && !prop.psetName.startsWith("_NEW_") && (!prop.psetNameCz?.trim() || looksLikePlaceholderCz(prop.psetNameCz));
         if (needsPsetCz) {
           const type = prop.source === "CUSTOM" ? "property" : prop.psetName!.startsWith("Qto_") ? "qto" : "pset";
-          const r = await translate(propCzSource, { type, officialName: prop.psetName!, context: { entity: object.ifcEntity, psetName: prop.psetName } });
-          if (r.translated?.trim()) updatePropertyField(prop.id, { psetNameCz: r.translated.trim() });
+          const r = await translate(czTranslationSource, { type, officialName: prop.psetName!, context: { entity: object.ifcEntity, psetName: prop.psetName } }, project);
+          if (r.translated?.trim()) propPsetUpdates.set(prop.id, r.translated.trim());
         }
         const needsPropCz = prop.propertyName?.trim() && !prop.propertyName.startsWith("_NEW_") && (!prop.propertyNameCz?.trim() || looksLikePlaceholderCz(prop.propertyNameCz));
         if (needsPropCz) {
-          const r = await translate(propCzSource, { type: "property", officialName: prop.propertyName, context: { entity: object.ifcEntity, psetName: prop.psetName } });
-          if (r.translated?.trim()) updatePropertyField(prop.id, { propertyNameCz: r.translated.trim() });
+          const r = await translate(czTranslationSource, { type: "property", officialName: prop.propertyName, context: { entity: object.ifcEntity, psetName: prop.psetName } }, project);
+          if (r.translated?.trim()) propNameUpdates.set(prop.id, r.translated.trim());
         }
       }
-      for (const rel of object.requirements.relations) {
+      for (const rel of reqs.relations) {
         if (rel.entityType?.trim() && !rel.entityTypeCz?.trim()) {
-          const r = await translate(czTranslationSource, { type: "entity", officialName: rel.entityType });
-          if (r.translated?.trim()) updateRelationField(rel.id, { entityTypeCz: r.translated.trim() });
+          const r = await translate(czTranslationSource, { type: "entity", officialName: rel.entityType }, project);
+          if (r.translated?.trim()) relUpdates.set(rel.id, r.translated.trim());
         }
       }
+
+      if (attrUpdates.size === 0 && propPsetUpdates.size === 0 && propNameUpdates.size === 0 && relUpdates.size === 0) return;
+
+      updateRequirements((next) => {
+        next.attributes = next.attributes.map((a) => (attrUpdates.has(a.id) ? { ...a, attributeCz: attrUpdates.get(a.id) } : a));
+        next.properties = next.properties.map((p) => {
+          const psetCz = propPsetUpdates.get(p.id);
+          const nameCz = propNameUpdates.get(p.id);
+          if (!psetCz && !nameCz) return p;
+          return { ...p, ...(psetCz && { psetNameCz: psetCz }), ...(nameCz && { propertyNameCz: nameCz }) };
+        });
+        next.relations = next.relations.map((r) => (relUpdates.has(r.id) ? { ...r, entityTypeCz: relUpdates.get(r.id) } : r));
+      });
     };
-    void fill();
-  }, [shouldAutoFillCz, czTranslationSource, object.requirements.attributes, object.requirements.properties, object.requirements.relations, object.ifcEntity, looksLikePlaceholderCz, updateAttributeField, updatePropertyField, updateRelationField]);
+    void run();
+  }, [shouldAutoFillCz, czTranslationSource, projectCustomTranslations]);
 
   const removeRequirement = (type: keyof ProjectObject["requirements"], id: string) => {
     updateRequirements((reqs) => {
@@ -3425,10 +3420,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Název objektu: při primárním IFC = Entita.PredefinedType; při klasifikačním systému = název z klasifikace */}
-      <div className={`border-b px-4 py-3 ${isIncompleteCopy ? "border-red-300 bg-red-50" : "border-indigo-200 bg-gradient-to-r from-indigo-50 to-white"}`}>
+      <div className={`border-b px-4 py-3 ${isIncompleteCopy ? "border-red-300 bg-red-50" : "border-red-200 bg-gradient-to-r from-red-50 to-white"}`}>
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="h-8 w-1 flex-shrink-0 rounded-full bg-indigo-500"></div>
+            <div className="h-8 w-1 flex-shrink-0 rounded-full bg-red-500"></div>
             <div className="min-w-0 truncate text-xl font-bold text-slate-800">
               {isIfcPrimary && object.ifcEntity
                 ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
@@ -3516,13 +3511,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <>
                   <button
                     type="button"
-                    className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Stáhnout Definition IFC entity z bSDD do popisu"
                     onClick={fetchEntityDefinitionToPopis}
                     disabled={loadingObjectDefinition !== null}
                   >
                     {loadingObjectDefinition === "entity" ? (
-                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-red-600" />
                     ) : (
                       <>
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
@@ -3535,13 +3530,13 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   {(object.predefinedType?.mode === "ENUM" || object.predefinedType?.mode === "USERDEFINED") && object.predefinedType?.value && (
                     <button
                       type="button"
-                      className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       title="Stáhnout Definition PredefinedType z bSDD do popisu"
                       onClick={fetchTypDefinitionToPopis}
                       disabled={loadingObjectDefinition !== null}
                     >
                       {loadingObjectDefinition === "typ" ? (
-                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-red-600" />
                       ) : (
                         <>
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
@@ -3556,7 +3551,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               )}
             </div>
             <textarea
-              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
               placeholder="Popis objektu"
               value={object.popis ?? ""}
               onChange={(e) => updateObject({ popis: e.target.value || undefined })}
@@ -3567,7 +3562,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           <div className="min-w-0">
             <label className="mb-1 block text-xs font-semibold text-slate-600">Poznámka</label>
             <textarea
-              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
               placeholder="Poznámka k objektu"
               value={object.poznamka ?? ""}
               onChange={(e) => updateObject({ poznamka: e.target.value || undefined })}
@@ -3578,7 +3573,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           <div className="min-w-0">
             <label className="mb-1 block text-xs font-semibold text-slate-600">Příklady</label>
             <textarea
-              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
               placeholder="Příklady"
               value={object.priklady ?? ""}
               onChange={(e) => updateObject({ priklady: e.target.value || undefined })}
@@ -3604,7 +3599,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       >
       <div className="min-w-0 px-4 py-3">
         {isIfcPrimary && object.ifcEntity && !isCurrentSelectionInHierarchy && onAddToIfcHierarchy && !isLocked && (
-          <div className="mb-2 flex items-center justify-between gap-2 rounded border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800">
+          <div className="mb-2 flex items-center justify-between gap-2 rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800">
             <span>Vybraná entita <strong>{object.ifcEntity}</strong>
               {object.predefinedType.mode === "ENUM" && object.predefinedType.value ? (
                 <> a typ <strong>{object.predefinedType.value}</strong></>
@@ -3613,7 +3608,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             </span>
             <button
               type="button"
-              className="flex-shrink-0 rounded border border-indigo-300 bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-900 hover:bg-indigo-200"
+              className="flex-shrink-0 rounded border border-red-300 bg-red-100 px-2 py-1 text-xs font-medium text-red-900 hover:bg-red-200"
               onClick={() => onAddToIfcHierarchy(object.code)}
             >
               Přidat do hierarchie
@@ -3641,13 +3636,26 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   placeholder="-- Vyberte entitu --"
                 />
                 {showCzTranslations && object.ifcEntity && (
-                  <input
-                    className="min-w-[100px] max-w-[140px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
-                    placeholder="CZ"
-                    value={object.ifcEntityCz ?? ""}
-                    onChange={(e) => updateObject({ ifcEntityCz: e.target.value || undefined })}
-                    title="Překlad entity do češtiny"
-                  />
+                  <>
+                    <input
+                      className="min-w-[100px] max-w-[140px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                      placeholder="CZ"
+                      value={object.ifcEntityCz ?? ""}
+                      onChange={(e) => updateObject({ ifcEntityCz: e.target.value || undefined })}
+                      title="Překlad entity do češtiny"
+                    />
+                    {ifcSchemaVersion === "IFC4X3" && getBsddUrl("entity", object.ifcEntity, undefined, ifcSchemaVersion) && (
+                      <a
+                        href={getBsddUrl("entity", object.ifcEntity, undefined, ifcSchemaVersion)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center shrink-0 rounded px-2 py-1 text-xs font-semibold uppercase tracking-wide bg-slate-200 text-slate-600 hover:bg-red-700 hover:text-white transition-colors"
+                        title="Otevřít v buildingSMART Data Dictionary"
+                      >
+                        bSDD
+                      </a>
+                    )}
+                  </>
                 )}
                 <span className="text-xs text-slate-600 shrink-0">Fáze</span>
                 <PhaseSelector
@@ -3674,13 +3682,26 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   />
                 )}
                 {showCzTranslations && object.predefinedType.mode === "ENUM" && object.predefinedType.value && (
-                  <input
-                    className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
-                    placeholder="CZ"
-                    value={object.predefinedTypeCz ?? ""}
-                    onChange={(e) => updateObject({ predefinedTypeCz: e.target.value || undefined })}
-                    title="Překlad PredefinedType do češtiny"
-                  />
+                  <>
+                    <input
+                      className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                      placeholder="CZ"
+                      value={object.predefinedTypeCz ?? ""}
+                      onChange={(e) => updateObject({ predefinedTypeCz: e.target.value || undefined })}
+                      title="Překlad PredefinedType do češtiny"
+                    />
+                    {ifcSchemaVersion === "IFC4X3" && getBsddUrl("predefinedType", object.predefinedType.value, { entity: object.ifcEntity }, ifcSchemaVersion) && (
+                      <a
+                        href={getBsddUrl("predefinedType", object.predefinedType.value, { entity: object.ifcEntity }, ifcSchemaVersion)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center shrink-0 rounded px-2 py-1 text-xs font-semibold uppercase tracking-wide bg-slate-200 text-slate-600 hover:bg-red-700 hover:text-white transition-colors"
+                        title="Otevřít v buildingSMART Data Dictionary"
+                      >
+                        bSDD
+                      </a>
+                    )}
+                  </>
                 )}
                 <span className="text-xs text-slate-600 shrink-0">Fáze</span>
                 <PhaseSelector
@@ -3837,10 +3858,10 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId)?.name 
                     : cls.system;
                   return (
-                  <div key={cls.id || idx} className={`rounded px-2 py-1.5 text-xs ${cls.readOnly ? "bg-indigo-100 border border-indigo-200" : "bg-white border border-slate-200"}`}>
+                  <div key={cls.id || idx} className={`rounded px-2 py-1.5 text-xs ${cls.readOnly ? "bg-red-100 border border-red-200" : "bg-white border border-slate-200"}`}>
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-semibold text-slate-800">{cls.value || cls.identification || cls.code || "—"}</span>
-                      {cls.readOnly && <span className="rounded bg-indigo-500 px-1.5 py-0.5 text-[10px] font-medium text-white">Primární</span>}
+                      {cls.readOnly && <span className="rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-medium text-white">Primární</span>}
                     </div>
                     <div className="mt-0.5 text-slate-500">
                       {displaySystemName && <span>{displaySystemName}</span>}
@@ -3853,7 +3874,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
               <div className="text-xs text-slate-500 italic">Žádná klasifikace</div>
             )}
             <button 
-              className="mt-2 text-xs text-indigo-600 hover:underline" 
+              className="mt-2 text-xs text-red-600 hover:underline" 
               onClick={() => setActiveTab("classification")}
             >
               Upravit klasifikace →
@@ -3907,7 +3928,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <div className="text-xs text-slate-500 italic">Žádné atributy</div>
               )}
               <button 
-                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                className="mt-2 text-xs text-red-600 hover:underline" 
                 onClick={() => setActiveTab("attributes")}
               >
                 Upravit atributy →
@@ -3959,7 +3980,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <div className="text-xs text-slate-500 italic">Žádné vlastnosti</div>
               )}
               <button 
-                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                className="mt-2 text-xs text-red-600 hover:underline" 
                 onClick={() => setActiveTab("properties")}
               >
                 Upravit vlastnosti →
@@ -4011,7 +4032,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <div className="text-xs text-slate-500 italic">Žádné součásti</div>
               )}
               <button 
-                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                className="mt-2 text-xs text-red-600 hover:underline" 
                 onClick={() => setActiveTab("partOf")}
               >
                 Upravit součásti →
@@ -4062,7 +4083,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <div className="text-xs text-slate-500 italic">Žádný materiál</div>
               )}
               <button 
-                className="mt-2 text-xs text-indigo-600 hover:underline" 
+                className="mt-2 text-xs text-red-600 hover:underline" 
                 onClick={() => setActiveTab("material")}
               >
                 Upravit materiál →
@@ -4090,7 +4111,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           {(Object.keys(TAB_LABELS) as TabKey[]).map((key) => (
             <button
               key={key}
-              className={`px-3 py-2 text-sm ${activeTab === key ? "border-b-2 border-indigo-600 font-semibold text-indigo-700" : "text-slate-600 hover:text-slate-800"}`}
+              className={`px-3 py-2 text-sm ${activeTab === key ? "border-b-2 border-red-600 font-semibold text-red-700" : "text-slate-600 hover:text-slate-800"}`}
               onClick={() => setActiveTab(key)}
             >
               {TAB_LABELS[key]}
@@ -4109,7 +4130,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   label="Attribute Facet"
                   type="ids"
                 />
-                <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addAttribute}>
+                <button className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500" onClick={addAttribute}>
                   Přidat atribut
                 </button>
                 {visibleAttributes.length > 0 && (
@@ -4132,7 +4153,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <div className="flex items-center justify-between gap-2 px-3 py-1">
                               <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
                               <div className="flex gap-1">
-                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set())}>Zobrazit vše</button>
+                                <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
                                 <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
                               </div>
@@ -4141,7 +4162,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               const idx = Number(k);
                               return (
                                 <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
-                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenAttributeColumns.has(idx)} onChange={() => toggleAttributeColumn(idx)} />
+                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-red-600" checked={hiddenAttributeColumns.has(idx)} onChange={() => toggleAttributeColumn(idx)} />
                                   {label}
                                 </label>
                               );
@@ -4159,7 +4180,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </button>
                     {selectedAttributes.size > 0 && onDuplicateAttributesToObjects && (
                       <button
-                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                         onClick={() => setDuplicateToObjectsDialogType("attributes")}
                       >
                         Duplikovat do…
@@ -4195,25 +4216,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       {!hiddenAttributeColumns.has(0) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1" />
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[0] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[0]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[0] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[0]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(1) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Výskyt</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[1] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[1]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[1] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[1]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(2) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Atribut</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[2] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[2]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[2] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[2]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(3) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Datový typ</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[3] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[3]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[3] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[3]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(4) && (
@@ -4222,58 +4243,58 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <span>Omezení</span>
                             <DocLink href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" label="Restrictions" type="ids" />
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[4] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[4]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[4] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[4]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(5) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Hodnota</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[5] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[5]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[5] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[5]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(6) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">URI</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[6] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[6]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[6] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[6]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(7) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Popis</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[7] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[7]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[7] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[7]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(8) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Poznámka</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[8] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[8]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[8] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[8]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(9) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Příklady</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[9] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[9]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[9] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(10) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Fáze</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[10] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[10] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[10]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(11) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
-                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[11] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[11] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(12) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[12] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[12]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[12] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[12]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -4299,7 +4320,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         <tr key={attr.id} className={`border-t border-slate-200 ${showAttrWarning ? "bg-red-50/50" : ""}`}>
                           {!hiddenAttributeColumns.has(0) && (
                             <td className="px-2 py-2">
-                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" checked={selectedAttributes.has(attr.id)} onChange={() => toggleAttributeSelection(attr.id)} />
+                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500" checked={selectedAttributes.has(attr.id)} onChange={() => toggleAttributeSelection(attr.id)} />
                             </td>
                           )}
                           {!hiddenAttributeColumns.has(1) && (
@@ -4391,7 +4412,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       href="https://regex101.com/"
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="flex items-center text-slate-500 hover:text-indigo-600"
+                                      className="flex items-center text-slate-500 hover:text-red-600"
                                       title="Otevřít regex tester (regex101)"
                                       onClick={(e) => e.stopPropagation()}
                                     >
@@ -4735,7 +4756,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <div className="flex items-center justify-between gap-2 px-3 py-1">
                               <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
                               <div className="flex gap-1">
-                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set())}>Zobrazit vše</button>
+                                <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
                                 <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))}>Skrýt vše</button>
                               </div>
@@ -4746,7 +4767,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
                                 <input
                                   type="checkbox"
-                                  className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+                                  className="h-4 w-4 rounded border-slate-300 text-red-600"
                                   checked={hiddenPropertyColumns.has(idx)}
                                   onChange={() => togglePropertyColumn(idx)}
                                 />
@@ -4766,7 +4787,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </button>
                     {selectedGroups.size > 0 && onDuplicatePropertyGroupsToObjects && (
                       <button
-                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                         onClick={() => setDuplicatePropertyGroupsDialogOpen(true)}
                       >
                         Duplikovat do…
@@ -4873,7 +4894,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <div className="flex flex-wrap items-center gap-2">
                         <input
                           type="checkbox"
-                          className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500"
                           checked={selectedGroups.has(group.key)}
                           onChange={() => toggleGroupSelection(group.key)}
                           onClick={(e) => e.stopPropagation()}
@@ -5053,25 +5074,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       </button>
                                     )}
                                     <span className="block pr-1" />
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[0] ?? DEFAULT_PROPERTY_COL_WIDTHS[0]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[0] ?? DEFAULT_PROPERTY_COL_WIDTHS[0]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(1) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Výskyt</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[1] ?? DEFAULT_PROPERTY_COL_WIDTHS[1]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[1] ?? DEFAULT_PROPERTY_COL_WIDTHS[1]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(2) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Vlastnost</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[2] ?? DEFAULT_PROPERTY_COL_WIDTHS[2]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[2] ?? DEFAULT_PROPERTY_COL_WIDTHS[2]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(3) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Datový typ</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[3] ?? DEFAULT_PROPERTY_COL_WIDTHS[3]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[3] ?? DEFAULT_PROPERTY_COL_WIDTHS[3]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(4) && (
@@ -5080,25 +5101,25 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                       <span>Omezení</span>
                                       <DocLink href="https://github.com/buildingSMART/IDS/blob/development/Documentation/UserManual/restrictions.md" label="Restrictions" type="ids" />
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[4] ?? DEFAULT_PROPERTY_COL_WIDTHS[4]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[4] ?? DEFAULT_PROPERTY_COL_WIDTHS[4]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(5) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Hodnota</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[5] ?? DEFAULT_PROPERTY_COL_WIDTHS[5]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[5] ?? DEFAULT_PROPERTY_COL_WIDTHS[5]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(6) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Jednotka</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[6] ?? DEFAULT_PROPERTY_COL_WIDTHS[6]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[6] ?? DEFAULT_PROPERTY_COL_WIDTHS[6]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(7) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">URI</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[7] ?? DEFAULT_PROPERTY_COL_WIDTHS[7]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(8) && (
@@ -5106,34 +5127,34 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     <div className="flex items-center gap-1 pr-1">
                                       <span>Popis</span>
                                       {(group.source === "PSET" || group.source === "QTO") && group.psetName && !isTempGroup && (
-                                        <button type="button" className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-slate-600 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium" title="Propíš z bSDD Definition do sloupce Popis u všech vlastností v této skupině" onClick={() => fillDescriptionsFromBsdd(group.key)} disabled={fillingDescriptionsGroupKey === group.key}>
-                                          {fillingDescriptionsGroupKey === group.key ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" /> : <><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0"><path d="m6 9 6 6 6-6" /></svg><span>bSDD</span></>}
+                                        <button type="button" className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium" title="Propíš z bSDD Definition do sloupce Popis u všech vlastností v této skupině" onClick={() => fillDescriptionsFromBsdd(group.key)} disabled={fillingDescriptionsGroupKey === group.key}>
+                                          {fillingDescriptionsGroupKey === group.key ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-red-600" /> : <><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0"><path d="m6 9 6 6 6-6" /></svg><span>bSDD</span></>}
                                         </button>
                                       )}
                                       <span>· Poznámka · Příklady</span>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[8] ?? DEFAULT_PROPERTY_COL_WIDTHS[8]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(9) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Fáze</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[11] ?? DEFAULT_PROPERTY_COL_WIDTHS[11]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[11] ?? DEFAULT_PROPERTY_COL_WIDTHS[11]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(9) && (
                                   <th className="px-2 py-2 text-center relative select-none">
                                     <div className="flex items-center justify-center gap-1 pr-1">
                                       <span>Použitelnost</span>
-                                      <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                                      <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[12] ?? DEFAULT_PROPERTY_COL_WIDTHS[12]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[12] ?? DEFAULT_PROPERTY_COL_WIDTHS[12]; }} aria-hidden />
                                   </th>
                                 )}
                                 {!hiddenPropertyColumns.has(11) && (
                                   <th className="px-2 py-2 text-right relative select-none">
                                     <span className="block pr-1">Akce</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 13 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[13] ?? DEFAULT_PROPERTY_COL_WIDTHS[13]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 13 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[13] ?? DEFAULT_PROPERTY_COL_WIDTHS[13]; }} aria-hidden />
                                   </th>
                                 )}
                               </tr>
@@ -5152,7 +5173,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     <td className="px-2 py-2">
                                       <input
                                         type="checkbox"
-                                        className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                        className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500"
                                         checked={selectedProperties.has(prop.id)}
                                         onChange={() => togglePropertySelection(prop.id)}
                                       />
@@ -5302,7 +5323,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                               href="https://regex101.com/"
                                               target="_blank"
                                               rel="noreferrer"
-                                              className="flex items-center text-slate-500 hover:text-indigo-600"
+                                              className="flex items-center text-slate-500 hover:text-red-600"
                                               title="Otevřít regex tester (regex101)"
                                               onClick={(e) => e.stopPropagation()}
                                             >
@@ -5982,7 +6003,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     Neukládat
                   </button>
                   <button
-                    className="rounded bg-indigo-600 px-3 py-1 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                    className="rounded bg-red-600 px-3 py-1 text-sm font-semibold text-white hover:bg-red-500 disabled:opacity-50"
                     onClick={() => {
                       onSaveEnumAsCodeList({
                         objectCode: object.code,
@@ -6023,7 +6044,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 </div>
                 <div className="mt-4 flex justify-end">
                   <button
-                    className="rounded bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500"
+                    className="rounded bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500"
                     onClick={() => setShowRelationHelpModal(false)}
                   >
                     Zavřít
@@ -6041,7 +6062,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   label="PartOf Facet"
                   type="ids"
                 />
-                <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addRelation}>
+                <button className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500" onClick={addRelation}>
                   Přidat vztah
                 </button>
                 {object.requirements.relations.length > 0 && (
@@ -6058,7 +6079,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <div className="flex items-center justify-between gap-2 px-3 py-1">
                               <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
                               <div className="flex gap-1">
-                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set())}>Zobrazit vše</button>
+                                <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
                                 <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set([0,1,2,3,4,5,6,7,8,9,10]))}>Skrýt vše</button>
                               </div>
@@ -6067,7 +6088,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               const idx = Number(k);
                               return (
                                 <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
-                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenPartOfColumns.has(idx)} onChange={() => togglePartOfColumn(idx)} />
+                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-red-600" checked={hiddenPartOfColumns.has(idx)} onChange={() => togglePartOfColumn(idx)} />
                                   {label}
                                 </label>
                               );
@@ -6085,7 +6106,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </button>
                     {selectedRelations.size > 0 && onDuplicateRelationsToObjects && (
                       <button
-                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                         onClick={() => setDuplicateToObjectsDialogType("partOf")}
                       >
                         Duplikovat do…
@@ -6121,76 +6142,76 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       {!hiddenPartOfColumns.has(0) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1" />
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[0] ?? DEFAULT_PARTOF_COL_WIDTHS[0]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[0] ?? DEFAULT_PARTOF_COL_WIDTHS[0]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(1) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Výskyt</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[1] ?? DEFAULT_PARTOF_COL_WIDTHS[1]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[1] ?? DEFAULT_PARTOF_COL_WIDTHS[1]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(2) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Součást entity</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[2] ?? DEFAULT_PARTOF_COL_WIDTHS[2]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[2] ?? DEFAULT_PARTOF_COL_WIDTHS[2]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(3) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">PredefinedType</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[3] ?? DEFAULT_PARTOF_COL_WIDTHS[3]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[3] ?? DEFAULT_PARTOF_COL_WIDTHS[3]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(4) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Vztah</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[4] ?? DEFAULT_PARTOF_COL_WIDTHS[4]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[4] ?? DEFAULT_PARTOF_COL_WIDTHS[4]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(5) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">URI</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[5] ?? DEFAULT_PARTOF_COL_WIDTHS[5]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[5] ?? DEFAULT_PARTOF_COL_WIDTHS[5]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(6) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Popis</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[6] ?? DEFAULT_PARTOF_COL_WIDTHS[6]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[6] ?? DEFAULT_PARTOF_COL_WIDTHS[6]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(7) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Poznámka</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[7] ?? DEFAULT_PARTOF_COL_WIDTHS[7]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[7] ?? DEFAULT_PARTOF_COL_WIDTHS[7]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(8) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Příklady</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[8] ?? DEFAULT_PARTOF_COL_WIDTHS[8]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[8] ?? DEFAULT_PARTOF_COL_WIDTHS[8]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(9) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Fáze</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[9] ?? DEFAULT_PARTOF_COL_WIDTHS[9]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[9] ?? DEFAULT_PARTOF_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(9) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
-                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(11) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[11] ?? DEFAULT_PARTOF_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[11] ?? DEFAULT_PARTOF_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -6206,7 +6227,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         <tr key={rel.id} className="border-t border-slate-200">
                           {!hiddenPartOfColumns.has(0) && (
                             <td className="px-2 py-2">
-                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" checked={selectedRelations.has(rel.id)} onChange={() => toggleRelationSelection(rel.id)} />
+                              <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500" checked={selectedRelations.has(rel.id)} onChange={() => toggleRelationSelection(rel.id)} />
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(1) && (
@@ -6289,7 +6310,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               </select>
                               <button
                                 type="button"
-                                className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0"
+                                className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0"
                                 onClick={() => setShowRelationHelpModal(true)}
                                 title="Zobrazit nápovědu k typům vztahů"
                               >
@@ -6361,7 +6382,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   label="Material Facet"
                   type="ids"
                 />
-                <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addMaterial}>
+                <button className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500" onClick={addMaterial}>
                   Přidat materiál
                 </button>
                 {object.requirements.materials.length > 0 && (
@@ -6378,7 +6399,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             <div className="flex items-center justify-between gap-2 px-3 py-1">
                               <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
                               <div className="flex gap-1">
-                                <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set())}>Zobrazit vše</button>
+                                <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
                                 <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set([0,1,2,3,4,5,6,7,8,9,10]))}>Skrýt vše</button>
                               </div>
@@ -6387,7 +6408,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                               const idx = Number(k);
                               return (
                                 <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
-                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenMaterialColumns.has(idx)} onChange={() => toggleMaterialColumn(idx)} />
+                                  <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-red-600" checked={hiddenMaterialColumns.has(idx)} onChange={() => toggleMaterialColumn(idx)} />
                                   {label}
                                 </label>
                               );
@@ -6405,7 +6426,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </button>
                     {selectedMaterials.size > 0 && onDuplicateMaterialsToObjects && (
                       <button
-                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                         onClick={() => setDuplicateToObjectsDialogType("material")}
                       >
                         Duplikovat do…
@@ -6441,70 +6462,70 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       {!hiddenMaterialColumns.has(0) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1" />
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[0] ?? DEFAULT_MATERIAL_COL_WIDTHS[0]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[0] ?? DEFAULT_MATERIAL_COL_WIDTHS[0]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(1) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Výskyt</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[1] ?? DEFAULT_MATERIAL_COL_WIDTHS[1]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[1] ?? DEFAULT_MATERIAL_COL_WIDTHS[1]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(2) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Omezení</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[2] ?? DEFAULT_MATERIAL_COL_WIDTHS[2]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[2] ?? DEFAULT_MATERIAL_COL_WIDTHS[2]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(3) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Hodnota</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[3] ?? DEFAULT_MATERIAL_COL_WIDTHS[3]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[3] ?? DEFAULT_MATERIAL_COL_WIDTHS[3]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(4) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">URI</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[4] ?? DEFAULT_MATERIAL_COL_WIDTHS[4]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[4] ?? DEFAULT_MATERIAL_COL_WIDTHS[4]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(5) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Popis</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[5] ?? DEFAULT_MATERIAL_COL_WIDTHS[5]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[5] ?? DEFAULT_MATERIAL_COL_WIDTHS[5]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(6) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Poznámka</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[6] ?? DEFAULT_MATERIAL_COL_WIDTHS[6]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[6] ?? DEFAULT_MATERIAL_COL_WIDTHS[6]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(7) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Příklady</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[7] ?? DEFAULT_MATERIAL_COL_WIDTHS[7]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[7] ?? DEFAULT_MATERIAL_COL_WIDTHS[7]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(8) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Fáze</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[8] ?? DEFAULT_MATERIAL_COL_WIDTHS[8]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[8] ?? DEFAULT_MATERIAL_COL_WIDTHS[8]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(9) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
-                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[9] ?? DEFAULT_MATERIAL_COL_WIDTHS[9]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[9] ?? DEFAULT_MATERIAL_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(10) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[10] ?? DEFAULT_MATERIAL_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[10] ?? DEFAULT_MATERIAL_COL_WIDTHS[10]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -6514,7 +6535,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <tr key={mat.id} className="border-t border-slate-200">
                         {!hiddenMaterialColumns.has(0) && (
                           <td className="px-2 py-2">
-                            <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" checked={selectedMaterials.has(mat.id)} onChange={() => toggleMaterialSelection(mat.id)} />
+                            <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500" checked={selectedMaterials.has(mat.id)} onChange={() => toggleMaterialSelection(mat.id)} />
                           </td>
                         )}
                         {!hiddenMaterialColumns.has(1) && (
@@ -6585,7 +6606,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                     href="https://regex101.com/"
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="flex items-center text-slate-500 hover:text-indigo-600"
+                                    className="flex items-center text-slate-500 hover:text-red-600"
                                     title="Otevřít regex tester (regex101)"
                                     onClick={(e) => e.stopPropagation()}
                                   >
@@ -7010,7 +7031,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   label="Classification Facet"
                   type="ids"
                 />
-                <button className="rounded bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-500" onClick={addClassification}>
+                <button className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500" onClick={addClassification}>
                   Přidat klasifikaci
                 </button>
                 {classificationsWithoutIfc.length > 0 && (
@@ -7026,7 +7047,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           <div className="flex items-center justify-between gap-2 px-3 py-1">
                             <span className="text-[11px] font-semibold uppercase text-slate-500">Sloupce</span>
                             <div className="flex gap-1">
-                              <button type="button" className="text-[10px] text-indigo-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set())}>Zobrazit vše</button>
+                              <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set())}>Zobrazit vše</button>
                               <span className="text-slate-300">|</span>
                               <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
                             </div>
@@ -7035,7 +7056,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                             const idx = Number(k);
                             return (
                               <label key={idx} className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-50">
-                                <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-indigo-600" checked={hiddenClassificationColumns.has(idx)} onChange={() => toggleClassificationColumn(idx)} />
+                                <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-red-600" checked={hiddenClassificationColumns.has(idx)} onChange={() => toggleClassificationColumn(idx)} />
                                 {label}
                               </label>
                             );
@@ -7056,7 +7077,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </button>
                     {selectedClassifications.size > 0 && onDuplicateClassificationsToObjects && (
                       <button
-                        className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
+                        className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
                         onClick={() => setDuplicateToObjectsDialogType("classification")}
                       >
                         Duplikovat do…
@@ -7091,76 +7112,76 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       {!hiddenClassificationColumns.has(0) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1" />
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[0] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[0]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 0 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[0] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[0]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(1) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Výskyt</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[1] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[1]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 1 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[1] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[1]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(2) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Klasifikační systém</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[2] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[2]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 2 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[2] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[2]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(3) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Omezení</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[3] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[3]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[3] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[3]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(4) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Hodnota</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[4] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[4]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[4] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[4]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(5) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">URI</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[5] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[5]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[5] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[5]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(6) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Popis</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[6] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[6]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[6] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[6]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(7) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Poznámka</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[7] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[7]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[7] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[7]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(8) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Příklady</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[8] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[8]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[8] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[8]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(9) && (
                         <th className="px-2 py-2 relative select-none">
                           <span className="block pr-1">Fáze</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[9] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[9]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[9] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(10) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
-                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-indigo-100 hover:text-indigo-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
+                            <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[10] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[10] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[10]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(11) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-indigo-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[11] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[11] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -7170,7 +7191,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <tr key={cls.id} className="border-t border-slate-200">
                         {!hiddenClassificationColumns.has(0) && (
                           <td className="px-2 py-2">
-                            <input type="checkbox" className={`h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 ${cls.readOnly ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`} checked={selectedClassifications.has(cls.id)} onChange={() => !cls.readOnly && toggleClassificationSelection(cls.id)} disabled={cls.readOnly} title={cls.readOnly ? "Primární klasifikace - nelze vybrat" : ""} />
+                            <input type="checkbox" className={`h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 ${cls.readOnly ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`} checked={selectedClassifications.has(cls.id)} onChange={() => !cls.readOnly && toggleClassificationSelection(cls.id)} disabled={cls.readOnly} title={cls.readOnly ? "Primární klasifikace - nelze vybrat" : ""} />
                           </td>
                         )}
                         {!hiddenClassificationColumns.has(1) && (
@@ -7432,7 +7453,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                       <button
                         className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
                           effectivePhaseId === null
-                            ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
+                            ? "bg-red-100 text-red-700 border-b-2 border-red-500"
                             : "text-slate-600 hover:bg-slate-100"
                         }`}
                         onClick={() => setSelectedPhaseId(null)}
@@ -7444,7 +7465,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                           key={phase.id}
                           className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
                             effectivePhaseId === phase.id
-                              ? "bg-indigo-100 text-indigo-700 border-b-2 border-indigo-500"
+                              ? "bg-red-100 text-red-700 border-b-2 border-red-500"
                               : "text-slate-600 hover:bg-slate-100"
                           }`}
                           onClick={() => setSelectedPhaseId(phase.id)}
@@ -7483,7 +7504,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </span>
                   )}
                   <button
-                    className={`text-sm text-white px-3 py-1.5 rounded flex items-center gap-1.5 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
+                    className={`text-sm text-white px-3 py-1.5 rounded flex items-center gap-1.5 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-red-600 hover:bg-red-700"}`}
                     onClick={() => hasErrors || setIsExportIdsDialogOpen(true)}
                     disabled={hasErrors}
                     title={hasErrors ? "Opravte chyby před exportem" : "Export IDS – výběr fáze, výskytu a metadata"}
@@ -7548,7 +7569,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   <button
                     className={`px-4 py-2 text-sm font-medium transition-colors ${
                       idsSubTab === "readable"
-                        ? "border-b-2 border-indigo-500 text-indigo-600"
+                        ? "border-b-2 border-red-500 text-red-600"
                         : "text-slate-600 hover:text-slate-800"
                     }`}
                     onClick={() => setIdsSubTab("readable")}
@@ -7558,7 +7579,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   <button
                     className={`px-4 py-2 text-sm font-medium transition-colors ${
                       idsSubTab === "schema"
-                        ? "border-b-2 border-indigo-500 text-indigo-600"
+                        ? "border-b-2 border-red-500 text-red-600"
                         : "text-slate-600 hover:text-slate-800"
                     }`}
                     onClick={() => setIdsSubTab("schema")}
@@ -7568,7 +7589,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   <button
                     className={`px-4 py-2 text-sm font-medium transition-colors ${
                       idsSubTab === "metadata"
-                        ? "border-b-2 border-indigo-500 text-indigo-600"
+                        ? "border-b-2 border-red-500 text-red-600"
                         : "text-slate-600 hover:text-slate-800"
                     }`}
                     onClick={() => setIdsSubTab("metadata")}
@@ -7609,7 +7630,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 return (
                   <div className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-700">
                     {currentPhase && (
-                      <div className="text-xs text-indigo-600 font-semibold mb-3">
+                      <div className="text-xs text-red-600 font-semibold mb-3">
                         Fáze: {currentPhase.code} - {currentPhase.name}
                       </div>
                     )}
@@ -7626,7 +7647,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         {applicability.length > 0 && (
                           <div className="mb-4">
                             <div className="font-semibold text-slate-800 mb-2">
-                              Model <span className="text-indigo-600">MUSÍ</span> obsahovat entity, které mají:
+                              Model <span className="text-red-600">MUSÍ</span> obsahovat entity, které mají:
                             </div>
                             <ul className="list-disc pl-5 space-y-1">
                               {applicability.map((item, idx) => (
@@ -7648,7 +7669,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                                   key={idx} 
                                   dangerouslySetInnerHTML={{ 
                                     __html: item
-                                      .replace(/\*\*MUSÍ\*\*/g, '<strong class="text-indigo-600">MUSÍ</strong>')
+                                      .replace(/\*\*MUSÍ\*\*/g, '<strong class="text-red-600">MUSÍ</strong>')
                                       .replace(/\*\*NESMÍ\*\*/g, '<strong class="text-red-600">NESMÍ</strong>')
                                       .replace(/\*\*MŮŽE\*\*/g, '<strong class="text-amber-600">MŮŽE</strong>')
                                       .replace(/\*\*([^*]+)\*\*/g, '<strong class="text-slate-900">$1</strong>')
@@ -7686,7 +7707,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 return (
                 <div className="space-y-2">
                   {currentPhase && (
-                    <div className="text-xs text-indigo-600 font-semibold">
+                    <div className="text-xs text-red-600 font-semibold">
                       Fáze: {currentPhase.code} - {currentPhase.name}
                     </div>
                   )}
@@ -7696,7 +7717,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                        className="text-xs text-red-600 hover:text-red-800 flex items-center gap-1"
                         onClick={() => {
                           navigator.clipboard.writeText(xml).then(() => {
                             // Could add a toast notification here
@@ -7711,7 +7732,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                         Kopírovat
                       </button>
                       <button
-                        className={`text-xs text-white px-2 py-1 rounded flex items-center gap-1 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-700"}`}
+                        className={`text-xs text-white px-2 py-1 rounded flex items-center gap-1 ${hasErrors ? "bg-slate-400 cursor-not-allowed" : "bg-red-600 hover:bg-red-700"}`}
                         onClick={() => {
                           if (hasErrors) return;
                           // Export always uses full XML (no occurrence filter)

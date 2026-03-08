@@ -15,7 +15,7 @@ export interface TranslationRequest {
 
 export interface TranslationResult {
   translated: string | null;
-  source: "bsdd" | "auto" | null;
+  source: "bsdd" | "auto" | "custom" | null;
 }
 
 /** bSDD base URL pro IFC 4.3 */

@@ -193,7 +193,7 @@ export const ExcelExportDialog: React.FC<Props> = ({
         {/* Selection controls */}
         <div className="flex-shrink-0 border-b border-slate-200 px-6 py-3 flex items-center justify-between bg-slate-50">
           <div className="text-sm text-slate-600">
-            Vybráno: <span className="font-semibold text-indigo-600">{selectedCount}</span> z {SHEETS.length} listů
+            Vybráno: <span className="font-semibold text-red-600">{selectedCount}</span> z {SHEETS.length} listů
           </div>
           <div className="flex gap-2">
             <button
@@ -223,7 +223,7 @@ export const ExcelExportDialog: React.FC<Props> = ({
                   <label
                     className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
                       isSelected
-                        ? "bg-indigo-50 border-indigo-200"
+                        ? "bg-red-50 border-red-200"
                         : "bg-white border-slate-200 hover:border-slate-300"
                     }`}
                   >
@@ -231,19 +231,19 @@ export const ExcelExportDialog: React.FC<Props> = ({
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => toggleSheet(sheet.key)}
-                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
                     />
-                    <div className={`flex-shrink-0 ${isSelected ? "text-indigo-600" : "text-slate-400"}`}>
+                    <div className={`flex-shrink-0 ${isSelected ? "text-red-600" : "text-slate-400"}`}>
                       {sheet.icon}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className={`text-sm font-medium ${isSelected ? "text-indigo-700" : "text-slate-700"}`}>
+                        <span className={`text-sm font-medium ${isSelected ? "text-red-700" : "text-slate-700"}`}>
                           {sheet.name}
                         </span>
                         {count !== null && (
                           <span className={`text-xs px-1.5 py-0.5 rounded ${
-                            isSelected ? "bg-indigo-100 text-indigo-600" : "bg-slate-100 text-slate-500"
+                            isSelected ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-500"
                           }`}>
                             {count} {count === 1 ? "záznam" : count >= 2 && count <= 4 ? "záznamy" : "záznamů"}
                           </span>
@@ -265,7 +265,7 @@ export const ExcelExportDialog: React.FC<Props> = ({
                                   zdrojExportAutorskeNastroje: !prev.zdrojExportAutorskeNastroje,
                                 }))
                               }
-                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
                             />
                             <span className="text-xs text-slate-600">
                               Exportovat klasifikaci dle autorských nástrojů
@@ -284,7 +284,7 @@ export const ExcelExportDialog: React.FC<Props> = ({
                                   exportCzTranslations: !prev.exportCzTranslations,
                                 }))
                               }
-                              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                              className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
                             />
                             <span className="text-xs text-slate-600">
                               Exportovat překlady CZ (sloupce *_CZ)
