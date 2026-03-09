@@ -22,7 +22,7 @@ import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata,
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
 import { EntitySelect } from "./EntitySelect";
-import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition, fetchClassDefinition, getEntityClassUri, getPredefinedTypeClassUri } from "../../translation/translators/BsddTranslator";
+import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition } from "../../translation/translators/BsddTranslator";
 import { getBsddUrl } from "../../translation/getBsddUrl";
 import { translate } from "../../translation/TranslationService";
 import { useTranslation } from "../../translation/TranslationContext";
@@ -2096,8 +2096,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const [partOfColumnMenuOpen, setPartOfColumnMenuOpen] = useState(false);
   const [materialColumnMenuOpen, setMaterialColumnMenuOpen] = useState(false);
   const [classificationColumnMenuOpen, setClassificationColumnMenuOpen] = useState(false);
-  /** Načítání Definition pro popis objektu: "entity" | "typ" | null */
-  const [loadingObjectDefinition, setLoadingObjectDefinition] = useState<"entity" | "typ" | null>(null);
   const { showCzTranslations, czTranslationSource } = useTranslation();
   /** Kontext roztahování: tabulka + index sloupce */
   const [resizingContext, setResizingContext] = useState<{ table: "attribute" | "partOf" | "material" | "classification" | "property"; col: number } | null>(null);
@@ -2243,6 +2241,22 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  const objectRef = useRef(object);
+  useEffect(() => {
+    objectRef.current = object;
+  }, [object]);
+
+  const pendingUpdatesRef = useRef<Partial<ProjectObject>>({});
+  useEffect(() => {
+    pendingUpdatesRef.current = {};
+  }, [object]);
+
+  const updateObject = useCallback((partial: Partial<ProjectObject>) => {
+    if (isLocked) return;
+    pendingUpdatesRef.current = { ...pendingUpdatesRef.current, ...partial };
+    onChangeRef.current({ ...objectRef.current, ...pendingUpdatesRef.current });
+  }, [isLocked]);
+
   // Vyčistit propertyName, které obsahují _NEW_ nebo se shodují s psetName
   useEffect(() => {
     const needsCleanup = object.requirements.properties.some((prop) => {
@@ -2267,7 +2281,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         classifications: [...object.requirements.classifications],
         materials: [...object.requirements.materials],
       };
-      onChangeRef.current({ ...object, requirements: next });
+      updateObject({ requirements: next });
     }
   }, [object.requirements.properties, object]);
 
@@ -2276,8 +2290,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     const hasPredefinedTypeAttr = object.requirements.attributes.some((a) => a.attribute === "PredefinedType");
     if (hasPredefinedTypeAttr) {
       const nextAttrs = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
-      onChangeRef.current({
-        ...object,
+      updateObject({
         requirements: { ...object.requirements, attributes: nextAttrs },
       });
     }
@@ -2406,11 +2419,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       .map((g) => ({ key: g.key, source: g.source, name: g.psetName as string }));
   }, [propertyGroups, selectedEntity, effectivePredefinedValue, allowedPsets, allowedQtos]);
 
-  const updateObject = (partial: Partial<ProjectObject>) => {
-    if (isLocked) return;
-    onChange({ ...object, ...partial });
-  };
-
   const updateRequirements = useCallback((updater: (requirements: ProjectObject["requirements"]) => void) => {
     const next = {
       ...object.requirements,
@@ -2423,18 +2431,18 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     updater(next);
     // Vždy vytvořit nové pole pro properties (pro React re-render)
     next.properties = [...next.properties];
-    onChangeRef.current({ ...object, requirements: next });
-  }, [object]);
+    updateObject({ requirements: next });
+  }, [object, updateObject]);
 
   const handlePredefinedChange = (value: string) => {
     if (!value || value === "NOTDEFINED") {
-      updateObject({ predefinedType: { mode: "ENUM", value: "NOTDEFINED" }, popis: "" });
+      updateObject({ predefinedType: { mode: "ENUM", value: "NOTDEFINED" } });
       return;
     }
     if (value === "USERDEFINED") {
-      updateObject({ predefinedType: { mode: "USERDEFINED", value: "" }, popis: "" });
+      updateObject({ predefinedType: { mode: "USERDEFINED", value: "" } });
     } else {
-      updateObject({ predefinedType: { mode: "ENUM", value }, popis: "" });
+      updateObject({ predefinedType: { mode: "ENUM", value } });
     }
   };
 
@@ -2442,8 +2450,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     if (isLocked) return;
     const baseUpdate: Partial<ProjectObject> = { 
       ifcEntity: value,
-      predefinedType: { mode: "NONE" },
-      popis: "",
+      predefinedType: { mode: "NONE" }
     };
     // Odstraníme neplatné hodnoty výčtu u atributů (atribut může mít jiný enum pro jinou entitu)
     const newEntityAttrs = schema?.entities[value]?.attributes;
@@ -2457,53 +2464,14 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         const validValues = currentValues.filter((v) => def.allowedValues!.includes(v));
         return { ...attr, value: formatEnumValues(validValues) };
       });
-      onChange({
-        ...object,
+      updateObject({
         ...baseUpdate,
         requirements: { ...object.requirements, attributes: cleanedAttrs },
       });
     } else {
-      onChange({ ...object, ...baseUpdate });
+      updateObject(baseUpdate);
     }
   };
-
-  /** Stáhne Definition IFC entity z bSDD a přidá do popisu objektu (odděleno řádkem). */
-  const fetchEntityDefinitionToPopis = useCallback(async () => {
-    if (!object.ifcEntity?.trim()) return;
-    setLoadingObjectDefinition("entity");
-    try {
-      const uri = getEntityClassUri(object.ifcEntity);
-      if (!uri) return;
-      const def = await fetchClassDefinition(uri);
-      if (def) {
-        const current = (object.popis ?? "").trim();
-        const next = current ? `${current}\n\n${def}` : def;
-        updateObject({ popis: next });
-      }
-    } finally {
-      setLoadingObjectDefinition(null);
-    }
-  }, [object.ifcEntity, object.popis, updateObject]);
-
-  /** Stáhne Definition PredefinedType z bSDD a přidá do popisu objektu (odděleno řádkem). */
-  const fetchTypDefinitionToPopis = useCallback(async () => {
-    const pt = object.predefinedType;
-    const value = pt?.mode === "ENUM" || pt?.mode === "USERDEFINED" ? pt?.value?.trim() : "";
-    if (!object.ifcEntity?.trim() || !value) return;
-    setLoadingObjectDefinition("typ");
-    try {
-      const uri = getPredefinedTypeClassUri(object.ifcEntity, value);
-      if (!uri) return;
-      const def = await fetchClassDefinition(uri);
-      if (def) {
-        const current = (object.popis ?? "").trim();
-        const next = current ? `${current}\n\n${def}` : def;
-        updateObject({ popis: next });
-      }
-    } finally {
-      setLoadingObjectDefinition(null);
-    }
-  }, [object.ifcEntity, object.predefinedType, object.popis, updateObject]);
 
   /** Automatické vyplnění prázdných políček CZ z nastaveného zdroje překladu */
   const shouldAutoFillCz = showCzTranslations && (czTranslationSource === "BSDD" || czTranslationSource === "CUSTOM");
@@ -2532,6 +2500,52 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       clearTimeout(id);
     };
   }, [shouldAutoFillCz, object.ifcEntity, object.predefinedType?.mode, object.predefinedType?.value, czTranslationSource, projectCustomTranslations, updateObject]);
+
+  /** Automatické doplnění popisu dle IFC (pokud je pole prázdné a je to zapnuté v nastavení) */
+  const fillDescCz = !!project?.fillDescriptionCz;
+  const fillDescEn = !!project?.fillDescriptionEn;
+  const fillDescSource = project?.czTranslationSource;
+
+  const lastAutoDescRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!fillDescCz && !fillDescEn) return;
+    if (!fillDescSource || fillDescSource === "OFF") return;
+    if (!object.ifcEntity) return;
+
+    const cancelled = { current: false };
+    const run = async () => {
+      try {
+        const { getObjectDescription } = await import("../../translation/descriptionFiller");
+        const desc = await getObjectDescription(object, {
+          source: fillDescSource,
+          fillCz: fillDescCz,
+          fillEn: fillDescEn,
+          project: project!,
+        });
+        if (cancelled.current) return;
+
+        // Je bezpečné přepsat popis?
+        // Ano, pokud je prázdný, nebo pokud se přesně shoduje s tím, co jsme vygenerovali naposledy.
+        // Nebo pokud jsme zrovna načetli projekt a popis se shoduje s aktuálním auto-generovaným (pak si ho přivlastníme).
+        const currentPopis = object.popis?.trim() || "";
+        const isSafeToOverwrite = currentPopis === "" || currentPopis === lastAutoDescRef.current || currentPopis === desc;
+
+        lastAutoDescRef.current = desc;
+
+        if (desc && isSafeToOverwrite && object.popis !== desc) {
+          updateObject({ popis: desc });
+        }
+      } catch (err) {
+        console.error("Doplnění popisu selhalo:", err);
+      }
+    };
+    const id = setTimeout(run, 100);
+    return () => {
+      cancelled.current = true;
+      clearTimeout(id);
+    };
+  }, [fillDescCz, fillDescEn, fillDescSource, object.ifcEntity, object.predefinedType?.mode, object.predefinedType?.value]); // záměrně bez object.popis a updateObject
 
   const getAttributeDefinition = (attrName: string) => {
     const attrs = object.ifcEntity && schema?.entities[object.ifcEntity]?.attributes;
@@ -3507,48 +3521,6 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           <div className="min-w-0">
             <div className="mb-1 flex flex-wrap items-center gap-2">
               <label className="text-xs font-semibold text-slate-600">Popis</label>
-              {isIfcPrimary && object.ifcEntity && !isLocked && (
-                <>
-                  <button
-                    type="button"
-                    className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                    title="Stáhnout Definition IFC entity z bSDD do popisu"
-                    onClick={fetchEntityDefinitionToPopis}
-                    disabled={loadingObjectDefinition !== null}
-                  >
-                    {loadingObjectDefinition === "entity" ? (
-                      <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-red-600" />
-                    ) : (
-                      <>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
-                          <path d="m6 9 6 6 6-6" />
-                        </svg>
-                        <span>bSDD Entity</span>
-                      </>
-                    )}
-                  </button>
-                  {(object.predefinedType?.mode === "ENUM" || object.predefinedType?.mode === "USERDEFINED") && object.predefinedType?.value && (
-                    <button
-                      type="button"
-                      className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-xs font-medium text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="Stáhnout Definition PredefinedType z bSDD do popisu"
-                      onClick={fetchTypDefinitionToPopis}
-                      disabled={loadingObjectDefinition !== null}
-                    >
-                      {loadingObjectDefinition === "typ" ? (
-                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-red-600" />
-                      ) : (
-                        <>
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
-                            <path d="m6 9 6 6 6-6" />
-                          </svg>
-                          <span>bSDD Predefined type</span>
-                        </>
-                      )}
-                    </button>
-                  )}
-                </>
-              )}
             </div>
             <textarea
               className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"

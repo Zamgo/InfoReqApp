@@ -296,6 +296,10 @@ export type TranslationMode = "OFF" | "BSDD" | "CUSTOM";
 export interface CustomTranslations {
   entities: Record<string, string>;
   predefinedTypes: Record<string, string>;
+  entityDescriptionsCz?: Record<string, string>;
+  entityDescriptionsEn?: Record<string, string>;
+  predefinedTypeDescriptionsCz?: Record<string, string>;
+  predefinedTypeDescriptionsEn?: Record<string, string>;
 }
 
 export interface Project {
@@ -309,6 +313,10 @@ export interface Project {
   showCzTranslations?: boolean;
   /** Zdroj pro automatický překlad prázdných políček CZ: OFF / BSDD / CUSTOM (Excel) */
   czTranslationSource?: TranslationMode;
+  /** Nastavení doplňování popisů: doplnit český popis z IFC/TRANSLATION */
+  fillDescriptionCz?: boolean;
+  /** Nastavení doplňování popisů: doplnit anglický popis z IFC/TRANSLATION */
+  fillDescriptionEn?: boolean;
   /** Vlastní překlady z nahraného Excelu (entity + predefined types). */
   customTranslations?: CustomTranslations;
   /** Project description */

@@ -119,6 +119,11 @@ export async function parseTranslationsFromBuffer(
 
   const entities: Record<string, string> = {};
   const predefinedTypes: Record<string, string> = {};
+  const entityDescriptionsCz: Record<string, string> = {};
+  const entityDescriptionsEn: Record<string, string> = {};
+  const predefinedTypeDescriptionsCz: Record<string, string> = {};
+  const predefinedTypeDescriptionsEn: Record<string, string> = {};
+
   const validEntities = schemaIndex
     ? new Set(Object.keys(schemaIndex.entities))
     : null;
@@ -132,12 +137,17 @@ export async function parseTranslationsFromBuffer(
     const colTranslationCz = findCol(header, "Entity_PredefinedType_CZ", "Entity_PredefinedType_CZ");
     const colPredefinedType = findCol(header, COL_PREDEFINED_TYPE, "PredefinedType");
     const colLevel1 = findCol(header, "Entity_level_1", "Entity_level_1");
+    const colDescCz = findCol(header, "Description_Definition_CZ");
+    const colDescEn = findCol(header, "Description_Definition_EN");
 
     if (colTranslationCz >= 1 && colLevel1 >= 1) {
       for (let r = 2; r <= (entitySheet.rowCount ?? 0); r++) {
         const row = entitySheet.getRow(r);
         const translation = cellToString(row.getCell(colTranslationCz).value).trim();
-        if (!translation) continue;
+        const descCz = colDescCz >= 1 ? cellToString(row.getCell(colDescCz).value).trim() : "";
+        const descEn = colDescEn >= 1 ? cellToString(row.getCell(colDescEn).value).trim() : "";
+
+        if (!translation && !descCz && !descEn) continue;
         const entityLevels: string[] = [];
         for (let i = 1; i <= 8; i++) {
           const col = findCol(header, `Entity_level_${i}`);
@@ -155,24 +165,32 @@ export async function parseTranslationsFromBuffer(
             const allowed = validPredefinedByEntity(entityName);
             if (!allowed.some((p) => p === pt)) continue;
           }
-          predefinedTypes[`${entityName}::${pt}`] = translation;
+          if (translation) predefinedTypes[`${entityName}::${pt}`] = translation;
+          if (descCz) predefinedTypeDescriptionsCz[`${entityName}::${pt}`] = descCz;
+          if (descEn) predefinedTypeDescriptionsEn[`${entityName}::${pt}`] = descEn;
         } else {
-          entities[entityName] = translation;
+          if (translation) entities[entityName] = translation;
+          if (descCz) entityDescriptionsCz[entityName] = descCz;
+          if (descEn) entityDescriptionsEn[entityName] = descEn;
         }
       }
     } else {
       const colEntity = findCol(header, COL_IFC_ENTITY, "IFC_entita");
       const colTranslation = findCol(header, COL_TRANSLATION, "Překlad", "Translation");
       const colVerze = findCol(header, COL_IFC_VERZE, "IFC_verze");
-      if (colEntity >= 1 && colTranslation >= 1) {
+      if (colEntity >= 1) {
         for (let r = 2; r <= (entitySheet.rowCount ?? 0); r++) {
           const row = entitySheet.getRow(r);
           if (!rowMatchesVersion(row, colVerze, ifcVersion)) continue;
           const entityName = cellToString(row.getCell(colEntity).value).trim();
-          const translation = cellToString(row.getCell(colTranslation).value).trim();
+          const translation = colTranslation >= 1 ? cellToString(row.getCell(colTranslation).value).trim() : "";
+          const descCz = colDescCz >= 1 ? cellToString(row.getCell(colDescCz).value).trim() : "";
+          const descEn = colDescEn >= 1 ? cellToString(row.getCell(colDescEn).value).trim() : "";
           if (!entityName) continue;
           if (validEntities && !validEntities.has(entityName)) continue;
           if (translation) entities[entityName] = translation;
+          if (descCz) entityDescriptionsCz[entityName] = descCz;
+          if (descEn) entityDescriptionsEn[entityName] = descEn;
         }
       }
     }
@@ -185,24 +203,38 @@ export async function parseTranslationsFromBuffer(
     const colPt = findCol(header, COL_PREDEFINED_TYPE, "PredefinedType");
     const colTranslation = findCol(header, COL_TRANSLATION, "Překlad", "Translation");
     const colVerze = findCol(header, COL_IFC_VERZE, "IFC_verze");
-    if (colEntity >= 1 && colPt >= 1 && colTranslation >= 1) {
+    const colDescCz = findCol(header, "Description_Definition_CZ");
+    const colDescEn = findCol(header, "Description_Definition_EN");
+
+    if (colEntity >= 1 && colPt >= 1) {
       for (let r = 2; r <= (ptSheet.rowCount ?? 0); r++) {
         const row = ptSheet.getRow(r);
         if (!rowMatchesVersion(row, colVerze, ifcVersion)) continue;
         const entityName = cellToString(row.getCell(colEntity).value).trim();
         const pt = cellToString(row.getCell(colPt).value).trim();
-        const translation = cellToString(row.getCell(colTranslation).value).trim();
+        const translation = colTranslation >= 1 ? cellToString(row.getCell(colTranslation).value).trim() : "";
+        const descCz = colDescCz >= 1 ? cellToString(row.getCell(colDescCz).value).trim() : "";
+        const descEn = colDescEn >= 1 ? cellToString(row.getCell(colDescEn).value).trim() : "";
         if (!entityName || !pt) continue;
         if (validPredefinedByEntity) {
           const allowed = validPredefinedByEntity(entityName);
           if (!allowed.some((p) => p === pt)) continue;
         }
         if (translation) predefinedTypes[`${entityName}::${pt}`] = translation;
+        if (descCz) predefinedTypeDescriptionsCz[`${entityName}::${pt}`] = descCz;
+        if (descEn) predefinedTypeDescriptionsEn[`${entityName}::${pt}`] = descEn;
       }
     }
   }
 
-  return { entities, predefinedTypes };
+  return { 
+    entities, 
+    predefinedTypes, 
+    entityDescriptionsCz, 
+    entityDescriptionsEn, 
+    predefinedTypeDescriptionsCz, 
+    predefinedTypeDescriptionsEn 
+  };
 }
 
 /** Načte Excel ze souboru a vrátí CustomTranslations. */

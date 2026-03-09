@@ -83,9 +83,9 @@ async function fetchClass(uri: string): Promise<TranslationResult> {
 }
 
 /** GET /api/Class/v1 - vrací Definition (nebo Description) třídy z bSDD. */
-export async function fetchClassDefinition(uri: string): Promise<string | null> {
+export async function fetchClassDefinition(uri: string, languageCode: string = BSDD_LANG): Promise<string | null> {
   try {
-    const url = `${API_BASE}/api/Class/v1?Uri=${encodeURIComponent(uri)}&languageCode=${BSDD_LANG}`;
+    const url = `${API_BASE}/api/Class/v1?Uri=${encodeURIComponent(uri)}&languageCode=${languageCode}`;
     const res = await fetch(url, {
       method: "GET",
       headers: {
@@ -377,4 +377,41 @@ export async function fetchSinglePropertyDefinition(propertyName: string): Promi
   const uri = getPropertyUri(propertyName);
   if (!uri) return null;
   return fetchPropertyDefinition(uri);
+}
+
+const DESC_CACHE = new Map<string, string | null>();
+const DESC_PENDING = new Map<string, Promise<string | null>>();
+
+/**
+ * Načte z bSDD definici/popis pro danou entitu nebo predefinedType v zadaném jazyce (např. 'en-US' nebo 'cs-CZ').
+ */
+export async function fetchBsddDescription(
+  type: "entity" | "predefinedType",
+  officialName: string,
+  languageCode: string,
+  context?: { entity?: string }
+): Promise<string | null> {
+  if (!officialName?.trim()) return null;
+  
+  const key = `desc:${languageCode}:${type}:${context?.entity || ""}:${officialName}`;
+  const cached = DESC_CACHE.get(key);
+  if (cached !== undefined) return cached;
+  if (DESC_PENDING.has(key)) return DESC_PENDING.get(key)!;
+
+  let uri: string | null = null;
+  if (type === "entity") {
+    uri = getEntityClassUri(officialName);
+  } else if (type === "predefinedType" && context?.entity) {
+    uri = getPredefinedTypeClassUri(context.entity, officialName);
+  }
+
+  if (!uri) return null;
+
+  const prom = fetchClassDefinition(uri, languageCode).then(r => {
+    DESC_CACHE.set(key, r);
+    DESC_PENDING.delete(key);
+    return r;
+  });
+  DESC_PENDING.set(key, prom);
+  return prom;
 }
