@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
 import type { ClassificationNode } from "../../classification/types";
 import type { ClassificationData } from "../../classification/types";
 import { collectLeaves, filterTree } from "../../classification/parser";
@@ -18,10 +19,12 @@ import {
 } from "../../schema/ifcVersionConfig";
 import { makeId } from "../../utils/id";
 import { generateHumanReadable, filterObjectByPhase, matchesOccurrenceFilter } from "../../utils/humanReadableIds";
-import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
+import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata, MaterialRequirement, ObjectRequirements, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
 import { EntitySelect } from "./EntitySelect";
+import { RequirementGroupsPanel } from "./RequirementGroupsPanel";
+import { groupRequirementsByItem, type RequirementItemKind, type RequirementItemGroup } from "../../project/requirementFingerprint";
 import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition } from "../../translation/translators/BsddTranslator";
 import { getBsddUrl } from "../../translation/getBsddUrl";
 import { translate } from "../../translation/TranslationService";
@@ -30,6 +33,37 @@ import { useTranslation } from "../../translation/TranslationContext";
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable" | "metadata";
 type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
+
+type RequirementsTabsProps = {
+  /** Aktuální sada požadavků, se kterou uživatel pracuje */
+  requirements: ObjectRequirements;
+  /** Obecný callback pro změnu požadavků (např. pro skupinový režim) */
+  onChangeRequirements: (nextReqs: ObjectRequirements) => void;
+  /** Aktivní záložka v rámci požadavků */
+  activeTab: TabKey;
+  /** Změna aktivní záložky */
+  onTabChange: (tab: TabKey) => void;
+};
+
+const RequirementsTabs: React.FC<RequirementsTabsProps> = ({ activeTab, onTabChange }) => {
+  return (
+    <div className="sticky top-0 z-10 flex items-center border-b border-slate-200 bg-white px-4 shadow-sm">
+      {(Object.keys(TAB_LABELS) as TabKey[]).map((key) => (
+        <button
+          key={key}
+          className={`px-3 py-2 text-sm ${
+            activeTab === key
+              ? "border-b-2 border-red-600 font-semibold text-red-700"
+              : "text-slate-600 hover:text-slate-800"
+          }`}
+          onClick={() => onTabChange(key)}
+        >
+          {TAB_LABELS[key]}
+        </button>
+      ))}
+    </div>
+  );
+};
 
 const PhaseSelector: React.FC<{ phases: Phase[]; value?: string[]; onChange: (ids: string[]) => void }> = ({ phases, value, onChange }) => {
   const selected = new Set(value ?? []);
@@ -577,7 +611,7 @@ const CollapsibleSection: React.FC<{
     </div>
     {isExpanded && (
       <div
-        className={`bg-white ${flexGrow ? "flex flex-1 flex-col min-h-0 overflow-hidden" : ""} ${maxHeightScroll ? "max-h-[45vh] overflow-y-auto" : ""}`}
+        className={`bg-white ${flexGrow ? "flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden" : ""} ${maxHeightScroll ? "max-h-[45vh] overflow-y-auto" : ""}`}
       >
         {children}
       </div>
@@ -619,6 +653,16 @@ interface Props {
   onDuplicateMaterialsToObjects?: (sourceObjectCode: string, materials: MaterialRequirement[], targetObjectCodes: string[]) => void;
   /** Duplikovat vybrané součásti (vztahy) do jiných objektů */
   onDuplicateRelationsToObjects?: (sourceObjectCode: string, relations: RelationRequirement[], targetObjectCodes: string[]) => void;
+  /** Per-item aktualizace požadavků (pset/atribut/klasifikace/materiál/relace) */
+  onUpdateRequirementItemGroup?: (
+    kind: import("../../project/requirementFingerprint").RequirementItemKind,
+    fingerprint: string,
+    updatedItems: import("../../project/types").PropertyRequirement[]
+      | [import("../../project/types").AttributeRequirement]
+      | [import("../../project/types").ClassificationRequirement]
+      | [import("../../project/types").MaterialRequirement]
+      | [import("../../project/types").RelationRequirement],
+  ) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -1945,7 +1989,27 @@ const IdsSingleExportDialog: React.FC<{
   );
 };
 
-export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, phases, codeLists, classificationSystemEntries, project, onSaveEnumAsCodeList, onAddToIfcHierarchy, onCopyObject, onDeleteObject, onToggleLock, onDuplicatePropertyGroupsToObjects, onDuplicateAttributesToObjects, onDuplicateClassificationsToObjects, onDuplicateMaterialsToObjects, onDuplicateRelationsToObjects }) => {
+export const ObjectDetail: React.FC<Props> = ({
+  node,
+  object,
+  schema,
+  onChange,
+  phases,
+  codeLists,
+  classificationSystemEntries,
+  project,
+  onSaveEnumAsCodeList,
+  onAddToIfcHierarchy,
+  onCopyObject,
+  onDeleteObject,
+  onToggleLock,
+  onDuplicatePropertyGroupsToObjects,
+  onDuplicateAttributesToObjects,
+  onDuplicateClassificationsToObjects,
+  onDuplicateMaterialsToObjects,
+  onDuplicateRelationsToObjects,
+  onUpdateRequirementItemGroup,
+}) => {
   const isLocked = object.locked === true;
   /** Zvýraznění červeně: zkopírovaný objekt má stále stejnou entitu a predefinedType jako zdroj */
   const isIncompleteCopy = useMemo(() => {
@@ -1971,6 +2035,56 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   /** Počet prázdných slotů pro třídění autorských nástrojů (přidáno přes +) – klíč = systemEntryId */
   const [extraAuthoringSlots, setExtraAuthoringSlots] = useState<Record<string, number>>({});
 
+  const [requirementsViewMode, setRequirementsViewMode] = useState<"object" | "groups">(() => {
+    try {
+      const stored = localStorage.getItem("infoReqApp_requirementsViewMode");
+      if (stored === "groups" || stored === "object") return stored;
+    } catch {
+      /* ignore */
+    }
+    return "object";
+  });
+  const [selectedItemGroup, setSelectedItemGroup] = useState<{ kind: RequirementItemKind; fingerprint: string } | null>(null);
+
+  const selectedItemGroupData = useMemo<RequirementItemGroup | null>(() => {
+    if (!project || !selectedItemGroup) return null;
+    const groups = groupRequirementsByItem(project);
+    return groups.find((g) => g.fingerprint === selectedItemGroup.fingerprint && g.kind === selectedItemGroup.kind) ?? null;
+  }, [project, selectedItemGroup]);
+
+  const effectiveRequirements: ObjectRequirements = useMemo(() => {
+    if (requirementsViewMode !== "groups" || !selectedItemGroupData) return object.requirements;
+    const empty: ObjectRequirements = { attributes: [], properties: [], relations: [], classifications: [], materials: [] };
+    const items = selectedItemGroupData.representativeItems;
+    switch (selectedItemGroupData.kind) {
+      case "pset":
+        return { ...empty, properties: items as import("../../project/types").PropertyRequirement[] };
+      case "attribute":
+        return { ...empty, attributes: items as import("../../project/types").AttributeRequirement[] };
+      case "classification":
+        return { ...empty, classifications: items as import("../../project/types").ClassificationRequirement[] };
+      case "material":
+        return { ...empty, materials: items as import("../../project/types").MaterialRequirement[] };
+      case "relation":
+        return { ...empty, relations: items as import("../../project/types").RelationRequirement[] };
+      default:
+        return object.requirements;
+    }
+  }, [requirementsViewMode, selectedItemGroupData, object.requirements]);
+
+  // Při rozbalení skupiny v režimu „všechny požadavky“ nastavit kartu na první s obsahem (vlastnosti → atributy → …).
+  useEffect(() => {
+    if (requirementsViewMode !== "groups" || !selectedItemGroup) return;
+    const kindToTab: Record<RequirementItemKind, TabKey> = {
+      pset: "properties",
+      attribute: "attributes",
+      classification: "classification",
+      material: "material",
+      relation: "partOf",
+    };
+    setActiveTab(kindToTab[selectedItemGroup.kind]);
+  }, [requirementsViewMode, selectedItemGroup?.fingerprint]);
+
   const selectedEntity = object.ifcEntity ? schema?.entities[object.ifcEntity] : undefined;
   const selectedPredefinedValue =
     object.predefinedType.mode === "ENUM" || object.predefinedType.mode === "USERDEFINED"
@@ -1991,11 +2105,11 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   const isIfcPrimary = primaryEntry?.isIfcSystem === true;
   const classificationsWithoutIfc = useMemo(
     () =>
-      object.requirements.classifications.filter((cls) => {
+      effectiveRequirements.classifications.filter((cls) => {
         const entry = classificationSystemEntries.find((e) => e.id === cls.systemEntryId);
         return !entry?.isIfcSystem;
       }),
-    [object.requirements.classifications, classificationSystemEntries],
+    [effectiveRequirements.classifications, classificationSystemEntries],
   );
   /** Pouze systémy typu „Klasifikační systém“ – zobrazují se v požadavcích na klasifikaci (ne IFC, ne autorský nástroj). */
   const classificationSystemEntriesForRequirements = useMemo(() => {
@@ -2259,7 +2373,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   // Vyčistit propertyName, které obsahují _NEW_ nebo se shodují s psetName
   useEffect(() => {
-    const needsCleanup = object.requirements.properties.some((prop) => {
+    const needsCleanup = effectiveRequirements.properties.some((prop) => {
       const propPropertyName = prop.propertyName || "";
       const propPsetName = prop.psetName || "";
       return propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName;
@@ -2267,9 +2381,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
     if (needsCleanup) {
       const next = {
-        ...object.requirements,
-        attributes: [...object.requirements.attributes],
-        properties: object.requirements.properties.map((prop) => {
+        ...effectiveRequirements,
+        attributes: [...effectiveRequirements.attributes],
+        properties: effectiveRequirements.properties.map((prop) => {
           const propPropertyName = prop.propertyName || "";
           const propPsetName = prop.psetName || "";
           if (propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName) {
@@ -2277,21 +2391,21 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           }
           return prop;
         }),
-        relations: [...object.requirements.relations],
-        classifications: [...object.requirements.classifications],
-        materials: [...object.requirements.materials],
+        relations: [...effectiveRequirements.relations],
+        classifications: [...effectiveRequirements.classifications],
+        materials: [...effectiveRequirements.materials],
       };
       updateObject({ requirements: next });
     }
-  }, [object.requirements.properties, object]);
+  }, [effectiveRequirements.properties, object]);
 
   // Odstranit PredefinedType z atributů – řeší se pouze v identifikačních údajích (entita)
   useEffect(() => {
-    const hasPredefinedTypeAttr = object.requirements.attributes.some((a) => a.attribute === "PredefinedType");
+    const hasPredefinedTypeAttr = effectiveRequirements.attributes.some((a) => a.attribute === "PredefinedType");
     if (hasPredefinedTypeAttr) {
-      const nextAttrs = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
+      const nextAttrs = effectiveRequirements.attributes.filter((a) => a.attribute !== "PredefinedType");
       updateObject({
-        requirements: { ...object.requirements, attributes: nextAttrs },
+        requirements: { ...effectiveRequirements, attributes: nextAttrs },
       });
     }
   }, [object]);
@@ -2323,7 +2437,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   const propertyGroups = useMemo(() => {
     const map = new Map<string, { key: string; source: PropertyRequirement["source"]; psetName?: string; properties: PropertyRequirement[] }>();
-    object.requirements.properties.forEach((prop) => {
+    effectiveRequirements.properties.forEach((prop) => {
       const key = groupKey(prop.source, prop.psetName);
       if (!map.has(key)) {
         map.set(key, { key, source: prop.source, psetName: prop.psetName, properties: [] });
@@ -2331,7 +2445,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       map.get(key)!.properties.push(prop);
     });
     return Array.from(map.values());
-  }, [object.requirements.properties]);
+  }, [effectiveRequirements.properties]);
 
   const propertyOptionsForGroup = (
     source: PropertyRequirement["source"],
@@ -2341,7 +2455,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     const defs = getSchemaDefs(source, psetName);
     if (!defs.length) return defs;
     const used = new Set(
-      object.requirements.properties
+      effectiveRequirements.properties
         .filter((p) => p.id !== currentId && p.source === source && (p.psetName || "") === (psetName || ""))
         .map((p) => p.propertyName),
     );
@@ -2419,20 +2533,51 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       .map((g) => ({ key: g.key, source: g.source, name: g.psetName as string }));
   }, [propertyGroups, selectedEntity, effectivePredefinedValue, allowedPsets, allowedQtos]);
 
-  const updateRequirements = useCallback((updater: (requirements: ProjectObject["requirements"]) => void) => {
-    const next = {
-      ...object.requirements,
-      attributes: [...object.requirements.attributes],
-      properties: [...object.requirements.properties],
-      relations: [...object.requirements.relations],
-      classifications: [...object.requirements.classifications],
-      materials: [...object.requirements.materials],
-    };
-    updater(next);
-    // Vždy vytvořit nové pole pro properties (pro React re-render)
-    next.properties = [...next.properties];
-    updateObject({ requirements: next });
-  }, [object, updateObject]);
+  const updateRequirements = useCallback(
+    (updater: (requirements: ProjectObject["requirements"]) => void) => {
+      const baseRequirements = effectiveRequirements;
+
+      const next: ProjectObject["requirements"] = {
+        ...baseRequirements,
+        attributes: [...baseRequirements.attributes],
+        properties: [...baseRequirements.properties],
+        relations: [...baseRequirements.relations],
+        classifications: [...baseRequirements.classifications],
+        materials: [...baseRequirements.materials],
+      };
+
+      updater(next);
+      next.properties = [...next.properties];
+
+      if (requirementsViewMode === "groups" && selectedItemGroup && onUpdateRequirementItemGroup && selectedItemGroupData) {
+        const { kind, fingerprint } = selectedItemGroup;
+        if (kind === "pset") {
+          const psetName = ((selectedItemGroupData.representativeItems as import("../../project/types").PropertyRequirement[])[0]?.psetName ?? "").trim();
+          const updatedProps = next.properties.filter((p) => (p.psetName ?? "").trim() === psetName);
+          onUpdateRequirementItemGroup(kind, fingerprint, updatedProps);
+        } else if (kind === "attribute") {
+          const orig = (selectedItemGroupData.representativeItems as [import("../../project/types").AttributeRequirement])[0];
+          const updated = next.attributes.find((a) => a.id === orig.id) ?? orig;
+          onUpdateRequirementItemGroup(kind, fingerprint, [updated]);
+        } else if (kind === "classification") {
+          const orig = (selectedItemGroupData.representativeItems as [import("../../project/types").ClassificationRequirement])[0];
+          const updated = next.classifications.find((c) => c.id === orig.id) ?? orig;
+          onUpdateRequirementItemGroup(kind, fingerprint, [updated]);
+        } else if (kind === "material") {
+          const orig = (selectedItemGroupData.representativeItems as [import("../../project/types").MaterialRequirement])[0];
+          const updated = next.materials.find((m) => m.id === orig.id) ?? orig;
+          onUpdateRequirementItemGroup(kind, fingerprint, [updated]);
+        } else if (kind === "relation") {
+          const orig = (selectedItemGroupData.representativeItems as [import("../../project/types").RelationRequirement])[0];
+          const updated = next.relations.find((r) => r.id === orig.id) ?? orig;
+          onUpdateRequirementItemGroup(kind, fingerprint, [updated]);
+        }
+      } else {
+        updateObject({ requirements: next });
+      }
+    },
+    [effectiveRequirements, updateObject, requirementsViewMode, selectedItemGroup, onUpdateRequirementItemGroup, selectedItemGroupData],
+  );
 
   const handlePredefinedChange = (value: string) => {
     if (!value || value === "NOTDEFINED") {
@@ -2456,7 +2601,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     const newEntityAttrs = schema?.entities[value]?.attributes;
     if (Array.isArray(newEntityAttrs)) {
       const attrDefs = new Map(newEntityAttrs.map((a: { name: string; allowedValues?: string[] }) => [a.name, a]));
-      const cleanedAttrs = object.requirements.attributes.map((attr) => {
+      const cleanedAttrs = effectiveRequirements.attributes.map((attr) => {
         if (attr.constraint !== "ENUM" || !attr.value) return attr;
         const def = attrDefs.get(attr.attribute);
         if (!def?.allowedValues?.length) return { ...attr, value: "" }; // atribut bez výčtu pro novou entitu -> vyčistit
@@ -2466,7 +2611,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
       });
       updateObject({
         ...baseUpdate,
-        requirements: { ...object.requirements, attributes: cleanedAttrs },
+        requirements: { ...effectiveRequirements, attributes: cleanedAttrs },
       });
     } else {
       updateObject(baseUpdate);
@@ -2564,7 +2709,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
     const attrsArray = Array.isArray(entityAttrs) ? entityAttrs : [];
     const allAttributes = attrsArray.length > 0 ? attrsArray.map((a: { name: string }) => a.name) : ["Name", "Description", "Tag", "ObjectType", "GlobalId"];
     const used = new Set(
-      object.requirements.attributes
+      effectiveRequirements.attributes
         .filter((a) => a.id !== currentId && a.attribute !== "PredefinedType")
         .map((a) => a.attribute),
     );
@@ -2974,7 +3119,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
 
   const selectAllAttributes = () => {
-    const visibleAttrs = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
+    const visibleAttrs = effectiveRequirements.attributes.filter((a) => a.attribute !== "PredefinedType");
     setSelectedAttributes(new Set(visibleAttrs.map((a) => a.id)));
   };
 
@@ -3006,7 +3151,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const selectAllRelations = () => {
-    const allIds = object.requirements.relations.map((r) => r.id);
+    const allIds = effectiveRequirements.relations.map((r) => r.id);
     setSelectedRelations(new Set(allIds));
   };
 
@@ -3038,7 +3183,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   };
 
   const selectAllMaterials = () => {
-    const allIds = object.requirements.materials.map((m) => m.id);
+    const allIds = effectiveRequirements.materials.map((m) => m.id);
     setSelectedMaterials(new Set(allIds));
   };
 
@@ -3062,7 +3207,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   // === KLASIFIKACE - výběr a mazání ===
   const toggleClassificationSelection = (clsId: string) => {
     // Nenechat vybrat chráněné klasifikace (readOnly)
-    const cls = object.requirements.classifications.find((c) => c.id === clsId);
+    const cls = effectiveRequirements.classifications.find((c) => c.id === clsId);
     if (cls?.readOnly) return;
     
     setSelectedClassifications((prev) => {
@@ -3341,7 +3486,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
   useEffect(() => {
     if (!shouldAutoFillCz) return;
     const run = async () => {
-      const reqs = object.requirements;
+      const reqs = effectiveRequirements;
       const attrUpdates = new Map<string, string>();
       const propPsetUpdates = new Map<string, string>();
       const propNameUpdates = new Map<string, string>();
@@ -3433,9 +3578,54 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* Název objektu: při primárním IFC = Entita.PredefinedType; při klasifikačním systému = název z klasifikace */}
-      <div className={`border-b px-4 py-3 ${isIncompleteCopy ? "border-red-300 bg-red-50" : "border-red-200 bg-gradient-to-r from-red-50 to-white"}`}>
-        <div className="flex items-center justify-between gap-3">
+      {/* Globální přepínač režimu zobrazení požadavků.
+          - „Zobrazení po objektech“: standardní detail objektu (Popis, Identifikační údaje, Požadavky).
+          - „Zobrazení všech požadavků“: pouze sekce Požadavky, vhodná pro práci se skupinami. */}
+      <div className="flex items-center border-b border-slate-200 bg-slate-50 px-4 py-2">
+        <div className="inline-flex rounded-full bg-slate-100 p-0.5 text-xs">
+          <button
+            type="button"
+            className={`px-3 py-1 rounded-full ${
+              requirementsViewMode === "object"
+                ? "bg-white text-red-700 shadow-sm border border-red-200"
+                : "text-slate-600 hover:text-slate-800"
+            }`}
+            onClick={() => {
+              setRequirementsViewMode("object");
+              try {
+                localStorage.setItem("infoReqApp_requirementsViewMode", "object");
+              } catch {
+                /* ignore */
+              }
+            }}
+          >
+            Zobrazení po objektech
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1 rounded-full ${
+              requirementsViewMode === "groups"
+                ? "bg-white text-red-700 shadow-sm border border-red-200"
+                : "text-slate-600 hover:text-slate-800"
+            }`}
+            onClick={() => {
+              setRequirementsViewMode("groups");
+              try {
+                localStorage.setItem("infoReqApp_requirementsViewMode", "groups");
+              } catch {
+                /* ignore */
+              }
+            }}
+          >
+            Zobrazení všech požadavků
+          </button>
+        </div>
+      </div>
+
+      {/* V režimu „Zobrazení všech požadavků“ nezobrazovat hlavičku jednoho objektu; místo toho neutrální nadpis. */}
+      {requirementsViewMode === "object" && (
+      <div className={`border-b px-4 py-3 min-h-[3.5rem] flex items-center ${isIncompleteCopy ? "border-red-300 bg-red-50" : "border-red-200 bg-gradient-to-r from-red-50 to-white"}`}>
+        <div className="flex flex-1 items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="h-8 w-1 flex-shrink-0 rounded-full bg-red-500"></div>
             <div className="min-w-0 flex items-center flex-wrap gap-2 text-xl font-bold text-slate-800">
@@ -3510,72 +3700,87 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           </div>
         </div>
       </div>
-
-      {/* Sekce v pořadí dle sectionOrder (flex order) */}
-      <CollapsibleSection
-        title={SECTION_LABELS.popis}
-        isExpanded={sectionVisibility.popis}
-        onToggle={() => toggleSectionVisibility("popis")}
-        onMoveUp={() => moveSection("popis", "up")}
-        onMoveDown={() => moveSection("popis", "down")}
-        canMoveUp={sectionOrder.indexOf("popis") > 0}
-        canMoveDown={sectionOrder.indexOf("popis") < sectionOrder.length - 1}
-        className="min-w-0"
-        style={{ order: sectionOrder.indexOf("popis") }}
-      >
-      <div className="min-w-0 px-4 py-3">
-        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="min-w-0">
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <label className="text-xs font-semibold text-slate-600">Popis</label>
-            </div>
-            <textarea
-              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
-              placeholder="Popis objektu"
-              value={object.popis ?? ""}
-              onChange={(e) => updateObject({ popis: e.target.value || undefined })}
-              disabled={isLocked}
-              rows={3}
-            />
-          </div>
-          <div className="min-w-0">
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Poznámka</label>
-            <textarea
-              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
-              placeholder="Poznámka k objektu"
-              value={object.poznamka ?? ""}
-              onChange={(e) => updateObject({ poznamka: e.target.value || undefined })}
-              disabled={isLocked}
-              rows={3}
-            />
-          </div>
-          <div className="min-w-0">
-            <label className="mb-1 block text-xs font-semibold text-slate-600">Příklady</label>
-            <textarea
-              className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
-              placeholder="Příklady"
-              value={object.priklady ?? ""}
-              onChange={(e) => updateObject({ priklady: e.target.value || undefined })}
-              disabled={isLocked}
-              rows={3}
-            />
+      )}
+      {requirementsViewMode === "groups" && (
+        <div className="border-b border-red-200 bg-gradient-to-r from-red-50 to-white px-4 py-3 flex items-center min-h-[3.5rem]">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-1 flex-shrink-0 rounded-full bg-red-500"></div>
+            <span className="text-xl font-bold text-slate-800">Všechny požadavky podle skupin</span>
+            <span className="text-sm text-slate-400 font-normal">— úpravy se aplikují na všechny objekty ve skupině</span>
           </div>
         </div>
-      </div>
-      </CollapsibleSection>
+      )}
 
+      {/* Sekce v pořadí dle sectionOrder (flex order).
+          V režimu „Zobrazení všech požadavků“ (groups) zobrazujeme pouze sekci Požadavky,
+          ostatní (Popis, Identifikační údaje) skryjeme. */}
+      {requirementsViewMode === "object" && (
+        <CollapsibleSection
+          title={SECTION_LABELS.popis}
+          isExpanded={sectionVisibility.popis}
+          onToggle={() => toggleSectionVisibility("popis")}
+          onMoveUp={() => moveSection("popis", "up")}
+          onMoveDown={() => moveSection("popis", "down")}
+          canMoveUp={sectionOrder.indexOf("popis") > 0}
+          canMoveDown={sectionOrder.indexOf("popis") < sectionOrder.length - 1}
+          className="min-w-0"
+          style={{ order: sectionOrder.indexOf("popis") }}
+        >
+        <div className="min-w-0 px-4 py-3">
+          <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="min-w-0">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <label className="text-xs font-semibold text-slate-600">Popis</label>
+              </div>
+              <textarea
+                className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                placeholder="Popis objektu"
+                value={object.popis ?? ""}
+                onChange={(e) => updateObject({ popis: e.target.value || undefined })}
+                disabled={isLocked}
+                rows={3}
+              />
+            </div>
+            <div className="min-w-0">
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Poznámka</label>
+              <textarea
+                className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                placeholder="Poznámka k objektu"
+                value={object.poznamka ?? ""}
+                onChange={(e) => updateObject({ poznamka: e.target.value || undefined })}
+                disabled={isLocked}
+                rows={3}
+              />
+            </div>
+            <div className="min-w-0">
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Příklady</label>
+              <textarea
+                className="w-full min-h-[72px] rounded border border-slate-300 px-2 py-1.5 text-sm placeholder:text-slate-400 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                placeholder="Příklady"
+                value={object.priklady ?? ""}
+                onChange={(e) => updateObject({ priklady: e.target.value || undefined })}
+                disabled={isLocked}
+                rows={3}
+              />
+            </div>
+          </div>
+        </div>
+        </CollapsibleSection>
+      )}
+
+      {requirementsViewMode === "object" && (
       <CollapsibleSection
-        title={SECTION_LABELS.identifikacni}
-        isExpanded={sectionVisibility.identifikacni}
-        onToggle={() => toggleSectionVisibility("identifikacni")}
-        onMoveUp={() => moveSection("identifikacni", "up")}
-        onMoveDown={() => moveSection("identifikacni", "down")}
-        canMoveUp={sectionOrder.indexOf("identifikacni") > 0}
-        canMoveDown={sectionOrder.indexOf("identifikacni") < sectionOrder.length - 1}
-        className="min-w-0"
-        style={{ order: sectionOrder.indexOf("identifikacni") }}
-        maxHeightScroll
-      >
+          title={SECTION_LABELS.identifikacni}
+          isExpanded={sectionVisibility.identifikacni}
+          onToggle={() => toggleSectionVisibility("identifikacni")}
+          onMoveUp={() => moveSection("identifikacni", "up")}
+          onMoveDown={() => moveSection("identifikacni", "down")}
+          canMoveUp={sectionOrder.indexOf("identifikacni") > 0}
+          canMoveDown={sectionOrder.indexOf("identifikacni") < sectionOrder.length - 1}
+          className="min-w-0"
+          style={{ order: sectionOrder.indexOf("identifikacni") }}
+          maxHeightScroll
+        >
       <div className="min-w-0 px-4 py-3">
         {isIfcPrimary && object.ifcEntity && !isCurrentSelectionInHierarchy && onAddToIfcHierarchy && !isLocked && (
           <div className="mb-2 flex items-center justify-between gap-2 rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-800">
@@ -3863,7 +4068,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
 
           {/* Karty v použitelnosti – stejná mřížka jako Klasifikace */}
           {/* Atributy v použitelnosti – kompaktní zobrazení */}
-          {object.requirements.attributes.some((a) => a.isApplicability && a.attribute !== "PredefinedType") && (
+          {effectiveRequirements.attributes.some((a) => a.isApplicability && a.attribute !== "PredefinedType") && (
             <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
@@ -3875,9 +4080,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   />
                 </div>
               </div>
-              {object.requirements.attributes.filter((a) => a.isApplicability && a.attribute !== "PredefinedType").length > 0 ? (
+              {effectiveRequirements.attributes.filter((a) => a.isApplicability && a.attribute !== "PredefinedType").length > 0 ? (
                 <div className="space-y-2">
-                  {object.requirements.attributes
+                  {effectiveRequirements.attributes
                     .filter((a) => a.isApplicability && a.attribute !== "PredefinedType")
                     .map((attr) => {
                       const constraintLabel = ATTRIBUTE_CONSTRAINT_OPTIONS.find(opt => opt.value === (attr.constraint ?? "FILLED"))?.label ?? "Jednoduchá hodnota";
@@ -3916,7 +4121,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           )}
 
           {/* Vlastnosti v použitelnosti – kompaktní zobrazení */}
-          {object.requirements.properties.some((p) => p.isApplicability && (p.psetName || p.propertyName)) && (
+          {effectiveRequirements.properties.some((p) => p.isApplicability && (p.psetName || p.propertyName)) && (
             <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
@@ -3928,9 +4133,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   />
                 </div>
               </div>
-              {object.requirements.properties.filter((p) => p.isApplicability && (p.psetName || p.propertyName)).length > 0 ? (
+              {effectiveRequirements.properties.filter((p) => p.isApplicability && (p.psetName || p.propertyName)).length > 0 ? (
                 <div className="space-y-2">
-                  {object.requirements.properties
+                  {effectiveRequirements.properties
                     .filter((p) => p.isApplicability && (p.psetName || p.propertyName))
                     .map((prop) => {
                       const propPhases = prop.phases ?? phases.map(p => p.id);
@@ -3968,7 +4173,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           )}
 
           {/* Součásti v použitelnosti – kompaktní zobrazení */}
-          {object.requirements.relations.some((r) => r.isApplicability) && (
+          {effectiveRequirements.relations.some((r) => r.isApplicability) && (
             <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
@@ -3980,9 +4185,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   />
                 </div>
               </div>
-              {object.requirements.relations.filter((r) => r.isApplicability).length > 0 ? (
+              {effectiveRequirements.relations.filter((r) => r.isApplicability).length > 0 ? (
                 <div className="space-y-2">
-                  {object.requirements.relations
+                  {effectiveRequirements.relations
                     .filter((r) => r.isApplicability)
                     .map((rel) => {
                       const relPhases = rel.phases ?? phases.map(p => p.id);
@@ -4020,7 +4225,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
           )}
 
           {/* Materiál v použitelnosti – kompaktní zobrazení */}
-          {object.requirements.materials.some((m) => m.isApplicability) && (
+          {effectiveRequirements.materials.some((m) => m.isApplicability) && (
             <div className="min-w-0 rounded border border-slate-200 bg-slate-50 p-3">
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-sm font-semibold text-slate-800">
@@ -4032,9 +4237,9 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   />
                 </div>
               </div>
-              {object.requirements.materials.filter((m) => m.isApplicability).length > 0 ? (
+              {effectiveRequirements.materials.filter((m) => m.isApplicability).length > 0 ? (
                 <div className="space-y-2">
-                  {object.requirements.materials
+                  {effectiveRequirements.materials
                     .filter((m) => m.isApplicability)
                     .map((mat) => {
                       const matPhases = mat.phases ?? phases.map(p => p.id);
@@ -4072,6 +4277,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         </div>
       </div>
       </CollapsibleSection>
+      )}
 
       <CollapsibleSection
         title={SECTION_LABELS.pozadavky}
@@ -4081,26 +4287,19 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         onMoveDown={() => moveSection("pozadavky", "down")}
         canMoveUp={sectionOrder.indexOf("pozadavky") > 0}
         canMoveDown={sectionOrder.indexOf("pozadavky") < sectionOrder.length - 1}
-        className="flex flex-1 flex-col min-h-0 overflow-hidden"
+        className="flex flex-1 flex-col min-h-0 min-w-0 overflow-hidden"
         style={{ order: sectionOrder.indexOf("pozadavky") }}
         flexGrow
       >
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="sticky top-0 z-10 flex items-center border-b border-slate-200 bg-white px-4 shadow-sm">
-          {(Object.keys(TAB_LABELS) as TabKey[]).map((key) => (
-            <button
-              key={key}
-              className={`px-3 py-2 text-sm ${activeTab === key ? "border-b-2 border-red-600 font-semibold text-red-700" : "text-slate-600 hover:text-slate-800"}`}
-              onClick={() => setActiveTab(key)}
-            >
-              {TAB_LABELS[key]}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
 
-        <div className="flex-1 min-h-0 overflow-auto p-4">
+        {/* Editor content blok – použijeme IIFE pro extrakci do proměnné */}
+        {(() => {
+          const showEditor = requirementsViewMode === "object" || (requirementsViewMode === "groups" && selectedItemGroup && selectedItemGroupData);
+          const editorBlock = !showEditor ? null : (
+        <div className={requirementsViewMode === "groups" ? "overflow-auto p-4" : "flex-1 min-h-0 overflow-auto p-4"} style={requirementsViewMode === "groups" ? { maxHeight: "60vh" } : undefined}>
           {activeTab === "attributes" && (() => {
-            const visibleAttributes = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
+            const visibleAttributes = effectiveRequirements.attributes.filter((a) => a.attribute !== "PredefinedType");
             return (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
@@ -6044,7 +6243,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <button className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500" onClick={addRelation}>
                   Přidat vztah
                 </button>
-                {object.requirements.relations.length > 0 && (
+                {effectiveRequirements.relations.length > 0 && (
                   <>
                     <div className="relative">
                       <button className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-1" onClick={() => setPartOfColumnMenuOpen((o) => !o)} title="Zobrazit nebo skrýt sloupce">
@@ -6102,7 +6301,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </>
                 )}
               </div>
-              {object.requirements.relations.length === 0 ? (
+              {effectiveRequirements.relations.length === 0 ? (
                 <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
                   Žádné vztahy. Přidejte vztah.
                 </div>
@@ -6196,7 +6395,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </tr>
                   </thead>
                   <tbody>
-                    {object.requirements.relations.map((rel) => {
+                    {effectiveRequirements.relations.map((rel) => {
                       // Get predefined types for selected entity
                       const relEntityDef = rel.entityType ? schema?.entities[rel.entityType] : undefined;
                       const relPtValues = relEntityDef?.predefinedTypeValues ?? [];
@@ -6364,7 +6563,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 <button className="rounded bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-500" onClick={addMaterial}>
                   Přidat materiál
                 </button>
-                {object.requirements.materials.length > 0 && (
+                {effectiveRequirements.materials.length > 0 && (
                   <>
                     <div className="relative">
                       <button className="rounded border border-slate-300 bg-slate-50 px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100 flex items-center gap-1" onClick={() => setMaterialColumnMenuOpen((o) => !o)} title="Zobrazit nebo skrýt sloupce">
@@ -6422,7 +6621,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                   </>
                 )}
               </div>
-              {object.requirements.materials.length === 0 ? (
+              {effectiveRequirements.materials.length === 0 ? (
                 <div className="rounded border border-dashed border-slate-300 p-3 text-sm text-slate-600">
                   Žádné materiálové požadavky. Přidejte materiál.
                 </div>
@@ -6510,7 +6709,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                     </tr>
                   </thead>
                   <tbody>
-                    {object.requirements.materials.map((mat) => (
+                    {effectiveRequirements.materials.map((mat) => (
                       <tr key={mat.id} className="border-t border-slate-200">
                         {!hiddenMaterialColumns.has(0) && (
                           <td className="px-2 py-2">
@@ -7839,6 +8038,41 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             );
           })()}
         </div>
+          );
+
+          if (requirementsViewMode === "groups" && project) {
+            return (
+              <RequirementGroupsPanel
+                project={project as Project}
+                selectedFingerprint={selectedItemGroup?.fingerprint}
+                onSelectGroup={(fp, kind) => setSelectedItemGroup(fp && kind ? { kind, fingerprint: fp } : null)}
+              >
+                {selectedItemGroup && selectedItemGroupData && (
+                  <>
+                    <div className="px-4 py-1.5 text-xs text-slate-600 border-b border-slate-200 bg-amber-50/50">
+                      Změny se aplikují na {selectedItemGroupData.objectCodes.length} objektů.
+                    </div>
+                    {editorBlock}
+                  </>
+                )}
+              </RequirementGroupsPanel>
+            );
+          }
+
+          return (
+            <>
+              <RequirementsTabs
+                requirements={effectiveRequirements}
+                onChangeRequirements={(nextReqs) => {
+                  if (onChange) onChange({ ...object, requirements: nextReqs });
+                }}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+              />
+              {editorBlock}
+            </>
+          );
+        })()}
       </div>
       </CollapsibleSection>
 
@@ -7849,7 +8083,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             title: "Duplikovat atributy do objektů",
             description: "Vyberte objekty, do kterých se zkopírují vybrané atributy (vždy jako nezávislé kopie).",
             getSummary: () => `Počet: ${selectedAttributes.size} atributů`,
-            getItems: () => object.requirements.attributes.filter((a) => selectedAttributes.has(a.id)),
+            getItems: () => effectiveRequirements.attributes.filter((a) => selectedAttributes.has(a.id)),
             onConfirm: onDuplicateAttributesToObjects,
             clearSelection: () => setSelectedAttributes(new Set()),
           },
@@ -7857,7 +8091,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             title: "Duplikovat klasifikace do objektů",
             description: "Vyberte objekty, do kterých se zkopírují vybrané klasifikace (vždy jako nezávislé kopie).",
             getSummary: () => `Počet: ${selectedClassifications.size} klasifikací`,
-            getItems: () => object.requirements.classifications.filter((c) => selectedClassifications.has(c.id)),
+            getItems: () => effectiveRequirements.classifications.filter((c) => selectedClassifications.has(c.id)),
             onConfirm: onDuplicateClassificationsToObjects,
             clearSelection: () => setSelectedClassifications(new Set()),
           },
@@ -7865,7 +8099,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             title: "Duplikovat materiálové požadavky do objektů",
             description: "Vyberte objekty, do kterých se zkopírují vybrané materiálové požadavky (vždy jako nezávislé kopie).",
             getSummary: () => `Počet: ${selectedMaterials.size} materiálů`,
-            getItems: () => object.requirements.materials.filter((m) => selectedMaterials.has(m.id)),
+            getItems: () => effectiveRequirements.materials.filter((m) => selectedMaterials.has(m.id)),
             onConfirm: onDuplicateMaterialsToObjects,
             clearSelection: () => setSelectedMaterials(new Set()),
           },
@@ -7873,7 +8107,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
             title: "Duplikovat součásti (vztahy) do objektů",
             description: "Vyberte objekty, do kterých se zkopírují vybrané vztahy součástí (vždy jako nezávislé kopie).",
             getSummary: () => `Počet: ${selectedRelations.size} vztahů`,
-            getItems: () => object.requirements.relations.filter((r) => selectedRelations.has(r.id)),
+            getItems: () => effectiveRequirements.relations.filter((r) => selectedRelations.has(r.id)),
             onConfirm: onDuplicateRelationsToObjects,
             clearSelection: () => setSelectedRelations(new Set()),
           },

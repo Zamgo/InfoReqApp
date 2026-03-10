@@ -18,6 +18,8 @@ export interface RequirementBase {
   id: string;
   extensions: Record<string, unknown>;
   phases?: string[];
+  /** Účel užití této konkrétní požadavky (odkaz do číselníku účelů) */
+  purposeOfUseId?: string;
 }
 
 export interface AttributeRequirement extends RequirementBase {
@@ -259,6 +261,16 @@ export interface CodeList {
   note?: string;
 }
 
+/** Číselník účelů užití jednotlivých požadavků */
+export interface PurposeOfUseEntry {
+  /** Unique identifier */
+  id: string;
+  /** Human-readable name shown in UI */
+  name: string;
+  /** Optional description / explanation how this purpose is used */
+  description?: string;
+}
+
 /** Entry in the classification systems list (for dropdown selection in classification requirements) */
 export interface ClassificationSystemEntry {
   /** Unique identifier */
@@ -338,6 +350,8 @@ export interface Project {
   objects: Record<string, ProjectObject>;
   /** User-managed code lists for ENUM (výčet) restrictions */
   codeLists?: CodeList[];
+  /** User-managed list of purposes of use for individual requirements */
+  purposeOfUseEntries?: PurposeOfUseEntry[];
   /** User-managed list of classification systems for dropdown selection */
   classificationSystemEntries?: ClassificationSystemEntry[];
   /** Metadata celého IDS souboru (ids:info) – dle buildingSMART ids-metadata.md */

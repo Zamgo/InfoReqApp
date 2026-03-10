@@ -18,7 +18,7 @@ import {
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
 import { normalizeIfcSchemaVersion } from "./schema/ifcVersionConfig";
-import type { AttributeRequirement, ClassificationRequirement, ClassificationSystemEntry, CodeList, MaterialRequirement, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "./project/types";
+import type { AttributeRequirement, ClassificationRequirement, ClassificationSystemEntry, CodeList, MaterialRequirement, ObjectRequirements, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "./project/types";
 import {
   createEmptyProject,
   clearAllAppDataOnReset,
@@ -36,6 +36,7 @@ import { exportExcelFile } from "./export/excel";
 import "./index.css";
 import { makeId } from "./utils/id";
 import { parseAuthoringValues, joinAuthoringValues } from "./project/authoring";
+import { computePsetFingerprint, computeAttributeItemFingerprint, computeClassificationItemFingerprint, computeMaterialItemFingerprint, computeRelationItemFingerprint, type RequirementItemKind } from "./project/requirementFingerprint";
 
 const applyCodeListPropagation = (project: Project, list: CodeList): Project => {
   // Update all properties that are linked to this code list
@@ -116,6 +117,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     const migrated = ensureProjectPhases({
       ...input,
       codeLists: input.codeLists ?? [],
+      purposeOfUseEntries: input.purposeOfUseEntries ?? [],
       phases: ensurePhaseList(input.phases),
       classifications: (input.classifications ?? [
         {
@@ -1692,6 +1694,94 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     [project],
   );
 
+  const onUpdateRequirementItemGroup = useCallback(
+    (kind: RequirementItemKind, fingerprint: string, updatedItems: import("./project/types").PropertyRequirement[] | [import("./project/types").AttributeRequirement] | [import("./project/types").ClassificationRequirement] | [import("./project/types").MaterialRequirement] | [import("./project/types").RelationRequirement]) => {
+      if (!project) return;
+
+      let changed = false;
+      const nextObjects: Project["objects"] = { ...project.objects };
+
+      for (const [code, obj] of Object.entries(project.objects)) {
+        const reqs = obj.requirements;
+
+        if (kind === "pset") {
+          const psetMap = new Map<string, import("./project/types").PropertyRequirement[]>();
+          for (const p of reqs.properties) {
+            const key = (p.psetName ?? "").trim();
+            const arr = psetMap.get(key);
+            if (arr) arr.push(p);
+            else psetMap.set(key, [p]);
+          }
+          for (const [psetName, props] of psetMap) {
+            if (computePsetFingerprint(psetName, props) === fingerprint) {
+              const updatedProps = updatedItems as import("./project/types").PropertyRequirement[];
+              const otherProps = reqs.properties.filter((p) => (p.psetName ?? "").trim() !== psetName);
+              const nextReqs: ObjectRequirements = { ...reqs, properties: [...otherProps, ...updatedProps] };
+              nextObjects[code] = { ...obj, requirements: nextReqs };
+              changed = true;
+              break;
+            }
+          }
+        } else if (kind === "attribute") {
+          for (let i = 0; i < reqs.attributes.length; i++) {
+            if (reqs.attributes[i].isApplicability) continue;
+            if (computeAttributeItemFingerprint(reqs.attributes[i]) === fingerprint) {
+              const nextAttrs = [...reqs.attributes];
+              nextAttrs[i] = (updatedItems as [import("./project/types").AttributeRequirement])[0];
+              nextObjects[code] = { ...obj, requirements: { ...reqs, attributes: nextAttrs } };
+              changed = true;
+              break;
+            }
+          }
+        } else if (kind === "classification") {
+          for (let i = 0; i < reqs.classifications.length; i++) {
+            if (reqs.classifications[i].readOnly || reqs.classifications[i].isApplicability) continue;
+            if (computeClassificationItemFingerprint(reqs.classifications[i]) === fingerprint) {
+              const nextCls = [...reqs.classifications];
+              nextCls[i] = (updatedItems as [import("./project/types").ClassificationRequirement])[0];
+              nextObjects[code] = { ...obj, requirements: { ...reqs, classifications: nextCls } };
+              changed = true;
+              break;
+            }
+          }
+        } else if (kind === "material") {
+          for (let i = 0; i < reqs.materials.length; i++) {
+            if (reqs.materials[i].isApplicability) continue;
+            if (computeMaterialItemFingerprint(reqs.materials[i]) === fingerprint) {
+              const nextMat = [...reqs.materials];
+              nextMat[i] = (updatedItems as [import("./project/types").MaterialRequirement])[0];
+              nextObjects[code] = { ...obj, requirements: { ...reqs, materials: nextMat } };
+              changed = true;
+              break;
+            }
+          }
+        } else if (kind === "relation") {
+          for (let i = 0; i < reqs.relations.length; i++) {
+            if (reqs.relations[i].isApplicability) continue;
+            if (computeRelationItemFingerprint(reqs.relations[i]) === fingerprint) {
+              const nextRel = [...reqs.relations];
+              nextRel[i] = (updatedItems as [import("./project/types").RelationRequirement])[0];
+              nextObjects[code] = { ...obj, requirements: { ...reqs, relations: nextRel } };
+              changed = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!changed) return;
+
+      const next: Project = {
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      };
+
+      updateProjectWithHistory(next);
+    },
+    [project],
+  );
+
   const canUndo = () => {
     return historyIndexRef.current > 0;
   };
@@ -2096,6 +2186,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
               onDuplicateClassificationsToObjects={onDuplicateClassificationsToObjects}
               onDuplicateMaterialsToObjects={onDuplicateMaterialsToObjects}
               onDuplicateRelationsToObjects={onDuplicateRelationsToObjects}
+              onUpdateRequirementItemGroup={onUpdateRequirementItemGroup}
             />
           )}
         </div>
