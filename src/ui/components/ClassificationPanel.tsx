@@ -10,6 +10,7 @@ import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject } from "
 import { PhaseManager } from "./PhaseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
+import { useTranslation } from "../../translation/TranslationContext";
 
 /**
  * Get maximum depth of the tree
@@ -366,6 +367,7 @@ const TreeItem: React.FC<{
   /** Při primárním „Třídění dle IFC“ se název bere z IFC/object; jinak vždy z node (klasifikace) */
   isIfcPrimary?: boolean;
 }> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel, objects, isIfcPrimary }) => {
+  const { showCzTranslations } = useTranslation();
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
   /** Výběr jen u skutečných objektů (kód existuje v objects). Po vyhledání může být uzel „list“ bez dětí, ale bez odpovídajícího objektu – ten nesmí otevřít nový objekt. */
@@ -398,6 +400,10 @@ const TreeItem: React.FC<{
     node.predefinedType &&
     node.predefinedType !== "NOTDEFINED" &&
     (getIfcBadgeLabel?.(node) ?? `${node.ifcEntity}.${node.predefinedType}`);
+
+  const czTranslation = showCzTranslations && isLeaf && obj && (obj.ifcEntityCz || obj.predefinedTypeCz)
+    ? `${obj.ifcEntityCz || ""}${obj.ifcEntityCz && obj.predefinedTypeCz ? " - " : ""}${obj.predefinedTypeCz || ""}`
+    : undefined;
 
   useEffect(() => {
     if (expandLevel !== null) {
@@ -437,11 +443,18 @@ const TreeItem: React.FC<{
                 <span className="text-[11px] text-slate-500">{node.code.replace(/::/g, ".")}</span>
               )}
             </div>
-            {ifcBadgeLabel && (
-              <span className="shrink-0 rounded bg-slate-200 px-2 py-0.5 text-[10px] text-slate-700">
-                {ifcBadgeLabel.replace(/::/g, ".")}
-              </span>
-            )}
+            <div className="flex items-center gap-1">
+              {ifcBadgeLabel && ifcBadgeLabel.replace(/::/g, ".") !== (displayLabel || node.code).replace(/::/g, ".") && !isIfcPrimary && (
+                <span className="shrink-0 rounded bg-slate-200 px-2 py-0.5 text-[10px] text-slate-700">
+                  {ifcBadgeLabel.replace(/::/g, ".")}
+                </span>
+              )}
+              {czTranslation && (
+                <span className="shrink-0 rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                  {czTranslation}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>

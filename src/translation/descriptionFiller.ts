@@ -14,13 +14,12 @@ let defaultTranslationsPromise: Promise<CustomTranslations> | null = null;
  * Získá popis z nastaveného zdroje (CUSTOM/Excel nebo BSDD). 
  * Pokud je vyplněno CZ i EN, spojí je s novým řádkem.
  */
-export async function getObjectDescription(
+export async function getObjectDescriptionAndTranslations(
   object: ProjectObject,
   options: FetchDescriptionOptions
-): Promise<string | null> {
+): Promise<{ popis: string | null; ifcEntityCz?: string; predefinedTypeCz?: string }> {
   let { source, fillCz, fillEn, project } = options;
-  if (!fillCz && !fillEn) return null;
-  if (!object.ifcEntity) return null;
+  if (!object.ifcEntity) return { popis: null };
 
   // Fallback pro staré projekty, kde customTranslations ještě nemají načtené popisy
   if (source === "CUSTOM" && (!project.customTranslations || !project.customTranslations.entityDescriptionsCz)) {
@@ -52,7 +51,8 @@ export async function getObjectDescription(
     }
   }
 
-  const isPt = object.predefinedType.mode === "ENUM" && !!object.predefinedType.value && object.predefinedType.value !== "NOTDEFINED";
+  const ptMode = object.predefinedType.mode;
+  const isPt = (ptMode === "ENUM" || ptMode === "USERDEFINED") && !!object.predefinedType.value;
   const entityName = object.ifcEntity;
   const ptValue = isPt ? object.predefinedType.value! : null;
 
@@ -60,25 +60,48 @@ export async function getObjectDescription(
   let entityEn: string | null = null;
   let ptCz: string | null = null;
   let ptEn: string | null = null;
+  
+  let entityTranslationCz: string | null = null;
+  let ptTranslationCz: string | null = null;
 
   if (source === "CUSTOM") {
     const ct = project.customTranslations;
     if (ct) {
-      if (fillCz) entityCz = ct.entityDescriptionsCz?.[entityName] || null;
+      entityTranslationCz = ct.entities?.[entityName] || null;
+      if (fillCz) {
+        entityCz = ct.entityDescriptionsCz?.[entityName] || null;
+      }
       if (fillEn) entityEn = ct.entityDescriptionsEn?.[entityName] || null;
 
       if (ptValue) {
         const key = `${entityName}::${ptValue}`;
-        if (fillCz) ptCz = ct.predefinedTypeDescriptionsCz?.[key] || null;
+        ptTranslationCz = ct.predefinedTypes?.[key] || null;
+        if (fillCz) {
+          ptCz = ct.predefinedTypeDescriptionsCz?.[key] || null;
+        }
         if (fillEn) ptEn = ct.predefinedTypeDescriptionsEn?.[key] || null;
       }
     }
   } else if (source === "BSDD") {
-    if (fillCz) entityCz = await fetchBsddDescription("entity", entityName, "cs-CZ");
+    const { translateBsdd } = await import("./translators/BsddTranslator");
+    const { normalizeIfcSchemaVersion } = await import("../schema/ifcVersionConfig");
+    const v = project.ifcSchemaVersion ? normalizeIfcSchemaVersion(project.ifcSchemaVersion) : "IFC4X3";
+    
+    const tEnt = await translateBsdd({ type: "entity", officialName: entityName }, v);
+    if (tEnt.translated) entityTranslationCz = tEnt.translated;
+
+    if (fillCz) {
+      entityCz = await fetchBsddDescription("entity", entityName, "cs-CZ");
+    }
     if (fillEn) entityEn = await fetchBsddDescription("entity", entityName, "en-US");
 
     if (ptValue) {
-      if (fillCz) ptCz = await fetchBsddDescription("predefinedType", ptValue, "cs-CZ", { entity: entityName });
+      const tPt = await translateBsdd({ type: "predefinedType", officialName: ptValue, context: { entity: entityName } }, v);
+      if (tPt.translated) ptTranslationCz = tPt.translated;
+
+      if (fillCz) {
+        ptCz = await fetchBsddDescription("predefinedType", ptValue, "cs-CZ", { entity: entityName });
+      }
       if (fillEn) ptEn = await fetchBsddDescription("predefinedType", ptValue, "en-US", { entity: entityName });
     }
   }
@@ -108,8 +131,21 @@ export async function getObjectDescription(
     addPart(entityCz, ptCz, "CZ");
   }
 
-  if (parts.length === 0) return null;
-  return parts.join("\n\n---\n\n");
+  const popis = parts.length === 0 ? null : parts.join("\n\n---\n\n");
+  
+  return { 
+    popis, 
+    ifcEntityCz: entityTranslationCz || undefined, 
+    predefinedTypeCz: ptTranslationCz || undefined 
+  };
+}
+
+export async function getObjectDescription(
+  object: ProjectObject,
+  options: FetchDescriptionOptions
+): Promise<string | null> {
+  const { popis } = await getObjectDescriptionAndTranslations(object, options);
+  return popis;
 }
 
 /**
@@ -123,9 +159,10 @@ export async function fillDescriptionsBatch(
   const source = project.czTranslationSource;
   const fillCz = !!project.fillDescriptionCz;
   const fillEn = !!project.fillDescriptionEn;
+  const showCzTranslations = !!project.showCzTranslations;
 
   if (!source || source === "OFF") return;
-  if (!fillCz && !fillEn) return;
+  if (!fillCz && !fillEn && !showCzTranslations) return;
 
   const objects = Object.values(project.objects);
   const total = objects.length;
@@ -146,11 +183,21 @@ export async function fillDescriptionsBatch(
     
     await Promise.all(
       batch.map(async (obj) => {
-        // Zkusit stáhnout jen pokud ještě nemá vyplněný popis
-        if (!obj.popis?.trim()) {
-          const desc = await getObjectDescription(obj, options);
-          if (desc) {
-            updates[obj.code] = { popis: desc };
+        const needsPopis = !obj.popis?.trim();
+        const needsEntityCz = !obj.ifcEntityCz?.trim();
+        const ptMode = obj.predefinedType.mode;
+        const isPt = (ptMode === "ENUM" || ptMode === "USERDEFINED") && !!obj.predefinedType.value;
+        const needsPtCz = isPt && !obj.predefinedTypeCz?.trim();
+        
+        if (needsPopis || (showCzTranslations && (needsEntityCz || needsPtCz))) {
+          const res = await getObjectDescriptionAndTranslations(obj, options);
+          const update: Partial<ProjectObject> = {};
+          if (needsPopis && res.popis) update.popis = res.popis;
+          if (showCzTranslations && needsEntityCz && res.ifcEntityCz) update.ifcEntityCz = res.ifcEntityCz;
+          if (showCzTranslations && needsPtCz && res.predefinedTypeCz) update.predefinedTypeCz = res.predefinedTypeCz;
+          
+          if (Object.keys(update).length > 0) {
+            updates[obj.code] = update;
           }
         }
       })

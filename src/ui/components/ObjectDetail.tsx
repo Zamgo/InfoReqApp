@@ -3438,10 +3438,17 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="h-8 w-1 flex-shrink-0 rounded-full bg-red-500"></div>
-            <div className="min-w-0 truncate text-xl font-bold text-slate-800">
-              {isIfcPrimary && object.ifcEntity
-                ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
-                : (node.description || node.code)}
+            <div className="min-w-0 flex items-center flex-wrap gap-2 text-xl font-bold text-slate-800">
+              <span className="truncate">
+                {isIfcPrimary && object.ifcEntity
+                  ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
+                  : (node.description || node.code)}
+              </span>
+              {showCzTranslations && isIfcPrimary && object.ifcEntity && (object.ifcEntityCz || object.predefinedTypeCz) && (
+                <span className="shrink-0 text-sm font-normal text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                  {object.ifcEntityCz}{object.ifcEntityCz && object.predefinedTypeCz ? " - " : ""}{object.predefinedTypeCz}
+                </span>
+              )}
             </div>
             {isLocked && (
               <span className="flex-shrink-0 rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
@@ -3610,7 +3617,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 {showCzTranslations && object.ifcEntity && (
                   <>
                     <input
-                      className="min-w-[100px] max-w-[140px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                      className="min-w-[100px] max-w-[140px] bg-blue-50 border border-blue-200 text-blue-700 not-italic font-medium rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-blue-300 placeholder:font-normal"
                       placeholder="CZ"
                       value={object.ifcEntityCz ?? ""}
                       onChange={(e) => updateObject({ ifcEntityCz: e.target.value || undefined })}
@@ -3656,7 +3663,7 @@ export const ObjectDetail: React.FC<Props> = ({ node, object, schema, onChange, 
                 {showCzTranslations && object.predefinedType.mode === "ENUM" && object.predefinedType.value && (
                   <>
                     <input
-                      className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                      className="min-w-[80px] max-w-[120px] bg-blue-50 border border-blue-200 text-blue-700 not-italic font-medium rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-blue-300 placeholder:font-normal"
                       placeholder="CZ"
                       value={object.predefinedTypeCz ?? ""}
                       onChange={(e) => updateObject({ predefinedTypeCz: e.target.value || undefined })}
