@@ -52,9 +52,12 @@ Místa citlivá na změnu: kde upravovat kód při změně chování, přidání
 
 ## 6. Migrace projektu (migrateProject)
 
-- **Soubor:** [src/App.tsx](src/App.tsx) – funkce `migrateProject` (ř. cca 114), volaná při načtení projektu ze storage a při importu (JSON/IDS/Excel).
-- **Co je citlivé:** Migrace zajišťuje fáze, classification system entries (odstranění .txt z názvů), propojení objektů s primary system entry. Probíhá **v App**, ne ve storage. loadProjectFromStorage v project/storage.ts migraci nevolá.
-- **Při změně:** Plánovaný přesun migrace do project vrstvy (např. src/project/migration.ts) – po přesunu upravit App tak, aby volal migraci ze storage nebo z project vrstvy při loadu; pak aktualizovat tento odstavec a [modules.md](modules.md) (sekce Persistence a migrace).
+- **Soubory:** [src/project/migration.ts](src/project/migration.ts), [src/project/storage.ts](src/project/storage.ts), [src/App.tsx](src/App.tsx)
+- **Co je citlivé:**
+  - `migrateProject` v `src/project/migration.ts` provádí doménovou migraci starších projektů (fáze, classification systems, odstranění `.txt` z názvů, napojení primárních klasifikací na `classificationSystemEntries`). Běží nad již načteným a základně normalizovaným `Project`.
+  - `loadProjectFromStorage` v `project/storage.ts` řeší pouze načtení a **normalizaci IFC verze** (`normalizeIfcSchemaVersion`, `getDisplayLabel`, `getIfcDocumentationBaseUrl`) a `ensureProjectPhases`; samotnou migraci nespouští.
+  - `App.tsx` při načítání a importech vždy volá `migrateProject(...)` z project vrstvy před spuštěním `propagate*` funkcí a uložením projektu.
+- **Při změně:** Při rozšíření migrace (nová pole v Projectu, změny struktury klasifikací) vždy upravit `migrateProject` v project vrstvě, ne v App. Poté zkontrolovat, že všechna místa, která načítají nebo importují projekt (load from storage, import JSON/IDS/Excel), volají migraci konzistentně; aktualizovat také [modules.md](modules.md) (sekce Persistence a migrace) a [data-flows.md](data-flows.md) (sekce 1 a 4).
 
 ---
 

@@ -6,8 +6,9 @@ import {
   getHierarchyNodesForView,
 } from "../../classification/hierarchyView";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
-import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject } from "../../project/types";
+import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject, PurposeOfUseEntry } from "../../project/types";
 import { PhaseManager } from "./PhaseManager";
+import { PurposeOfUseManager } from "./PurposeOfUseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
 import { useTranslation } from "../../translation/TranslationContext";
@@ -333,6 +334,10 @@ interface Props {
   onAddPhase: (phase: Phase) => void;
   onUpdatePhase: (phase: Phase) => void;
   onDeletePhase: (id: string) => void;
+  purposeOfUseEntries: PurposeOfUseEntry[];
+  onAddPurposeOfUse: (entry: PurposeOfUseEntry) => void;
+  onUpdatePurposeOfUse: (entry: PurposeOfUseEntry) => void;
+  onDeletePurposeOfUse: (id: string) => void;
   codeLists: CodeList[];
   onAddCodeList: (list: CodeList) => void;
   onImportCodeLists?: (lists: CodeList[]) => void;
@@ -486,6 +491,10 @@ export const ClassificationPanel: React.FC<Props> = ({
   onAddPhase,
   onUpdatePhase,
   onDeletePhase,
+  purposeOfUseEntries = [],
+  onAddPurposeOfUse,
+  onUpdatePurposeOfUse,
+  onDeletePurposeOfUse,
   codeLists,
   onAddCodeList,
   onImportCodeLists,
@@ -500,7 +509,7 @@ export const ClassificationPanel: React.FC<Props> = ({
   onAddIfcClassificationSystem,
 }) => {
   const [search, setSearch] = useState("");
-  const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "codelists" | "classificationsystems">("hierarchy");
+  const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "useCases" | "codelists" | "classificationsystems">("hierarchy");
   const [viewMode, setViewMode] = useState<HierarchyViewMode>("classification");
   const [expandLevel, setExpandLevel] = useState<number | null>(null);
   const [expandTrigger, setExpandTrigger] = useState(0);
@@ -597,6 +606,7 @@ export const ClassificationPanel: React.FC<Props> = ({
         {[
           { key: "hierarchy", label: "Hierarchie" },
           { key: "phases", label: "Fáze" },
+          { key: "useCases", label: "Účely užití" },
           { key: "codelists", label: "Číselníky" },
           { key: "classificationsystems", label: "Třídění a mapování prvků" },
         ].map((tab) => (
@@ -753,6 +763,17 @@ export const ClassificationPanel: React.FC<Props> = ({
             onAddPhase={onAddPhase}
             onUpdatePhase={onUpdatePhase}
             onDeletePhase={onDeletePhase}
+          />
+        </div>
+      )}
+
+      {activeTab === "useCases" && (
+        <div className="flex flex-1 flex-col overflow-hidden p-3">
+          <PurposeOfUseManager
+            entries={purposeOfUseEntries}
+            onAdd={onAddPurposeOfUse}
+            onUpdate={onUpdatePurposeOfUse}
+            onDelete={onDeletePurposeOfUse}
           />
         </div>
       )}

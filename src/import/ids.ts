@@ -18,7 +18,11 @@ import type {
 } from "../project/types";
 import { makeId } from "../utils/id";
 import { ensureProjectPhases, getDefaultPhases } from "../project/phases";
-import { getDisplayLabel, idsIfcVersionToSchemaVersion } from "../schema/ifcVersionConfig";
+import {
+  getDisplayLabel,
+  getIfcDocumentationBaseUrl,
+  idsIfcVersionToSchemaVersion,
+} from "../schema/ifcVersionConfig";
 import { buildClassificationFromSchemaFiltered } from "../classification/ifcTree";
 import { collectLeaves } from "../classification/parser";
 import type { ClassificationData } from "../classification/types";
@@ -491,6 +495,7 @@ function mapIdsPropertyToRequirement(
     id: makeId(),
     extensions: {},
     phases: phaseIds,
+    useCaseMode: "inherit",
     source,
     psetName: p.propertySet || (source === "CUSTOM" ? "Vlastní" : ""),
     propertyName: p.baseName || "",
@@ -513,6 +518,7 @@ function mapIdsAttributeToRequirement(a: IdsAttribute, phaseIds: string[]): Attr
     id: makeId(),
     extensions: {},
     phases: phaseIds,
+    useCaseMode: "inherit",
     attribute: a.name || "",
     required: a.cardinality === "required",
     occurrence: occurrenceFromCardinality(a.cardinality),
@@ -539,6 +545,7 @@ function mapIdsClassificationToRequirement(
     id: makeId(),
     extensions: {},
     phases: phaseIds,
+    useCaseMode: "inherit",
     classificationId: systemEntryId ?? makeId(),
     systemEntryId,
     system: c.system || "",
@@ -558,6 +565,7 @@ function mapIdsPartOfToRequirement(r: IdsPartOf, phaseIds: string[]): RelationRe
     id: makeId(),
     extensions: {},
     phases: phaseIds,
+    useCaseMode: "inherit",
     relationType,
     occurrence: occurrenceFromCardinality(r.cardinality),
     entityType: r.entity?.name || undefined,
@@ -575,6 +583,7 @@ function mapIdsMaterialToRequirement(m: IdsMaterial, phaseIds: string[]): Materi
     id: makeId(),
     extensions: {},
     phases: phaseIds,
+    useCaseMode: "inherit",
     required: m.cardinality === "required",
     occurrence: occurrenceFromCardinality(m.cardinality),
     constraint,
@@ -835,6 +844,7 @@ export function mergeIdsIntoProject(
   const idsVersion = parsed.specifications.find((s) => s.ifcVersion)?.ifcVersion;
   const ifcSchemaVersion = idsIfcVersionToSchemaVersion(idsVersion);
   const ifcSchemaVersionDisplay = getDisplayLabel(ifcSchemaVersion);
+  const ifcDocumentationUrl = getIfcDocumentationBaseUrl(ifcSchemaVersion);
   let project: Project;
   if (existingProject) {
     project = ensureProjectPhases({
@@ -846,6 +856,7 @@ export function mergeIdsIntoProject(
       objects,
       ifcSchemaVersion,
       ifcSchemaVersionDisplay,
+      ifcDocumentationUrl,
       updatedAt: now,
     });
   } else {
@@ -859,6 +870,7 @@ export function mergeIdsIntoProject(
       updatedAt: now,
       ifcSchemaVersion,
       ifcSchemaVersionDisplay,
+      ifcDocumentationUrl,
       classification: classificationData,
       classifications: [],
       primaryClassificationId: primaryId,

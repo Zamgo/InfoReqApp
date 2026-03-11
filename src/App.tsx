@@ -37,6 +37,7 @@ import "./index.css";
 import { makeId } from "./utils/id";
 import { parseAuthoringValues, joinAuthoringValues } from "./project/authoring";
 import { computePsetFingerprint, computeAttributeItemFingerprint, computeClassificationItemFingerprint, computeMaterialItemFingerprint, computeRelationItemFingerprint, type RequirementItemKind } from "./project/requirementFingerprint";
+import { migrateProject } from "./project/migration";
 
 const applyCodeListPropagation = (project: Project, list: CodeList): Project => {
   // Update all properties that are linked to this code list
@@ -111,64 +112,6 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
   const historyRef = useRef<Project[]>([]);
   const historyIndexRef = useRef<number>(-1);
   const isUndoRedoRef = useRef<boolean>(false);
-
-  const migrateProject = (input: Project): Project => {
-    // ensure phases and structure
-    const migrated = ensureProjectPhases({
-      ...input,
-      codeLists: input.codeLists ?? [],
-      purposeOfUseEntries: input.purposeOfUseEntries ?? [],
-      phases: ensurePhaseList(input.phases),
-      classifications: (input.classifications ?? [
-        {
-          id: input.primaryClassificationId ?? input.classification?.hash ?? "primary",
-          ifcClassification: { Name: input.classification?.sourceName ?? "Klasifikace" },
-          nodes: input.classification?.nodes ?? [],
-          sourceName: input.classification?.sourceName ?? "",
-          hash: input.classification?.hash,
-          isPrimary: true,
-          createdAt: input.createdAt ?? new Date().toISOString(),
-        },
-      ]).map((c) => ({
-        ...c,
-        ifcClassification: { ...c.ifcClassification, Name: (c.ifcClassification.Name || "").replace(/\.txt$/i, "") },
-      })),
-      primaryClassificationId:
-        input.primaryClassificationId ??
-        (input.classifications && input.classifications[0]?.id) ??
-        "primary",
-    });
-    
-    // Migrate classification system entries - remove .txt from names
-    if (migrated.classificationSystemEntries) {
-      migrated.classificationSystemEntries = migrated.classificationSystemEntries.map((e) => ({
-        ...e,
-        name: (e.name || "").replace(/\.txt$/i, ""),
-      }));
-    }
-    
-    // Find primary classification system entry for linking
-    const primaryEntry = (migrated.classificationSystemEntries ?? []).find((e) => e.isPrimary);
-    
-    // Migrate objects - fix classification system names and link to entries
-    if (migrated.objects) {
-      Object.values(migrated.objects).forEach((obj) => {
-        obj.requirements.classifications = obj.requirements.classifications.map((cls) => {
-          // Remove .txt from system name
-          const cleanSystem = (cls.system || "").replace(/\.txt$/i, "");
-          
-          // If this is a primary/readOnly classification without systemEntryId, link it
-          if ((cls.readOnly || cls.isApplicability) && !cls.systemEntryId && primaryEntry) {
-            return { ...cls, system: cleanSystem || primaryEntry.name, systemEntryId: primaryEntry.id };
-          }
-          
-          return { ...cls, system: cleanSystem };
-        });
-      });
-    }
-    
-    return migrated;
-  };
 
   const clearProject = useCallback(() => {
     clearAllAppDataOnReset();
@@ -1036,6 +979,37 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     updateProjectWithHistory(next);
   };
 
+  const onAddPurposeOfUse = (entry: import("./project/types").PurposeOfUseEntry) => {
+    if (!project) return;
+    const next: Project = {
+      ...project,
+      purposeOfUseEntries: [...(project.purposeOfUseEntries ?? []), entry],
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
+  const onUpdatePurposeOfUse = (entry: import("./project/types").PurposeOfUseEntry) => {
+    if (!project) return;
+    const list = project.purposeOfUseEntries ?? [];
+    const next: Project = {
+      ...project,
+      purposeOfUseEntries: list.map((e) => (e.id === entry.id ? entry : e)),
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
+  const onDeletePurposeOfUse = (id: string) => {
+    if (!project) return;
+    const next: Project = {
+      ...project,
+      purposeOfUseEntries: (project.purposeOfUseEntries ?? []).filter((e) => e.id !== id),
+      updatedAt: new Date().toISOString(),
+    };
+    updateProjectWithHistory(next);
+  };
+
   const onAddCodeList = (list: CodeList) => {
     if (!project) return;
     const next: Project = {
@@ -1694,6 +1668,128 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     [project],
   );
 
+  const onAssignGroupToObjects = useCallback(
+    (
+      kind: RequirementItemKind,
+      fingerprint: string,
+      objectCodes: string[],
+      representativeItems: import("./project/requirementFingerprint").RequirementItemGroup["representativeItems"],
+    ) => {
+      if (!project) return;
+
+      const targetSet = new Set(objectCodes);
+      const nextObjects: Project["objects"] = { ...project.objects };
+      let changed = false;
+
+      for (const [code, obj] of Object.entries(project.objects)) {
+        const reqs = obj.requirements;
+        const shouldHave = targetSet.has(code);
+
+        if (kind === "pset") {
+          const psetMap = new Map<string, PropertyRequirement[]>();
+          for (const p of reqs.properties) {
+            const key = (p.psetName ?? "").trim();
+            const arr = psetMap.get(key);
+            if (arr) arr.push(p);
+            else psetMap.set(key, [p]);
+          }
+          const props = representativeItems as PropertyRequirement[];
+          const psetName = (props[0]?.psetName ?? "").trim();
+          const existing = psetMap.get(psetName);
+          const hasIt = existing && computePsetFingerprint(psetName, existing) === fingerprint;
+
+          if (shouldHave && !hasIt) {
+            const cloned = props.map((p) => ({ ...p, id: makeId() }));
+            const other = reqs.properties.filter((p) => (p.psetName ?? "").trim() !== psetName);
+            nextObjects[code] = { ...obj, requirements: { ...reqs, properties: [...other, ...cloned] } };
+            changed = true;
+          } else if (!shouldHave && hasIt) {
+            const other = reqs.properties.filter((p) => (p.psetName ?? "").trim() !== psetName);
+            nextObjects[code] = { ...obj, requirements: { ...reqs, properties: other } };
+            changed = true;
+          }
+        } else if (kind === "attribute") {
+          const idx = reqs.attributes.findIndex((a) => !a.isApplicability && computeAttributeItemFingerprint(a) === fingerprint);
+          const hasIt = idx >= 0;
+
+          if (shouldHave && !hasIt) {
+            const item = (representativeItems as [AttributeRequirement])[0];
+            nextObjects[code] = {
+              ...obj,
+              requirements: { ...reqs, attributes: [...reqs.attributes, { ...item, id: makeId() }] },
+            };
+            changed = true;
+          } else if (!shouldHave && hasIt) {
+            const nextAttrs = reqs.attributes.filter((_, i) => i !== idx);
+            nextObjects[code] = { ...obj, requirements: { ...reqs, attributes: nextAttrs } };
+            changed = true;
+          }
+        } else if (kind === "classification") {
+          const idx = reqs.classifications.findIndex(
+            (c) => !c.readOnly && !c.isApplicability && computeClassificationItemFingerprint(c) === fingerprint,
+          );
+          const hasIt = idx >= 0;
+
+          if (shouldHave && !hasIt) {
+            const item = (representativeItems as [ClassificationRequirement])[0];
+            nextObjects[code] = {
+              ...obj,
+              requirements: { ...reqs, classifications: [...reqs.classifications, { ...item, id: makeId() }] },
+            };
+            changed = true;
+          } else if (!shouldHave && hasIt) {
+            const nextCls = reqs.classifications.filter((_, i) => i !== idx);
+            nextObjects[code] = { ...obj, requirements: { ...reqs, classifications: nextCls } };
+            changed = true;
+          }
+        } else if (kind === "material") {
+          const idx = reqs.materials.findIndex((m) => !m.isApplicability && computeMaterialItemFingerprint(m) === fingerprint);
+          const hasIt = idx >= 0;
+
+          if (shouldHave && !hasIt) {
+            const item = (representativeItems as [MaterialRequirement])[0];
+            nextObjects[code] = {
+              ...obj,
+              requirements: { ...reqs, materials: [...reqs.materials, { ...item, id: makeId() }] },
+            };
+            changed = true;
+          } else if (!shouldHave && hasIt) {
+            const nextMat = reqs.materials.filter((_, i) => i !== idx);
+            nextObjects[code] = { ...obj, requirements: { ...reqs, materials: nextMat } };
+            changed = true;
+          }
+        } else if (kind === "relation") {
+          const idx = reqs.relations.findIndex((r) => !r.isApplicability && computeRelationItemFingerprint(r) === fingerprint);
+          const hasIt = idx >= 0;
+
+          if (shouldHave && !hasIt) {
+            const item = (representativeItems as [RelationRequirement])[0];
+            nextObjects[code] = {
+              ...obj,
+              requirements: { ...reqs, relations: [...reqs.relations, { ...item, id: makeId() }] },
+            };
+            changed = true;
+          } else if (!shouldHave && hasIt) {
+            const nextRel = reqs.relations.filter((_, i) => i !== idx);
+            nextObjects[code] = { ...obj, requirements: { ...reqs, relations: nextRel } };
+            changed = true;
+          }
+        }
+      }
+
+      if (!changed) return;
+
+      const next: Project = {
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      };
+
+      updateProjectWithHistory(next);
+    },
+    [project],
+  );
+
   const onUpdateRequirementItemGroup = useCallback(
     (kind: RequirementItemKind, fingerprint: string, updatedItems: import("./project/types").PropertyRequirement[] | [import("./project/types").AttributeRequirement] | [import("./project/types").ClassificationRequirement] | [import("./project/types").MaterialRequirement] | [import("./project/types").RelationRequirement]) => {
       if (!project) return;
@@ -2118,6 +2214,10 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
             onAddPhase={onAddPhase}
             onUpdatePhase={onUpdatePhase}
             onDeletePhase={onDeletePhase}
+            purposeOfUseEntries={project?.purposeOfUseEntries ?? []}
+            onAddPurposeOfUse={onAddPurposeOfUse}
+            onUpdatePurposeOfUse={onUpdatePurposeOfUse}
+            onDeletePurposeOfUse={onDeletePurposeOfUse}
             codeLists={project?.codeLists ?? []}
             onAddCodeList={onAddCodeList}
             onImportCodeLists={onImportCodeLists}
@@ -2187,6 +2287,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
               onDuplicateMaterialsToObjects={onDuplicateMaterialsToObjects}
               onDuplicateRelationsToObjects={onDuplicateRelationsToObjects}
               onUpdateRequirementItemGroup={onUpdateRequirementItemGroup}
+              onAssignGroupToObjects={onAssignGroupToObjects}
             />
           )}
         </div>

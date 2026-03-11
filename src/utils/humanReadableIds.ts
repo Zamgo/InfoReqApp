@@ -1,4 +1,5 @@
 import type { ProjectObject, Phase, ClassificationSystemEntry } from "../project/types";
+import { getEffectiveUseCaseIds, requirementAppliesToUseCase } from "../project/useCaseResolve";
 
 const requirementMatchesPhase = (phases: string[] | undefined, phaseId: string | null): boolean => {
   if (phaseId === null) return true;
@@ -82,9 +83,24 @@ export const generateHumanReadable = (
   _phases: Phase[],
   classificationSystemEntries: ClassificationSystemEntry[],
   phaseId: string | null = null,
-  occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all"
+  occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all",
+  useCaseId?: string | null
 ): { applicability: string[]; requirements: string[] } => {
-  const filteredObj = filterObjectByPhase(obj, phaseId);
+  let filteredObj = filterObjectByPhase(obj, phaseId);
+  if (useCaseId != null && useCaseId !== "") {
+    const appliesUseCase = (r: { useCaseMode?: string }, effective: string[]) =>
+      r.useCaseMode !== "excluded" && requirementAppliesToUseCase(effective, useCaseId);
+    filteredObj = {
+      ...filteredObj,
+      requirements: {
+        attributes: filteredObj.requirements.attributes.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "attributes"))),
+        properties: filteredObj.requirements.properties.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "properties", r.psetName))),
+        relations: filteredObj.requirements.relations.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "relations"))),
+        classifications: filteredObj.requirements.classifications.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "classifications"))),
+        materials: filteredObj.requirements.materials.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "materials"))),
+      },
+    };
+  }
   const applicability: string[] = [];
   const requirements: string[] = [];
 

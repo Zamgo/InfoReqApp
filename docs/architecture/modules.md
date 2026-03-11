@@ -8,7 +8,7 @@ Tento dokument popisuje hlavní moduly aplikace, jejich odpovědnosti a **závis
 
 | Modul | Složka / soubory | Odpovědnost |
 |-------|------------------|-------------|
-| Projekt a persistence | `src/project/` (types, storage, phases, enumeration, authoring) | Typy Project, ProjectObject, požadavky; load/save/clear z localStorage; výchozí fáze a číselníky; vytvoření prázdného projektu |
+| Projekt a persistence | `src/project/` (types, storage, phases, enumeration, authoring, migration) | Typy Project, ProjectObject, požadavky; load/save/clear z localStorage; výchozí fáze a číselníky; vytvoření prázdného projektu; migrace starších projektů na aktuální strukturu |
 | IFC schéma | `src/schema/` (types, SchemaProvider, ifcVersionConfig) | Typy SchemaIndex, entity, Pset/Qto; načítání schema indexu podle verze; konfigurace verzí a URL dokumentace/bSDD |
 | Klasifikace | `src/classification/` (types, parser, ifcTree, sampleXlsx, hierarchyView) | Parsování TSV/XLSX, budování stromu z SchemaIndex, mapování kódů na entity/predefinedType |
 | UI – hlavní | App.tsx, ObjectDetail.tsx, ClassificationPanel.tsx | Stav aplikace, výběr objektu, strom klasifikace, karta objektu (požadavky, fáze, IDS metadata, export) |
@@ -47,9 +47,11 @@ Tento dokument popisuje hlavní moduly aplikace, jejich odpovědnosti a **závis
 
 ### Persistence a migrace
 
-- **project/storage.ts:** `loadProjectFromStorage()` načte z localStorage a vrátí projekt (uvnitř volá `ensureProjectPhases(parsed)`). **Nemigruje** – migrace není ve storage.
-- **App.tsx:** Při načtení (useEffect) volá `loadProjectFromStorage()`, pak **migrateProject(stored)** a řadu `propagate*` funkcí; výsledek uloží do stavu a případně zpět do storage. Při importu JSON/IDS/Excel také volá `migrateProject(imported)` před mergem nebo nastavením projektu.
-- **migrateProject** je definována **v App.tsx** (ř. cca 114); zajišťuje fáze, classification system entries, odstranění .txt z názvů, propojení objektů s primary system entry.
+- **project/storage.ts:**
+  - `loadProjectFromStorage()` načte z localStorage, normalizuje IFC verzi (`normalizeIfcSchemaVersion`), doplní `ifcSchemaVersionDisplay` a `ifcDocumentationUrl` z `ifcVersionConfig` a vrátí projekt po `ensureProjectPhases(parsed)`.
+  - `importProjectFile()` při importu JSON dělá stejnou normalizaci verze a dokumentační URL.
+- **project/migration.ts:** `migrateProject(project)` provádí čistě doménovou migraci starších projektů (fáze, classification systems, odstranění `.txt` z názvů, napojení primárních klasifikací na `classificationSystemEntries`). Tato logika je centralizovaná v project vrstvě.
+- **App.tsx:** Při načtení (useEffect) volá `loadProjectFromStorage()`, pak **`migrateProject(stored)`** a řadu `propagate*` funkcí; výsledek uloží do stavu a případně zpět do storage. Při importu JSON/IDS/Excel také volá `migrateProject(imported)` před dalším zpracováním (např. IDS merge, propagace mapování).
 
 ### Import a export
 

@@ -19,6 +19,7 @@ import {
 } from "../../schema/ifcVersionConfig";
 import { makeId } from "../../utils/id";
 import { generateHumanReadable, filterObjectByPhase, matchesOccurrenceFilter } from "../../utils/humanReadableIds";
+import { getEffectiveUseCaseIds, requirementAppliesToUseCase } from "../../project/useCaseResolve";
 import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata, MaterialRequirement, ObjectRequirements, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
@@ -100,6 +101,66 @@ const PhaseSelector: React.FC<{ phases: Phase[]; value?: string[]; onChange: (id
           </label>
         );
       })}
+    </div>
+  );
+};
+
+/** Multi-select pro účely užití (číselník). */
+const UseCaseMultiSelect: React.FC<{
+  entries: import("../../project/types").PurposeOfUseEntry[];
+  value?: string[];
+  onChange: (ids: string[]) => void;
+  placeholder?: string;
+}> = ({ entries, value, onChange, placeholder }) => {
+  const selected = new Set(value ?? []);
+  const toggle = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    onChange(Array.from(next));
+  };
+  if (!entries.length) return <span className="text-xs text-slate-500">{placeholder ?? "Žádné účely užití v projektu"}</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {entries.map((entry) => (
+        <label key={entry.id} className="inline-flex items-center gap-1 rounded border border-slate-200 px-2 py-0.5 text-xs hover:bg-slate-50">
+          <input type="checkbox" className="h-3.5 w-3.5" checked={selected.has(entry.id)} onChange={() => toggle(entry.id)} />
+          <span>{entry.name}</span>
+        </label>
+      ))}
+    </div>
+  );
+};
+
+/** Řádek: režim účelu užití (Dědit / Vlastní / Vyloučeno) a při Vlastní multi-select. */
+const UseCaseRowControl: React.FC<{
+  entries: import("../../project/types").PurposeOfUseEntry[];
+  useCaseMode?: import("../../project/types").UseCaseMode;
+  useCaseIds?: string[];
+  onChange: (patch: { useCaseMode?: import("../../project/types").UseCaseMode; useCaseIds?: string[] }) => void;
+}> = ({ entries, useCaseMode = "inherit", useCaseIds, onChange }) => {
+  const mode = useCaseMode ?? "inherit";
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <select
+        value={mode}
+        onChange={(e) => {
+          const v = e.target.value as import("../../project/types").UseCaseMode;
+          onChange({ useCaseMode: v, useCaseIds: v === "custom" ? (useCaseIds ?? []) : undefined });
+        }}
+        className="rounded border border-slate-200 px-2 py-0.5 text-xs"
+      >
+        <option value="inherit">Dědit</option>
+        <option value="custom">Vlastní</option>
+        <option value="excluded">Vyloučeno</option>
+      </select>
+      {mode === "custom" && (
+        <UseCaseMultiSelect
+          entries={entries}
+          value={useCaseIds ?? []}
+          onChange={(ids) => onChange({ useCaseIds: ids })}
+        />
+      )}
     </div>
   );
 };
@@ -663,6 +724,13 @@ interface Props {
       | [import("../../project/types").MaterialRequirement]
       | [import("../../project/types").RelationRequirement],
   ) => void;
+  /** Přiřadit skupinu požadavků k vybraným objektům (změna množiny objektů) */
+  onAssignGroupToObjects?: (
+    kind: import("../../project/requirementFingerprint").RequirementItemKind,
+    fingerprint: string,
+    objectCodes: string[],
+    representativeItems: import("../../project/requirementFingerprint").RequirementItemGroup["representativeItems"],
+  ) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -683,8 +751,8 @@ const relationTypeOptions: RelationRequirement["relationType"][] = [
   "IFCRELFILLSELEMENT",
 ];
 
-/** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, Datový typ, Omezení, Hodnota, Jednotka, URI, Popis+Poznámka+Příklady, Fáze, Použitelnost, Akce */
-const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 120, 180, 180, 180, 100, 50, 110];
+/** Výchozí šířky sloupců tabulky vlastností (px): checkbox, Výskyt, Vlastnost, ..., Fáze, Účel užití, Použitelnost, Akce */
+const DEFAULT_PROPERTY_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 85, 120, 180, 180, 180, 140, 100, 50, 110];
 
 /** Všechny sloupce tabulky vlastností, které lze skrýt (index → label) */
 const PROPERTY_COLUMNS_HIDEABLE: Record<number, string> = {
@@ -698,15 +766,16 @@ const PROPERTY_COLUMNS_HIDEABLE: Record<number, string> = {
   7: "URI",
   8: "Popis · Poznámka · Příklady",
   9: "Fáze",
-  10: "Použitelnost",
-  11: "Akce",
+  10: "Účel užití",
+  11: "Použitelnost",
+  12: "Akce",
 };
 
-/** Výchozí šířky sloupců: Atributy (13), Součásti (12), Materiál (11), Klasifikace (12) */
-const DEFAULT_ATTRIBUTE_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 120, 100, 100, 100, 100, 50, 80];
-const DEFAULT_PARTOF_COL_WIDTHS = [40, 90, 180, 140, 160, 120, 120, 100, 100, 100, 50, 80];
-const DEFAULT_MATERIAL_COL_WIDTHS = [40, 90, 95, 150, 100, 120, 100, 100, 100, 50, 80];
-const DEFAULT_CLASSIFICATION_COL_WIDTHS = [40, 100, 180, 95, 150, 100, 120, 100, 100, 100, 50, 80];
+/** Výchozí šířky sloupců: Atributy (14), Součásti (13), Materiál (12), Klasifikace (13) */
+const DEFAULT_ATTRIBUTE_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 120, 100, 100, 100, 100, 140, 50, 80];
+const DEFAULT_PARTOF_COL_WIDTHS = [40, 90, 180, 140, 160, 120, 120, 100, 100, 100, 140, 50, 80];
+const DEFAULT_MATERIAL_COL_WIDTHS = [40, 90, 95, 150, 100, 120, 100, 100, 100, 140, 50, 80];
+const DEFAULT_CLASSIFICATION_COL_WIDTHS = [40, 100, 180, 95, 150, 100, 120, 100, 100, 100, 140, 50, 80];
 
 /** Sloupce tabulky atributů (index → label) */
 const ATTRIBUTE_COLUMNS_HIDEABLE: Record<number, string> = {
@@ -721,8 +790,9 @@ const ATTRIBUTE_COLUMNS_HIDEABLE: Record<number, string> = {
   8: "Poznámka",
   9: "Příklady",
   10: "Fáze",
-  11: "Použitelnost",
-  12: "Akce",
+  11: "Účel užití",
+  12: "Použitelnost",
+  13: "Akce",
 };
 
 /** Sloupce tabulky Součásti (index → label) */
@@ -737,8 +807,9 @@ const PARTOF_COLUMNS_HIDEABLE: Record<number, string> = {
   7: "Poznámka",
   8: "Příklady",
   9: "Fáze",
-  10: "Použitelnost",
-  11: "Akce",
+  10: "Účel užití",
+  11: "Použitelnost",
+  12: "Akce",
 };
 
 /** Sloupce tabulky Materiál (index → label) */
@@ -752,8 +823,9 @@ const MATERIAL_COLUMNS_HIDEABLE: Record<number, string> = {
   6: "Poznámka",
   7: "Příklady",
   8: "Fáze",
-  9: "Použitelnost",
-  10: "Akce",
+  9: "Účel užití",
+  10: "Použitelnost",
+  11: "Akce",
 };
 
 /** Sloupce tabulky Klasifikace (index → label) */
@@ -768,8 +840,9 @@ const CLASSIFICATION_COLUMNS_HIDEABLE: Record<number, string> = {
   7: "Poznámka",
   8: "Příklady",
   9: "Fáze",
-  10: "Použitelnost",
-  11: "Akce",
+  10: "Účel užití",
+  11: "Použitelnost",
+  12: "Akce",
 };
 
 /** Načte skryté sloupce z localStorage */
@@ -1361,9 +1434,25 @@ const buildOneSpecificationXml = (
   classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[],
   occurrenceFilter: "required" | "prohibited" | "optional",
   ifcVersion: IdsIfcVersion,
-  phaseName?: string
+  phaseName?: string,
+  useCaseId?: string | null
 ): string | null => {
-  const entityName = normalizeEntityName(filteredObj.ifcEntity);
+  let objForSpec = filteredObj;
+  if (useCaseId != null && useCaseId !== "") {
+    const appliesUseCase = (r: { useCaseMode?: string }, effective: string[]) =>
+      r.useCaseMode !== "excluded" && requirementAppliesToUseCase(effective, useCaseId);
+    objForSpec = {
+      ...filteredObj,
+      requirements: {
+        attributes: filteredObj.requirements.attributes.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "attributes"))),
+        properties: filteredObj.requirements.properties.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "properties", r.psetName))),
+        relations: filteredObj.requirements.relations.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "relations"))),
+        classifications: filteredObj.requirements.classifications.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "classifications"))),
+        materials: filteredObj.requirements.materials.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "materials"))),
+      },
+    };
+  }
+  const entityName = normalizeEntityName(objForSpec.ifcEntity);
   const meta = getIdsSpecMetadataForPhaseOccurrence(obj, phaseId, occurrenceFilter);
   const sanitizeForSpec = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
   const occurrenceLabel = occurrenceFilter === "required" ? "Požadované" : occurrenceFilter === "prohibited" ? "Zakázané" : "Možné";
@@ -1382,17 +1471,17 @@ const buildOneSpecificationXml = (
   ].filter(Boolean).join(" ");
 
   // Check if we have any requirements for this occurrence
-  const hasReqAttr = filteredObj.requirements.attributes.some((a) => !a.isApplicability && a.attribute !== "PredefinedType" && matchesOccurrenceFilter(a.occurrence, occurrenceFilter));
-  const hasReqProp = filteredObj.requirements.properties.some((p) => !p.isApplicability && p.psetName && !p.psetName.startsWith("_NEW_") && p.propertyName && matchesOccurrenceFilter(p.occurrence, occurrenceFilter));
-  const hasReqRel = filteredObj.requirements.relations.some((r) => !r.isApplicability && matchesOccurrenceFilter(r.occurrence, occurrenceFilter));
-  const requirementClassifications = filteredObj.requirements.classifications.filter((cls) => {
+  const hasReqAttr = objForSpec.requirements.attributes.some((a) => !a.isApplicability && a.attribute !== "PredefinedType" && matchesOccurrenceFilter(a.occurrence, occurrenceFilter));
+  const hasReqProp = objForSpec.requirements.properties.some((p) => !p.isApplicability && p.psetName && !p.psetName.startsWith("_NEW_") && p.propertyName && matchesOccurrenceFilter(p.occurrence, occurrenceFilter));
+  const hasReqRel = objForSpec.requirements.relations.some((r) => !r.isApplicability && matchesOccurrenceFilter(r.occurrence, occurrenceFilter));
+  const requirementClassifications = objForSpec.requirements.classifications.filter((cls) => {
     if (cls.isApplicability || cls.readOnly) return false;
     const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
     if (entry?.isIfcSystem) return false;
     return true;
   });
   const hasReqCls = requirementClassifications.some((c) => matchesOccurrenceFilter(c.occurrence ?? "required", occurrenceFilter));
-  const hasReqMat = filteredObj.requirements.materials.some((m) => !m.isApplicability && matchesOccurrenceFilter(m.occurrence, occurrenceFilter));
+  const hasReqMat = objForSpec.requirements.materials.some((m) => !m.isApplicability && matchesOccurrenceFilter(m.occurrence, occurrenceFilter));
   if (!hasReqAttr && !hasReqProp && !hasReqRel && !hasReqCls && !hasReqMat) return null;
 
   let spec = `    <ids:specification ${specAttrs}>
@@ -1403,8 +1492,8 @@ const buildOneSpecificationXml = (
           </ids:name>`;
 
   const predefinedTypePhases = obj.predefinedTypePhases ?? obj.entityPhases ?? (phaseId === null ? [] : [phaseId]);
-  const ptVal = (filteredObj.predefinedType.value ?? "").trim();
-  const predefinedTypeApplies = filteredObj.predefinedType.mode !== "NONE" && !!ptVal && ptVal !== EMPTY_PLACEHOLDER && (!phaseId ? (predefinedTypePhases.length > 0) : (predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId)));
+  const ptVal = (objForSpec.predefinedType.value ?? "").trim();
+  const predefinedTypeApplies = objForSpec.predefinedType.mode !== "NONE" && !!ptVal && ptVal !== EMPTY_PLACEHOLDER && (!phaseId ? (predefinedTypePhases.length > 0) : (predefinedTypePhases.length === 0 || predefinedTypePhases.includes(phaseId)));
   if (predefinedTypeApplies) {
     spec += `
           <ids:predefinedType>
@@ -1414,7 +1503,7 @@ const buildOneSpecificationXml = (
   spec += `
         </ids:entity>`;
 
-  const applicabilityClassifications = filteredObj.requirements.classifications.filter((cls) => {
+  const applicabilityClassifications = objForSpec.requirements.classifications.filter((cls) => {
     if (!cls.isApplicability && !cls.readOnly) return false;
     const entry = cls.systemEntryId ? classificationSystemEntries.find((e) => e.id === cls.systemEntryId) : undefined;
     if (entry?.isIfcSystem) return false;
@@ -1461,7 +1550,7 @@ const buildOneSpecificationXml = (
         </ids:classification>`;
   });
 
-  filteredObj.requirements.attributes.forEach((attr) => {
+  objForSpec.requirements.attributes.forEach((attr) => {
     if (!attr.isApplicability || attr.attribute === "PredefinedType") return;
     const instructionsAttr = attr.note ? ` instructions="${escapeXml(attr.note)}"` : "";
     spec += `
@@ -1477,7 +1566,7 @@ const buildOneSpecificationXml = (
     spec += `
         </ids:attribute>`;
   });
-  filteredObj.requirements.properties.forEach((prop) => {
+  objForSpec.requirements.properties.forEach((prop) => {
     if (!prop.isApplicability || !prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName) return;
     const dataType = mapDataTypeToIds(prop.dataType);
     const dataTypeAttr = dataType ? ` dataType="${escapeXml(dataType)}"` : "";
@@ -1498,7 +1587,7 @@ const buildOneSpecificationXml = (
     spec += `
         </ids:property>`;
   });
-  filteredObj.requirements.relations.forEach((rel) => {
+  objForSpec.requirements.relations.forEach((rel) => {
     if (!rel.isApplicability) return;
     const relationAttr = rel.relationType ? ` relation="${escapeXml(rel.relationType)}"` : "";
     const relatedEntityName = normalizeEntityName(rel.entityType || "IFCBUILDINGELEMENT");
@@ -1518,7 +1607,7 @@ const buildOneSpecificationXml = (
           </ids:entity>
         </ids:partOf>`;
   });
-  filteredObj.requirements.materials.forEach((mat) => {
+  objForSpec.requirements.materials.forEach((mat) => {
     if (!mat.isApplicability) return;
     const uriAttr = mat.uri ? ` uri="${escapeXml(mat.uri)}"` : "";
     const instructionsAttr = mat.note ? ` instructions="${escapeXml(mat.note)}"` : "";
@@ -1538,7 +1627,7 @@ const buildOneSpecificationXml = (
       </ids:applicability>
       <ids:requirements>`;
 
-  filteredObj.requirements.attributes.forEach((attr) => {
+  objForSpec.requirements.attributes.forEach((attr) => {
     if (attr.attribute === "PredefinedType" || attr.isApplicability) return;
     if (!matchesOccurrenceFilter(attr.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = attr.occurrence === "prohibited" ? "prohibited" : attr.occurrence === "optional" ? "optional" : "required";
@@ -1556,7 +1645,7 @@ const buildOneSpecificationXml = (
     spec += `
         </ids:attribute>`;
   });
-  filteredObj.requirements.properties.forEach((prop) => {
+  objForSpec.requirements.properties.forEach((prop) => {
     if (!prop.psetName || prop.psetName.startsWith("_NEW_") || !prop.propertyName || prop.isApplicability) return;
     if (!matchesOccurrenceFilter(prop.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = prop.occurrence === "prohibited" ? "prohibited" : prop.occurrence === "optional" ? "optional" : "required";
@@ -1579,7 +1668,7 @@ const buildOneSpecificationXml = (
     spec += `
         </ids:property>`;
   });
-  filteredObj.requirements.relations.forEach((rel) => {
+  objForSpec.requirements.relations.forEach((rel) => {
     if (rel.isApplicability) return;
     if (!matchesOccurrenceFilter(rel.occurrence, occurrenceFilter)) return;
     const cardinality: SimpleCardinality = rel.occurrence === "prohibited" ? "prohibited" : "required";
@@ -1643,7 +1732,7 @@ const buildOneSpecificationXml = (
           </ids:system>
         </ids:classification>`;
   });
-  filteredObj.requirements.materials.forEach((mat) => {
+  objForSpec.requirements.materials.forEach((mat) => {
     if (mat.isApplicability) return;
     if (!matchesOccurrenceFilter(mat.occurrence, occurrenceFilter)) return;
     const cardinality: ConditionalCardinality = mat.occurrence === "prohibited" ? "prohibited" : mat.occurrence === "optional" ? "optional" : "required";
@@ -1676,7 +1765,8 @@ const generateIdsXml = (
   classificationSystemEntries: import("../../project/types").ClassificationSystemEntry[] = [],
   occurrenceFilter: "all" | "required" | "prohibited" | "optional" = "all",
   phaseName?: string, 
-  idsMetadata?: Partial<IdsMetadata>
+  idsMetadata?: Partial<IdsMetadata>,
+  useCaseId?: string | null
 ): string => {
   const filteredObj = filterObjectByPhase(obj, phaseId);
   const today = new Date().toISOString().split("T")[0];
@@ -1704,7 +1794,7 @@ const generateIdsXml = (
 
   const specifications: string[] = [];
   for (const occ of occurrenceTypes) {
-    const spec = buildOneSpecificationXml(filteredObj, obj, phaseId, classificationSystemEntries, occ, ifcVersion, phaseName);
+    const spec = buildOneSpecificationXml(filteredObj, obj, phaseId, classificationSystemEntries, occ, ifcVersion, phaseName, useCaseId);
     if (spec) specifications.push(spec);
   }
 
@@ -2009,6 +2099,7 @@ export const ObjectDetail: React.FC<Props> = ({
   onDuplicateMaterialsToObjects,
   onDuplicateRelationsToObjects,
   onUpdateRequirementItemGroup,
+  onAssignGroupToObjects,
 }) => {
   const isLocked = object.locked === true;
   /** Zvýraznění červeně: zkopírovaný objekt má stále stejnou entitu a predefinedType jako zdroj */
@@ -2022,6 +2113,7 @@ export const ObjectDetail: React.FC<Props> = ({
   const [activeTab, setActiveTab] = useState<TabKey>("properties");
   const [idsSubTab, setIdsSubTab] = useState<IdsSubTabKey>("readable");
   const [isExportIdsDialogOpen, setIsExportIdsDialogOpen] = useState(false);
+  const [selectedUseCaseId, setSelectedUseCaseId] = useState<string | null>(null); // null = "Vše"
   const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null); // null = "Vše"
   const [occurrenceFilter, setOccurrenceFilter] = useState<OccurrenceFilter>("all");
   const ifcSchemaVersion = normalizeIfcSchemaVersion(project?.ifcSchemaVersion);
@@ -2045,12 +2137,48 @@ export const ObjectDetail: React.FC<Props> = ({
     return "object";
   });
   const [selectedItemGroup, setSelectedItemGroup] = useState<{ kind: RequirementItemKind; fingerprint: string } | null>(null);
+  /** Stabilní identifikátor vybrané skupiny (kind + id reprezentativního požadavku), aby po uložení změn (změna fingerprintu) zůstal záznam otevřený. */
+  const selectedGroupStableRef = useRef<{ kind: RequirementItemKind; representativeId: string } | null>(null);
 
   const selectedItemGroupData = useMemo<RequirementItemGroup | null>(() => {
     if (!project || !selectedItemGroup) return null;
     const groups = groupRequirementsByItem(project);
     return groups.find((g) => g.fingerprint === selectedItemGroup.fingerprint && g.kind === selectedItemGroup.kind) ?? null;
   }, [project, selectedItemGroup]);
+
+  // Při vybrané skupině uložit stabilní klíč (id reprezentativního požadavku); při zrušení výběru smazat.
+  useEffect(() => {
+    if (selectedItemGroupData && selectedItemGroup) {
+      const items = selectedItemGroupData.representativeItems;
+      const representativeId =
+        selectedItemGroupData.kind === "pset"
+          ? (items as import("../../project/types").PropertyRequirement[])[0]?.id
+          : (items as [import("../../project/types").AttributeRequirement | import("../../project/types").ClassificationRequirement | import("../../project/types").MaterialRequirement | import("../../project/types").RelationRequirement])[0]?.id;
+      selectedGroupStableRef.current = representativeId ? { kind: selectedItemGroupData.kind, representativeId } : null;
+    } else if (!selectedItemGroup) {
+      selectedGroupStableRef.current = null;
+    }
+  }, [selectedItemGroupData, selectedItemGroup]);
+
+  // Po uložení změn se fingerprint skupiny změní – znovu vybrat stejnou skupinu podle stabilního id požadavku, aby záznam zůstal otevřený.
+  useEffect(() => {
+    if (!project || requirementsViewMode !== "groups" || !selectedItemGroup || selectedItemGroupData !== null) return;
+    const stable = selectedGroupStableRef.current;
+    if (!stable) return;
+    const groups = groupRequirementsByItem(project);
+    const found = groups.find((g) => {
+      if (g.kind !== stable.kind) return false;
+      const items = g.representativeItems;
+      if (g.kind === "pset") {
+        return (items as import("../../project/types").PropertyRequirement[]).some((p) => p.id === stable.representativeId);
+      }
+      const first = (items as [import("../../project/types").AttributeRequirement | import("../../project/types").ClassificationRequirement | import("../../project/types").MaterialRequirement | import("../../project/types").RelationRequirement])[0];
+      return first?.id === stable.representativeId;
+    });
+    if (found) {
+      setSelectedItemGroup({ kind: found.kind, fingerprint: found.fingerprint });
+    }
+  }, [project, requirementsViewMode, selectedItemGroup, selectedItemGroupData]);
 
   const effectiveRequirements: ObjectRequirements = useMemo(() => {
     if (requirementsViewMode !== "groups" || !selectedItemGroupData) return object.requirements;
@@ -2195,16 +2323,16 @@ export const ObjectDetail: React.FC<Props> = ({
   const [propertyColumnMenuOpen, setPropertyColumnMenuOpen] = useState(false);
   /** Skryté sloupce pro Atributy, Součásti, Materiál, Klasifikace */
   const [hiddenAttributeColumns, setHiddenAttributeColumns] = useState<Set<number>>(() =>
-    loadHiddenColumns("infoReqApp_hiddenAttributeColumns", 12)
+    loadHiddenColumns("infoReqApp_hiddenAttributeColumns", 13)
   );
   const [hiddenPartOfColumns, setHiddenPartOfColumns] = useState<Set<number>>(() =>
-    loadHiddenColumns("infoReqApp_hiddenPartOfColumns", 11)
+    loadHiddenColumns("infoReqApp_hiddenPartOfColumns", 12)
   );
   const [hiddenMaterialColumns, setHiddenMaterialColumns] = useState<Set<number>>(() =>
-    loadHiddenColumns("infoReqApp_hiddenMaterialColumns", 10)
+    loadHiddenColumns("infoReqApp_hiddenMaterialColumns", 11)
   );
   const [hiddenClassificationColumns, setHiddenClassificationColumns] = useState<Set<number>>(() =>
-    loadHiddenColumns("infoReqApp_hiddenClassificationColumns", 11)
+    loadHiddenColumns("infoReqApp_hiddenClassificationColumns", 12)
   );
   const [attributeColumnMenuOpen, setAttributeColumnMenuOpen] = useState(false);
   const [partOfColumnMenuOpen, setPartOfColumnMenuOpen] = useState(false);
@@ -2552,8 +2680,9 @@ export const ObjectDetail: React.FC<Props> = ({
       if (requirementsViewMode === "groups" && selectedItemGroup && onUpdateRequirementItemGroup && selectedItemGroupData) {
         const { kind, fingerprint } = selectedItemGroup;
         if (kind === "pset") {
-          const psetName = ((selectedItemGroupData.representativeItems as import("../../project/types").PropertyRequirement[])[0]?.psetName ?? "").trim();
-          const updatedProps = next.properties.filter((p) => (p.psetName ?? "").trim() === psetName);
+          // V režimu skupin obsahuje effectiveRequirements.properties pouze položky dané skupiny,
+          // takže můžeme předat všechny aktuálně upravené vlastnosti, i když se změní název Psetu.
+          const updatedProps = next.properties as import("../../project/types").PropertyRequirement[];
           onUpdateRequirementItemGroup(kind, fingerprint, updatedProps);
         } else if (kind === "attribute") {
           const orig = (selectedItemGroupData.representativeItems as [import("../../project/types").AttributeRequirement])[0];
@@ -2741,6 +2870,7 @@ export const ObjectDetail: React.FC<Props> = ({
         priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
+        useCaseMode: "inherit",
       });
     });
   };
@@ -2764,6 +2894,7 @@ export const ObjectDetail: React.FC<Props> = ({
         unit: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
+        useCaseMode: "inherit",
       });
     });
   };
@@ -2813,6 +2944,7 @@ export const ObjectDetail: React.FC<Props> = ({
         unit: group.source === "CUSTOM" || isTempGroup ? "" : firstUnused?.unit ?? "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
+        useCaseMode: "inherit",
       });
     });
   };
@@ -2900,6 +3032,7 @@ export const ObjectDetail: React.FC<Props> = ({
           unit: def.unit ?? "",
           extensions: {},
           phases: phases.map((p) => p.id), // All phases by default
+          useCaseMode: "inherit",
         });
       });
     });
@@ -3314,6 +3447,7 @@ export const ObjectDetail: React.FC<Props> = ({
         priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
+        useCaseMode: "inherit",
       });
     });
   };
@@ -3333,6 +3467,7 @@ export const ObjectDetail: React.FC<Props> = ({
         priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
+        useCaseMode: "inherit",
       });
     });
   };
@@ -3354,6 +3489,7 @@ export const ObjectDetail: React.FC<Props> = ({
         priklady: "",
         extensions: {},
         phases: phases.map((p) => p.id), // All phases by default
+        useCaseMode: "inherit",
       });
     });
   };
@@ -4333,7 +4469,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               <div className="flex gap-1">
                                 <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
-                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenAttributeColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11,12,13]))}>Skrýt vše</button>
                               </div>
                             </div>
                             {Object.entries(ATTRIBUTE_COLUMNS_HIDEABLE).map(([k, label]) => {
@@ -4383,9 +4519,9 @@ export const ObjectDetail: React.FC<Props> = ({
                 <>
               <div className="text-xs text-slate-500">Ifc attributes (Name, Description, Tag ...)</div>
               <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
-                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenAttributeColumns.has(i)).reduce((s, i) => s + (attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i]), 0)) }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11,12,13].filter((i) => !hiddenAttributeColumns.has(i)).reduce((s, i) => s + (attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i]), 0)) }}>
                   <colgroup>
-                    {[0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenAttributeColumns.has(i)).map((i) => (
+                    {[0,1,2,3,4,5,6,7,8,9,10,11,12,13].filter((i) => !hiddenAttributeColumns.has(i)).map((i) => (
                       <col key={i} style={{ width: attributeTableColWidths[i] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[i] }} />
                     ))}
                   </colgroup>
@@ -4461,18 +4597,24 @@ export const ObjectDetail: React.FC<Props> = ({
                         </th>
                       )}
                       {!hiddenAttributeColumns.has(11) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Účel užití</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[11] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[11]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenAttributeColumns.has(12) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
                             <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[11] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[12] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[12]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenAttributeColumns.has(12) && (
+                      {!hiddenAttributeColumns.has(13) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[12] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[12]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "attribute", col: 13 }); resizingStartX.current = e.clientX; resizingStartW.current = attributeTableColWidths[13] ?? DEFAULT_ATTRIBUTE_COL_WIDTHS[13]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -4856,11 +4998,20 @@ export const ObjectDetail: React.FC<Props> = ({
                             </td>
                           )}
                           {!hiddenAttributeColumns.has(11) && (
+                            <td className="px-2 py-2">
+                            <UseCaseMultiSelect
+                              entries={project?.purposeOfUseEntries ?? []}
+                              value={attr.useCaseIds ?? []}
+                              onChange={(ids) => updateAttributeField(attr.id, { useCaseMode: "custom", useCaseIds: ids })}
+                            />
+                            </td>
+                          )}
+                          {!hiddenAttributeColumns.has(12) && (
                             <td className="px-2 py-2 text-center">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={attr.isApplicability ?? false} onChange={(e) => updateAttributeField(attr.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
                             </td>
                           )}
-                          {!hiddenAttributeColumns.has(12) && (
+                          {!hiddenAttributeColumns.has(13) && (
                             <td className="px-2 py-2 text-right">
                               <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("attributes", attr.id)}>Odebrat</button>
                             </td>
@@ -4936,7 +5087,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               <div className="flex gap-1">
                                 <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
-                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]))}>Skrýt vše</button>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPropertyColumns(new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]))}>Skrýt vše</button>
                               </div>
                             </div>
                             {Object.entries(PROPERTY_COLUMNS_HIDEABLE).map(([k, label]) => {
@@ -5211,6 +5362,16 @@ export const ObjectDetail: React.FC<Props> = ({
 
                     {expanded && (
                       <div className="overflow-x-auto overflow-y-visible px-3 py-2" style={{ maxWidth: "100%" }}>
+                        {group.psetName && !group.psetName.startsWith("_NEW_") && (
+                          <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-slate-50/50 px-2 py-1.5">
+                            <span className="text-xs font-medium text-slate-600">Výchozí účely užití pro tuto skupinu (dědi se na všechny vlastnosti):</span>
+                            <UseCaseMultiSelect
+                              entries={project?.purposeOfUseEntries ?? []}
+                              value={object.psetUseCaseDefaults?.[group.psetName]}
+                              onChange={(ids) => updateObject({ psetUseCaseDefaults: { ...object.psetUseCaseDefaults, [group.psetName]: ids } })}
+                            />
+                          </div>
+                        )}
                         {group.properties.length === 0 && (
                           <div className="rounded border border-dashed border-slate-200 p-2 text-xs text-slate-600">
                             Skupina je prázdná. Přidejte vlastnost.
@@ -5221,13 +5382,13 @@ export const ObjectDetail: React.FC<Props> = ({
                             className="text-sm table-fixed"
                             style={{
                               tableLayout: "fixed",
-                              minWidth: Math.max(120, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+                              minWidth: Math.max(120, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
                                 .filter((i) => !hiddenPropertyColumns.has(i))
                                 .reduce((sum, i) => sum + (propertyTableColWidths[i] ?? DEFAULT_PROPERTY_COL_WIDTHS[i]), 0)),
                             }}
                           >
                             <colgroup>
-                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
+                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
                                 .filter((i) => !hiddenPropertyColumns.has(i))
                                 .map((i) => (
                                   <col key={i} style={{ width: propertyTableColWidths[i] ?? DEFAULT_PROPERTY_COL_WIDTHS[i] }} />
@@ -5317,30 +5478,36 @@ export const ObjectDetail: React.FC<Props> = ({
                                 {!hiddenPropertyColumns.has(9) && (
                                   <th className="px-2 py-2 relative select-none">
                                     <span className="block pr-1">Fáze</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[11] ?? DEFAULT_PROPERTY_COL_WIDTHS[11]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[9] ?? DEFAULT_PROPERTY_COL_WIDTHS[9]; }} aria-hidden />
                                   </th>
                                 )}
-                                {!hiddenPropertyColumns.has(9) && (
+                                {!hiddenPropertyColumns.has(10) && (
+                                  <th className="px-2 py-2 relative select-none">
+                                    <span className="block pr-1">Účel užití</span>
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[10] ?? DEFAULT_PROPERTY_COL_WIDTHS[10]; }} aria-hidden />
+                                  </th>
+                                )}
+                                {!hiddenPropertyColumns.has(11) && (
                                   <th className="px-2 py-2 text-center relative select-none">
                                     <div className="flex items-center justify-center gap-1 pr-1">
                                       <span>Použitelnost</span>
                                       <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                                     </div>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[12] ?? DEFAULT_PROPERTY_COL_WIDTHS[12]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[11] ?? DEFAULT_PROPERTY_COL_WIDTHS[11]; }} aria-hidden />
                                   </th>
                                 )}
-                                {!hiddenPropertyColumns.has(11) && (
+                                {!hiddenPropertyColumns.has(12) && (
                                   <th className="px-2 py-2 text-right relative select-none">
                                     <span className="block pr-1">Akce</span>
-                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 13 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[13] ?? DEFAULT_PROPERTY_COL_WIDTHS[13]; }} aria-hidden />
+                                    <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "property", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = propertyTableColWidths[12] ?? DEFAULT_PROPERTY_COL_WIDTHS[12]; }} aria-hidden />
                                   </th>
                                 )}
                               </tr>
                             </thead>
                             <tbody>
-                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].every((i) => hiddenPropertyColumns.has(i)) ? (
+                              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].every((i) => hiddenPropertyColumns.has(i)) ? (
                                 <tr>
-                                  <td colSpan={14} className="px-4 py-6 text-center text-sm text-slate-500">
+                                  <td colSpan={15} className="px-4 py-6 text-center text-sm text-slate-500">
                                     Všechny sloupce jsou skryté. Zobrazte alespoň jeden v menu „Sloupce“.
                                   </td>
                                 </tr>
@@ -6068,6 +6235,16 @@ export const ObjectDetail: React.FC<Props> = ({
                                   </td>
                                   )}
                                   {!hiddenPropertyColumns.has(10) && (
+                                    <td className="px-2 py-2">
+                                    <UseCaseRowControl
+                                      entries={project?.purposeOfUseEntries ?? []}
+                                      useCaseMode={prop.useCaseMode}
+                                      useCaseIds={prop.useCaseIds}
+                                      onChange={(patch) => updatePropertyField(prop.id, patch)}
+                                    />
+                                  </td>
+                                  )}
+                                  {!hiddenPropertyColumns.has(11) && (
                                     <td className="px-2 py-2 text-center">
                                       <input
                                         type="checkbox"
@@ -6078,7 +6255,7 @@ export const ObjectDetail: React.FC<Props> = ({
                                       />
                                     </td>
                                   )}
-                                  {!hiddenPropertyColumns.has(11) && (
+                                  {!hiddenPropertyColumns.has(12) && (
                                     <td className="px-2 py-2 text-right">
                                       <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("properties", prop.id)}>
                                         Odebrat
@@ -6259,7 +6436,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               <div className="flex gap-1">
                                 <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
-                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set([0,1,2,3,4,5,6,7,8,9,10]))}>Skrýt vše</button>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11,12]))}>Skrýt vše</button>
                               </div>
                             </div>
                             {Object.entries(PARTOF_COLUMNS_HIDEABLE).map(([k, label]) => {
@@ -6309,9 +6486,9 @@ export const ObjectDetail: React.FC<Props> = ({
                 <>
               <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
               <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
-                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenPartOfColumns.has(i)).reduce((s, i) => s + (partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i]), 0)) }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenPartOfColumns.has(i)).reduce((s, i) => s + (partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i]), 0)) }}>
                   <colgroup>
-                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenPartOfColumns.has(i)).map((i) => (
+                    {[0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenPartOfColumns.has(i)).map((i) => (
                       <col key={i} style={{ width: partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i] }} />
                     ))}
                   </colgroup>
@@ -6377,19 +6554,25 @@ export const ObjectDetail: React.FC<Props> = ({
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[9] ?? DEFAULT_PARTOF_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenPartOfColumns.has(9) && (
+                      {!hiddenPartOfColumns.has(10) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Účel užití</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenPartOfColumns.has(11) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
                             <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[11] ?? DEFAULT_PARTOF_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenPartOfColumns.has(11) && (
+                      {!hiddenPartOfColumns.has(12) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[11] ?? DEFAULT_PARTOF_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[12] ?? DEFAULT_PARTOF_COL_WIDTHS[12]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -6532,11 +6715,20 @@ export const ObjectDetail: React.FC<Props> = ({
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(10) && (
+                            <td className="px-2 py-2">
+                            <UseCaseMultiSelect
+                              entries={project?.purposeOfUseEntries ?? []}
+                              value={rel.useCaseIds ?? []}
+                              onChange={(ids) => updateRelationField(rel.id, { useCaseMode: "custom", useCaseIds: ids })}
+                            />
+                            </td>
+                          )}
+                          {!hiddenPartOfColumns.has(11) && (
                             <td className="px-2 py-2 text-center">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={rel.isApplicability ?? false} onChange={(e) => updateRelationField(rel.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(11) && (
+                          {!hiddenPartOfColumns.has(12) && (
                             <td className="px-2 py-2 text-right">
                               <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>Odebrat</button>
                             </td>
@@ -6579,7 +6771,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               <div className="flex gap-1">
                                 <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
-                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set([0,1,2,3,4,5,6,7,8,9,10]))}>Skrýt vše</button>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenMaterialColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
                               </div>
                             </div>
                             {Object.entries(MATERIAL_COLUMNS_HIDEABLE).map(([k, label]) => {
@@ -6629,9 +6821,9 @@ export const ObjectDetail: React.FC<Props> = ({
                 <>
               <div className="text-xs text-slate-500">Materiálové požadavky (IfcMaterial, IfcMaterialLayerSet, ...)</div>
               <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
-                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenMaterialColumns.has(i)).reduce((s, i) => s + (materialTableColWidths[i] ?? DEFAULT_MATERIAL_COL_WIDTHS[i]), 0)) }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenMaterialColumns.has(i)).reduce((s, i) => s + (materialTableColWidths[i] ?? DEFAULT_MATERIAL_COL_WIDTHS[i]), 0)) }}>
                   <colgroup>
-                    {[0,1,2,3,4,5,6,7,8,9,10].filter((i) => !hiddenMaterialColumns.has(i)).map((i) => (
+                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenMaterialColumns.has(i)).map((i) => (
                       <col key={i} style={{ width: materialTableColWidths[i] ?? DEFAULT_MATERIAL_COL_WIDTHS[i] }} />
                     ))}
                   </colgroup>
@@ -6692,18 +6884,24 @@ export const ObjectDetail: React.FC<Props> = ({
                         </th>
                       )}
                       {!hiddenMaterialColumns.has(9) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Účel užití</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[9] ?? DEFAULT_MATERIAL_COL_WIDTHS[9]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenMaterialColumns.has(10) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
                             <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[9] ?? DEFAULT_MATERIAL_COL_WIDTHS[9]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[10] ?? DEFAULT_MATERIAL_COL_WIDTHS[10]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenMaterialColumns.has(10) && (
+                      {!hiddenMaterialColumns.has(11) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[10] ?? DEFAULT_MATERIAL_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "material", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = materialTableColWidths[11] ?? DEFAULT_MATERIAL_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -7182,11 +7380,20 @@ export const ObjectDetail: React.FC<Props> = ({
                           </td>
                         )}
                         {!hiddenMaterialColumns.has(9) && (
+                          <td className="px-2 py-2">
+                            <UseCaseMultiSelect
+                              entries={project?.purposeOfUseEntries ?? []}
+                              value={mat.useCaseIds ?? []}
+                              onChange={(ids) => updateMaterialField(mat.id, { useCaseMode: "custom", useCaseIds: ids })}
+                            />
+                          </td>
+                        )}
+                        {!hiddenMaterialColumns.has(10) && (
                           <td className="px-2 py-2 text-center">
                             <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={mat.isApplicability ?? false} onChange={(e) => updateMaterialField(mat.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
                           </td>
                         )}
-                        {!hiddenMaterialColumns.has(10) && (
+                        {!hiddenMaterialColumns.has(11) && (
                           <td className="px-2 py-2 text-right">
                             <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("materials", mat.id)}>Odebrat</button>
                           </td>
@@ -7227,7 +7434,7 @@ export const ObjectDetail: React.FC<Props> = ({
                             <div className="flex gap-1">
                               <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set())}>Zobrazit vše</button>
                               <span className="text-slate-300">|</span>
-                              <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
+                              <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenClassificationColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11,12]))}>Skrýt vše</button>
                             </div>
                           </div>
                           {Object.entries(CLASSIFICATION_COLUMNS_HIDEABLE).map(([k, label]) => {
@@ -7279,9 +7486,9 @@ export const ObjectDetail: React.FC<Props> = ({
               ) : (
                 <>
               <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
-                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenClassificationColumns.has(i)).reduce((s, i) => s + (classificationTableColWidths[i] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[i]), 0)) }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenClassificationColumns.has(i)).reduce((s, i) => s + (classificationTableColWidths[i] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[i]), 0)) }}>
                   <colgroup>
-                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenClassificationColumns.has(i)).map((i) => (
+                    {[0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenClassificationColumns.has(i)).map((i) => (
                       <col key={i} style={{ width: classificationTableColWidths[i] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[i] }} />
                     ))}
                   </colgroup>
@@ -7348,18 +7555,24 @@ export const ObjectDetail: React.FC<Props> = ({
                         </th>
                       )}
                       {!hiddenClassificationColumns.has(10) && (
+                        <th className="px-2 py-2 relative select-none">
+                          <span className="block pr-1">Účel užití</span>
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[10] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[10]; }} aria-hidden />
+                        </th>
+                      )}
+                      {!hiddenClassificationColumns.has(11) && (
                         <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
                             <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[10] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[10]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[11] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenClassificationColumns.has(11) && (
+                      {!hiddenClassificationColumns.has(12) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[11] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "classification", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = classificationTableColWidths[12] ?? DEFAULT_CLASSIFICATION_COL_WIDTHS[12]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
@@ -7572,6 +7785,19 @@ export const ObjectDetail: React.FC<Props> = ({
                         </td>
                         )}
                         {!hiddenClassificationColumns.has(10) && (
+                          <td className="px-2 py-2">
+                            <UseCaseMultiSelect
+                              entries={project?.purposeOfUseEntries ?? []}
+                              value={cls.useCaseIds ?? []}
+                              onChange={(ids) =>
+                                updateRequirements((reqs) => {
+                                  reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, useCaseMode: "custom" as const, useCaseIds: ids } : c));
+                                })
+                              }
+                            />
+                          </td>
+                        )}
+                        {!hiddenClassificationColumns.has(11) && (
                           <td className="px-2 py-2 text-center">
                             <input
                               type="checkbox"
@@ -7587,7 +7813,7 @@ export const ObjectDetail: React.FC<Props> = ({
                           />
                         </td>
                         )}
-                        {!hiddenClassificationColumns.has(11) && (
+                        {!hiddenClassificationColumns.has(12) && (
                           <td className="px-2 py-2 text-right">
                             {!cls.readOnly && (
                             <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("classifications", cls.id)}>
@@ -7622,7 +7848,35 @@ export const ObjectDetail: React.FC<Props> = ({
             
             return (
             <div className="space-y-3">
-              {/* První řádek: Fáze + Export IDS (jako jeden řádek) */}
+              {/* Řádek: Účely užití (náhled podle účelu) */}
+              <div className="flex gap-1 flex-wrap items-center">
+                <span className="text-xs text-slate-500 w-20 shrink-0">Účely užití:</span>
+                <button
+                  className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+                    selectedUseCaseId === null
+                      ? "bg-red-100 text-red-700 border-b-2 border-red-500"
+                      : "text-slate-600 hover:bg-slate-100"
+                  }`}
+                  onClick={() => setSelectedUseCaseId(null)}
+                >
+                  Vše
+                </button>
+                {(project?.purposeOfUseEntries ?? []).map((entry) => (
+                  <button
+                    key={entry.id}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+                      selectedUseCaseId === entry.id
+                        ? "bg-red-100 text-red-700 border-b-2 border-red-500"
+                        : "text-slate-600 hover:bg-slate-100"
+                    }`}
+                    onClick={() => setSelectedUseCaseId(entry.id)}
+                    title={entry.description ?? entry.name}
+                  >
+                    {entry.name}
+                  </button>
+                ))}
+              </div>
+              {/* Řádek: Fáze + Export IDS (jako jeden řádek) */}
               <div className="flex justify-between items-center flex-wrap gap-2">
                 <div className="flex gap-1 flex-wrap items-center">
                   {phases.length > 0 && (
@@ -7802,11 +8056,17 @@ export const ObjectDetail: React.FC<Props> = ({
               {/* Human-readable view */}
               {idsSubTab === "readable" && (() => {
                 const currentPhase = phases.find((p) => p.id === effectivePhaseId);
-                const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, effectivePhaseId, occurrenceFilter);
+                const { applicability, requirements } = generateHumanReadable(object, phases, classificationSystemEntries, effectivePhaseId, occurrenceFilter, selectedUseCaseId ?? undefined);
                 const hasContent = applicability.length > 0 || requirements.length > 0;
                 
+                const currentUseCase = selectedUseCaseId ? (project?.purposeOfUseEntries ?? []).find((e) => e.id === selectedUseCaseId) : null;
                 return (
                   <div className="rounded border border-slate-200 bg-white p-4 text-sm text-slate-700">
+                    {currentUseCase && (
+                      <div className="text-xs text-red-600 font-semibold mb-2">
+                        Účel užití: {currentUseCase.name}
+                      </div>
+                    )}
                     {currentPhase && (
                       <div className="text-xs text-red-600 font-semibold mb-3">
                         Fáze: {currentPhase.code} - {currentPhase.name}
@@ -7873,17 +8133,24 @@ export const ObjectDetail: React.FC<Props> = ({
               {idsSubTab === "schema" && (() => {
                 const currentPhase = phases.find((p) => p.id === effectivePhaseId);
                 const phaseName = currentPhase ? `${currentPhase.code} - ${currentPhase.name}` : undefined;
+                const effectiveUseCaseId = selectedUseCaseId ?? undefined;
                 // For preview, apply occurrence filter; for export, use "all"
-                const xml = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, classificationSystemEntries, occurrenceFilter, phaseName);
-                const xmlForExport = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, classificationSystemEntries, "all", phaseName);
+                const xml = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, classificationSystemEntries, occurrenceFilter, phaseName, undefined, effectiveUseCaseId);
+                const xmlForExport = generateIdsXml(object, selectedIfcVersion, effectivePhaseId, classificationSystemEntries, "all", phaseName, undefined, effectiveUseCaseId);
                 const sanitize = (s: string) => (s || "").replace(/[^\p{L}\p{N}_\-]/gu, "_").replace(/_+/g, "_") || "export";
                 const objectNameForFile = (object.code || object.description || "specification").replace(/::/g, ".");
                 const fileName = currentPhase 
                   ? `${sanitize(objectNameForFile)}_${sanitize(currentPhase.code)}`
                   : sanitize(objectNameForFile);
                 
+                const currentUseCaseSchema = selectedUseCaseId ? (project?.purposeOfUseEntries ?? []).find((e) => e.id === selectedUseCaseId) : null;
                 return (
                 <div className="space-y-2">
+                  {currentUseCaseSchema && (
+                    <div className="text-xs text-red-600 font-semibold">
+                      Účel užití: {currentUseCaseSchema.name}
+                    </div>
+                  )}
                   {currentPhase && (
                     <div className="text-xs text-red-600 font-semibold">
                       Fáze: {currentPhase.code} - {currentPhase.name}
@@ -8046,6 +8313,7 @@ export const ObjectDetail: React.FC<Props> = ({
                 project={project as Project}
                 selectedFingerprint={selectedItemGroup?.fingerprint}
                 onSelectGroup={(fp, kind) => setSelectedItemGroup(fp && kind ? { kind, fingerprint: fp } : null)}
+                onAssignGroupToObjects={onAssignGroupToObjects}
               >
                 {selectedItemGroup && selectedItemGroupData && (
                   <>

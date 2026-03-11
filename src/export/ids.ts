@@ -11,6 +11,7 @@ import type {
   IdsSpecMetadata,
 } from "../project/types";
 import { getIdsIfcVersion, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
+import { getEffectiveUseCaseIds, requirementAppliesToUseCase } from "../project/useCaseResolve";
 
 const IDS_NAMESPACE = "http://standards.buildingsmart.org/IDS";
 const XS_NAMESPACE = "http://www.w3.org/2001/XMLSchema";
@@ -60,6 +61,8 @@ interface IDSExportOptions {
   objectCodes?: string[];
   /** Filter requirements by occurrence. Default "all" */
   occurrenceFilter?: OccurrenceFilter;
+  /** If provided, only export requirements that apply to this use-case (purpose of use). Omit for all. */
+  useCaseId?: string;
   /** Override metadata for the IDS file (ids:info). Falls back to project.idsMetadata */
   idsMetadata?: Partial<IdsMetadata>;
 }
@@ -434,15 +437,28 @@ const generateSpecification = (
   phaseCode: string,
   occurrenceFilter: OccurrenceFilter,
   classificationSystemEntries: ClassificationSystemEntry[],
-  ifcVersion: string
+  ifcVersion: string,
+  useCaseId?: string
 ): string | null => {
   // Filter requirements for this phase
-  const attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute && r.attribute !== "PredefinedType");
-  const properties = obj.requirements.properties.filter((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r));
-  const classificationsRaw = obj.requirements.classifications.filter((r) => requirementAppliesToPhase(r, phaseId));
+  let attributes = obj.requirements.attributes.filter((r) => requirementAppliesToPhase(r, phaseId) && r.attribute && r.attribute !== "PredefinedType");
+  let properties = obj.requirements.properties.filter((r) => requirementAppliesToPhase(r, phaseId) && isValidProperty(r));
+  let classificationsRaw = obj.requirements.classifications.filter((r) => requirementAppliesToPhase(r, phaseId));
+  let relations = obj.requirements.relations.filter((r) => requirementAppliesToPhase(r, phaseId));
+  let materials = obj.requirements.materials.filter((r) => requirementAppliesToPhase(r, phaseId));
+
+  // Filter by use-case when useCaseId is provided (excluded = skip; then effective IDs must contain useCaseId or be empty)
+  if (useCaseId != null && useCaseId !== "") {
+    const appliesUseCase = (r: { useCaseMode?: string }, effective: string[]) =>
+      r.useCaseMode !== "excluded" && requirementAppliesToUseCase(effective, useCaseId);
+    attributes = attributes.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "attributes")));
+    properties = properties.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "properties", r.psetName)));
+    classificationsRaw = classificationsRaw.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "classifications")));
+    relations = relations.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "relations")));
+    materials = materials.filter((r) => appliesUseCase(r, getEffectiveUseCaseIds(r, obj, "materials")));
+  }
+
   const classifications = excludeIfcClassifications(classificationsRaw, classificationSystemEntries);
-  const relations = obj.requirements.relations.filter((r) => requirementAppliesToPhase(r, phaseId));
-  const materials = obj.requirements.materials.filter((r) => requirementAppliesToPhase(r, phaseId));
 
   // Split by applicability first (applicability items are never filtered by occurrence)
   const applicabilityClassifications = classifications.filter((c) => c.isApplicability || c.readOnly);
@@ -588,7 +604,7 @@ export const generateIDS = (options: IDSExportOptions): string => {
   const specifications: string[] = [];
   for (const obj of objectsToExport) {
     for (const occ of occurrenceTypes) {
-      const spec = generateSpecification(obj, phaseId, phase.name, phaseCode, occ, classificationSystemEntries, ifcVersion);
+      const spec = generateSpecification(obj, phaseId, phase.name, phaseCode, occ, classificationSystemEntries, ifcVersion, options.useCaseId);
       if (spec) specifications.push(spec);
     }
   }

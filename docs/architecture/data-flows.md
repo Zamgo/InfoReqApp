@@ -10,13 +10,14 @@ Tento dokument popisuje hlavní datové toky v aplikaci: načtení a ukládání
 sequenceDiagram
   participant App
   participant Storage
+  participant Project
   participant SchemaProvider
 
   App->>Storage: loadProjectFromStorage()
-  Storage->>Storage: localStorage.getItem, JSON.parse, ensureProjectPhases
+  Storage->>Storage: localStorage.getItem, JSON.parse, ensureProjectPhases, normalizeIfcSchemaVersion, getDisplayLabel, getIfcDocumentationBaseUrl
   Storage-->>App: Project | null
   alt stored exists
-    App->>App: migrateProject(stored)
+    App->>Project: migrateProject(stored)
     App->>App: propagateIfcFromObjectsToNodes, propagateObjectAuthoringToNodes, ...
     App->>App: setProject(withPropagation)
     App->>Storage: saveProjectToStorage(withPropagation) if needed
@@ -27,8 +28,8 @@ sequenceDiagram
 ```
 
 - **localStorage** klíč projektu: `inforeqapp:project`.
-- **loadProjectFromStorage** vrací projekt po `ensureProjectPhases`; **nemigruje**.
-- **Migrace a propagace** probíhají v App: `migrateProject(stored)` pak řada `propagate*`; výsledek se nastaví do stavu a případně uloží zpět.
+- **loadProjectFromStorage** vrací projekt po `ensureProjectPhases` a normalizaci IFC verze (`normalizeIfcSchemaVersion`, `getDisplayLabel`, `getIfcDocumentationBaseUrl`); nemá vlastní doménovou migraci.
+- **Migrace a propagace** probíhají tak, že App volá `migrateProject(stored)` z modulu `src/project/migration.ts` a poté řadu `propagate*`; výsledek se nastaví do stavu a případně uloží zpět.
 - **SchemaProvider** dostává `version` z App (z `project?.ifcSchemaVersion`). Při změně verze (např. po uložení v ProjectDetailsDialog) se změní prop `version` → SchemaProvider přenačte schema (useEffect na schemaUrl).
 
 ---
@@ -77,7 +78,7 @@ flowchart LR
 1. Uživatel nahraje IDS soubor. App parsuje přes import/ids (parseIdsFile).
 2. App volá `mergeIdsIntoProject(parsed, project, schemaIndex ?? null)`. Merge potřebuje schemaIndex pro normalizaci kódů a pro buildClassificationFromSchemaFiltered.
 3. Výsledek je nový/upravený projekt; App nastaví setProject(merged) a saveProjectToStorage(merged).
-4. Před mergem může App volat migrateProject(imported) na načtený projekt z importu (podle kontextu volání).
+4. Před mergem App volá `migrateProject(imported)` z project vrstvy na načtený projekt z importu (podle kontextu volání).
 
 **Excel:**
 

@@ -311,6 +311,7 @@ export const IDSExportDialog: React.FC<Props> = ({
   onUpdateProject,
 }) => {
   const [selectedPhaseId, setSelectedPhaseId] = useState<string>("");
+  const [selectedUseCaseId, setSelectedUseCaseId] = useState<string>("");
   const [occurrenceFilter, setOccurrenceFilter] = useState<OccurrenceFilter>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("human");
   const [selectedObjects, setSelectedObjects] = useState<Set<string>>(new Set());
@@ -424,6 +425,7 @@ export const IDSExportDialog: React.FC<Props> = ({
         phaseId: selectedPhaseId,
         objectCodes: Array.from(selectedObjects),
         occurrenceFilter,
+        useCaseId: selectedUseCaseId && selectedUseCaseId.trim() ? selectedUseCaseId : undefined,
         idsMetadata: mergedMetadata,
       });
 
@@ -578,6 +580,22 @@ export const IDSExportDialog: React.FC<Props> = ({
                   {project.phases.map((phase) => (
                     <option key={phase.id} value={phase.id}>
                       {phase.code} - {phase.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex-1 min-w-[180px]">
+                <label className="mb-1 block text-sm font-medium text-slate-700">Účel užití</label>
+                <select
+                  value={selectedUseCaseId}
+                  onChange={(e) => setSelectedUseCaseId(e.target.value)}
+                  className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                >
+                  <option value="">Všechny</option>
+                  {(project.purposeOfUseEntries ?? []).map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
                     </option>
                   ))}
                 </select>

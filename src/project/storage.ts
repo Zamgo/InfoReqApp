@@ -2,7 +2,12 @@ import type { ClassificationData, ClassificationSystem } from "../classification
 import { makeId } from "../utils/id";
 import type { Project, ProjectObject } from "./types";
 import { ensureProjectPhases, getDefaultPhases } from "./phases";
-import { DEFAULT_IFC_SCHEMA_VERSION, getDisplayLabel, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
+import {
+  DEFAULT_IFC_SCHEMA_VERSION,
+  getDisplayLabel,
+  getIfcDocumentationBaseUrl,
+  normalizeIfcSchemaVersion,
+} from "../schema/ifcVersionConfig";
 
 const STORAGE_KEY = "inforeqapp:project";
 
@@ -33,9 +38,7 @@ export const createEmptyProject = (classification: ClassificationData): Project 
     updatedAt: now,
     ifcSchemaVersion: DEFAULT_IFC_SCHEMA_VERSION,
     ifcSchemaVersionDisplay: getDisplayLabel(DEFAULT_IFC_SCHEMA_VERSION),
-    ifcDocumentationUrl: DEFAULT_IFC_SCHEMA_VERSION === "IFC4X3"
-      ? "https://standards.buildingsmart.org/IFC/RELEASE/IFC4_3/"
-      : "https://standards.buildingsmart.org/IFC/RELEASE/IFC4/",
+    ifcDocumentationUrl: getIfcDocumentationBaseUrl(DEFAULT_IFC_SCHEMA_VERSION),
     modelDefinitionViewMvd: "Reference View",
     classification,
     classifications: [primary],
@@ -85,6 +88,7 @@ export const ensureObject = (
             isApplicability: true, // Primary classification is always in applicability
             extensions: {},
             phases: project.phases.map((p) => p.id), // All phases by default
+            useCaseMode: "inherit",
           },
         ],
         materials: [],
@@ -104,6 +108,7 @@ export const loadProjectFromStorage = (): Project | null => {
       ...ensureProjectPhases(parsed),
       ifcSchemaVersion: version,
       ifcSchemaVersionDisplay: getDisplayLabel(version),
+      ifcDocumentationUrl: getIfcDocumentationBaseUrl(version),
     };
     return normalized;
   } catch {
@@ -155,6 +160,7 @@ export const importProjectFile = async (file: File): Promise<Project> => {
     ...ensureProjectPhases(parsed),
     ifcSchemaVersion: version,
     ifcSchemaVersionDisplay: getDisplayLabel(version),
+    ifcDocumentationUrl: getIfcDocumentationBaseUrl(version),
   };
   return normalized;
 };

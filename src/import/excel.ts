@@ -570,6 +570,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
               isApplicability: true,
               extensions: {},
               phases: phases.map((p) => p.id),
+              useCaseMode: "inherit",
             },
           ],
           materials: [],
@@ -683,6 +684,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
                 isApplicability: true,
                 extensions: {},
                 phases: phases.map((p) => p.id),
+                useCaseMode: "inherit",
               },
             ],
             materials: [],
@@ -782,6 +784,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           priklady: priklady || undefined,
           extensions,
           phases: phasesForReq,
+          useCaseMode: "inherit",
         };
         obj.requirements.attributes.push(req);
       } else if (typ === "property") {
@@ -815,6 +818,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           priklady: priklady || undefined,
           extensions,
           phases: phasesForReq,
+          useCaseMode: "inherit",
         };
         obj.requirements.properties.push(req);
       } else if (typ === "relation") {
@@ -836,6 +840,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           priklady: priklady || undefined,
           extensions: {},
           phases: phasesForReq,
+          useCaseMode: "inherit",
         };
         if (relTypeFromHodnoty) req.relationType = relTypeFromHodnoty[0].toUpperCase() as RelationRequirement["relationType"];
         obj.requirements.relations.push(req);
@@ -870,6 +875,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           priklady: priklady || undefined,
           extensions: {},
           phases: phasesForReq,
+          useCaseMode: "inherit",
         };
         if (sysEntry && !sysEntry.isIfcSystem) {
           obj.requirements.classifications.push(req);
@@ -893,6 +899,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           note: poznamka || undefined,
           priklady: priklady || undefined,
           phases: phasesForReq,
+          useCaseMode: "inherit",
         };
         obj.requirements.materials.push(req);
       }

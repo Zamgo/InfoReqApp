@@ -14,12 +14,22 @@ export interface Phase {
   description?: string;
 }
 
+/** Režim účelu užití: dědit z výchozího sekce/psetu, vlastní seznam, nebo vyloučeno z use-case. */
+export type UseCaseMode = "inherit" | "custom" | "excluded";
+
+/** Názvy sekcí požadavků (pro sectionUseCaseDefaults). */
+export type RequirementSectionKey = "attributes" | "properties" | "relations" | "classifications" | "materials";
+
 export interface RequirementBase {
   id: string;
   extensions: Record<string, unknown>;
   phases?: string[];
-  /** Účel užití této konkrétní požadavky (odkaz do číselníku účelů) */
+  /** @deprecated Prefer useCaseMode + useCaseIds. Účel užití této konkrétní požadavky (odkaz do číselníku účelů). */
   purposeOfUseId?: string;
+  /** Režim účelu užití: inherit = dědit z section/pset default, custom = vlastní useCaseIds, excluded = vyloučeno. Výchozí inherit. */
+  useCaseMode?: UseCaseMode;
+  /** Při useCaseMode === 'custom': seznam ID z purposeOfUseEntries. */
+  useCaseIds?: string[];
 }
 
 export interface AttributeRequirement extends RequirementBase {
@@ -247,6 +257,10 @@ export interface ProjectObject {
   authoringClassifications?: AuthoringClassification[];
   /** Metadata specifikace pro IDS export (dle buildingSMART ids-metadata.md). Klíč: `${phaseId}|${occurrence}` pro kombinaci fáze a výskytu. */
   idsSpecMetadata?: Record<string, IdsSpecMetadata>;
+  /** Výchozí use-case IDs pro sekce (dědičnost při useCaseMode === 'inherit'). */
+  sectionUseCaseDefaults?: Partial<Record<RequirementSectionKey, string[]>>;
+  /** Výchozí use-case IDs pro vlastnosti podle psetu (pouze pro requirements.properties). Klíč = psetName. */
+  psetUseCaseDefaults?: Record<string, string[]>;
   requirements: ObjectRequirements;
 }
 
