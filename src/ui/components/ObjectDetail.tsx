@@ -30,6 +30,7 @@ import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition } from
 import { getBsddUrl } from "../../translation/getBsddUrl";
 import { translate } from "../../translation/TranslationService";
 import { useTranslation } from "../../translation/TranslationContext";
+import { useSchema } from "../../schema/SchemaProvider";
 
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable" | "metadata";
@@ -2102,6 +2103,7 @@ export const ObjectDetail: React.FC<Props> = ({
   onAssignGroupToObjects,
 }) => {
   const isLocked = object.locked === true;
+  const { deprecatedEntities } = useSchema();
   /** Zvýraznění červeně: zkopírovaný objekt má stále stejnou entitu a predefinedType jako zdroj */
   const isIncompleteCopy = useMemo(() => {
     if (!object.copiedFrom || !project?.objects[object.copiedFrom]) return false;
@@ -3984,6 +3986,12 @@ export const ObjectDetail: React.FC<Props> = ({
                   onChange={(ids) => updateObject({ ifcEntityPhases: ids })}
                 />
               </div>
+              {object.ifcEntity && deprecatedEntities.has(object.ifcEntity) && (
+                <div className="text-xs text-amber-700">
+                  Tato IFC entita je <span className="font-semibold">zastaralá</span> a bude v budoucí verzi IFC odstraněna.
+                  Zvažte použití doporučené náhrady uvedené v dokumentaci IFC.
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <label className="text-xs text-slate-600 shrink-0">PredefinedType</label>
                 <select className="min-w-[120px] max-w-[180px] rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "NOTDEFINED" : (object.predefinedType.mode === "USERDEFINED" ? "USERDEFINED" : object.predefinedType.value ?? "NOTDEFINED")} onChange={(e) => handlePredefinedChange(e.target.value)}>

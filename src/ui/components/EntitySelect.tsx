@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useSchema } from "../../schema/SchemaProvider";
 import type { SchemaIndex } from "../../schema/types";
+
+const DEPRECATED_SUFFIX = " (zastaralé - bude odstraněno)";
 
 const INDENT_PX = 12;
 const PANEL_OFFSET = 4;
@@ -30,6 +33,7 @@ export const EntitySelect: React.FC<EntitySelectProps> = ({
   className = "",
   id,
 }) => {
+  const { deprecatedEntities } = useSchema();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -57,7 +61,10 @@ export const EntitySelect: React.FC<EntitySelectProps> = ({
     return m;
   }, [schemaIndex, entityOrder]);
 
-  const displayLabel = value && schemaIndex?.entities[value] ? value : "";
+  const displayLabel =
+    value && schemaIndex?.entities[value]
+      ? value
+      : "";
 
   const handleSelect = useCallback(
     (name: string) => {
@@ -198,9 +205,18 @@ export const EntitySelect: React.FC<EntitySelectProps> = ({
                       style={{ paddingLeft: 12 + depth * INDENT_PX }}
                       onClick={() => handleSelect(name)}
                       disabled={isAbstract}
-                      title={isAbstract ? "Abstraktní entita – nelze vybrat" : undefined}
+                      title={
+                        isAbstract
+                          ? "Abstraktní entita – nelze vybrat"
+                          : deprecatedEntities.has(name)
+                            ? "Zastaralá entita – bude odstraněna v budoucí verzi IFC"
+                            : undefined
+                      }
                     >
                       {name}
+                      {deprecatedEntities.has(name) && (
+                        <span className="text-amber-700 font-normal">{DEPRECATED_SUFFIX}</span>
+                      )}
                     </button>
                   );
                 })

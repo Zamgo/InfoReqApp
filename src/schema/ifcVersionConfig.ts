@@ -14,6 +14,12 @@ const SCHEMA_FILE: Record<IfcSchemaVersion, string> = {
   IFC4X3: "schema_index_ifc4x3.json",
 };
 
+/** Soubor se seznamem deprecated entit a predefined types (vygenerovaný skriptem build_deprecated_ifc). */
+const DEPRECATED_IFC_FILE: Record<IfcSchemaVersion, string> = {
+  IFC4: "deprecated_ifc4.json",
+  IFC4X3: "deprecated_ifc4x3.json",
+};
+
 /** Hodnota ifcVersion v IDS XML (specification element). */
 export type IdsIfcVersion = "IFC2X3" | "IFC4" | "IFC4X3_ADD2";
 
@@ -120,6 +126,15 @@ export function getBsddBaseUrl(version: IfcSchemaVersion): string {
  */
 export function getSchemaIndexUrl(version: IfcSchemaVersion): string {
   const file = SCHEMA_FILE[version];
+  return `/ifc/${file}`;
+}
+
+/**
+ * URL k souboru deprecated entit/predefined types pro danou verzi (pro fetch z public/ifc/).
+ * Soubor vygeneruje jednorázově: npm run build:deprecated resp. build:deprecated:4.
+ */
+export function getDeprecatedIfcUrl(version: IfcSchemaVersion): string {
+  const file = DEPRECATED_IFC_FILE[version];
   return `/ifc/${file}`;
 }
 

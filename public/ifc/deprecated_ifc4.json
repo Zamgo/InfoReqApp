@@ -1,0 +1,82 @@
+{
+  "deprecatedEntities": [
+    "Ifc2DCompositeCurve",
+    "IfcBeamStandardCase",
+    "IfcBuildingSystem",
+    "IfcCivilElement",
+    "IfcCivilElementType",
+    "IfcColumnStandardCase",
+    "IfcConnectionPortGeometry",
+    "IfcDoorLiningProperties",
+    "IfcDoorPanelProperties",
+    "IfcDoorStandardCase",
+    "IfcDoorStyle",
+    "IfcDoorStyleOperationEnum",
+    "IfcElectricDistributionBoard",
+    "IfcElectricDistributionBoardType",
+    "IfcElectricalElement",
+    "IfcEnergyConversionDevice",
+    "IfcEquipmentElement",
+    "IfcFaceBasedSurfaceModel",
+    "IfcFlowController",
+    "IfcFlowFitting",
+    "IfcFlowMovingDevice",
+    "IfcFlowSegment",
+    "IfcFlowStorageDevice",
+    "IfcFlowTerminal",
+    "IfcFlowTreatmentDevice",
+    "IfcMaterialClassificationRelationship",
+    "IfcMaterialList",
+    "IfcMemberStandardCase",
+    "IfcNullStyle",
+    "IfcObjectTypeEnum",
+    "IfcOpeningStandardCase",
+    "IfcPermeableCoveringProperties",
+    "IfcPlateStandardCase",
+    "IfcPostalAddress",
+    "IfcPresentationStyleAssignment",
+    "IfcProxy",
+    "IfcRelConnectsPortToElement",
+    "IfcRelCoversBldgElements",
+    "IfcRelCoversSpaces",
+    "IfcRelServicesBuildings",
+    "IfcSlabElementedCase",
+    "IfcSlabStandardCase",
+    "IfcTelecomAddress",
+    "IfcTextLiteral",
+    "IfcTrapeziumProfileDef",
+    "IfcWallElementedCase",
+    "IfcWallStandardCase",
+    "IfcWindowLiningProperties",
+    "IfcWindowPanelProperties",
+    "IfcWindowStandardCase",
+    "IfcWindowStyle",
+    "IfcWindowStyleOperationEnum"
+  ],
+  "deprecatedPredefinedTypesByEnum": {
+    "IfcBuildingElementProxyTypeEnum": [
+      "PROVISIONFORSPACE",
+      "PROVISIONFORVOID"
+    ],
+    "IfcFireSuppressionTerminalTypeEnum": [
+      "SPRINKLERDEFLECTOR"
+    ],
+    "IfcCableCarrierFittingTypeEnum": [
+      "TEE",
+      "CROSS",
+      "REDUCER"
+    ],
+    "IfcGeographicElementTypeEnum": [
+      "SOIL_BORING_POINT"
+    ],
+    "IfcSpaceTypeEnum": [
+      "INTERNAL",
+      "EXTERNAL"
+    ],
+    "IfcWallTypeEnum": [
+      "POLYGONAL",
+      "STANDARD",
+      "ELEMENTEDWALL"
+    ]
+  }
+}

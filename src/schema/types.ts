@@ -49,3 +49,9 @@ export interface SchemaIndex {
   /** Entity names in tree order (pre-order) for hierarchical dropdown. */
   entityListOrder?: string[];
 }
+
+/** Výstup skriptu build_deprecated_ifc – deprecated entity a hodnoty PredefinedType po enum typu. */
+export interface DeprecatedIfcData {
+  deprecatedEntities: string[];
+  deprecatedPredefinedTypesByEnum: Record<string, string[]>;
+}

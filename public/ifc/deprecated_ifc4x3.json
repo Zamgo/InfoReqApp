@@ -1,0 +1,60 @@
+{
+  "deprecatedEntities": [
+    "IfcBuildingSystem",
+    "IfcCivilElement",
+    "IfcCivilElementType",
+    "IfcDoorLiningProperties",
+    "IfcDoorPanelProperties",
+    "IfcElectricDistributionBoard",
+    "IfcElectricDistributionBoardType",
+    "IfcEnergyConversionDevice",
+    "IfcFaceBasedSurfaceModel",
+    "IfcFlowController",
+    "IfcFlowFitting",
+    "IfcFlowMovingDevice",
+    "IfcFlowSegment",
+    "IfcFlowStorageDevice",
+    "IfcFlowTerminal",
+    "IfcFlowTreatmentDevice",
+    "IfcMaterialClassificationRelationship",
+    "IfcMaterialList",
+    "IfcPermeableCoveringProperties",
+    "IfcPostalAddress",
+    "IfcRelConnectsPortToElement",
+    "IfcRelCoversBldgElements",
+    "IfcRelCoversSpaces",
+    "IfcRelServicesBuildings",
+    "IfcTelecomAddress",
+    "IfcTextLiteral",
+    "IfcTrapeziumProfileDef",
+    "IfcWallStandardCase",
+    "IfcWindowLiningProperties",
+    "IfcWindowPanelProperties",
+    "IfcWindowStandardCase"
+  ],
+  "deprecatedPredefinedTypesByEnum": {
+    "IfcBuildingElementProxyTypeEnum": [
+      "PROVISIONFORSPACE",
+      "PROVISIONFORVOID"
+    ],
+    "IfcFireSuppressionTerminalTypeEnum": [
+      "SPRINKLERDEFLECTOR"
+    ],
+    "IfcCableCarrierFittingTypeEnum": [
+      "TEE",
+      "CROSS",
+      "REDUCER"
+    ],
+    "IfcGeographicElementTypeEnum": [
+      "SOIL_BORING_POINT"
+    ],
+    "IfcSpaceTypeEnum": [
+      "INTERNAL",
+      "EXTERNAL"
+    ],
+    "IfcWallTypeEnum": [
+      "POLYGONAL",
+      "STANDARD"
+    ]
+  }
+}
