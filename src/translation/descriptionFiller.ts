@@ -84,10 +84,8 @@ export async function getObjectDescriptionAndTranslations(
     }
   } else if (source === "BSDD") {
     const { translateBsdd } = await import("./translators/BsddTranslator");
-    const { normalizeIfcSchemaVersion } = await import("../schema/ifcVersionConfig");
-    const v = project.ifcSchemaVersion ? normalizeIfcSchemaVersion(project.ifcSchemaVersion) : "IFC4X3";
-    
-    const tEnt = await translateBsdd({ type: "entity", officialName: entityName }, v);
+
+    const tEnt = await translateBsdd("entity", entityName);
     if (tEnt.translated) entityTranslationCz = tEnt.translated;
 
     if (fillCz) {
@@ -96,7 +94,7 @@ export async function getObjectDescriptionAndTranslations(
     if (fillEn) entityEn = await fetchBsddDescription("entity", entityName, "en-US");
 
     if (ptValue) {
-      const tPt = await translateBsdd({ type: "predefinedType", officialName: ptValue, context: { entity: entityName } }, v);
+      const tPt = await translateBsdd("predefinedType", ptValue, { entity: entityName });
       if (tPt.translated) ptTranslationCz = tPt.translated;
 
       if (fillCz) {

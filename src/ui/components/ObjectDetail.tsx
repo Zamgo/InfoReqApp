@@ -5534,7 +5534,7 @@ export const ObjectDetail: React.FC<Props> = ({
                             <UseCaseMultiSelect
                               entries={project?.purposeOfUseEntries ?? []}
                               value={object.psetUseCaseDefaults?.[group.psetName]}
-                              onChange={(ids) => updateObject({ psetUseCaseDefaults: { ...object.psetUseCaseDefaults, [group.psetName]: ids } })}
+                              onChange={(ids) => updateObject({ psetUseCaseDefaults: { ...object.psetUseCaseDefaults, [group.psetName as string]: ids } })}
                             />
                           </div>
                         )}
