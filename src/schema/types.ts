@@ -54,4 +54,6 @@ export interface SchemaIndex {
 export interface DeprecatedIfcData {
   deprecatedEntities: string[];
   deprecatedPredefinedTypesByEnum: Record<string, string[]>;
+  /** Poznámky z CSV (replacement_or_note) – enum -> hodnota (UPPERCASE) -> text poznámky. */
+  deprecatedPredefinedNotesByEnum?: Record<string, Record<string, string>>;
 }

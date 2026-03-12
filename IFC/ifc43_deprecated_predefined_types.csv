@@ -1,0 +1,10 @@
+entity,enum_name,deprecated_value,deprecation_version,replacement_or_note
+IfcBuildingElementProxy,IfcBuildingElementProxyTypeEnum,COMPLEX,undocumented legacy deprecation,"Not used - kept for upward compatibility"
+IfcBuildingElementProxy,IfcBuildingElementProxyTypeEnum,ELEMENT,undocumented legacy deprecation,"Not used - kept for upward compatibility"
+IfcBuildingElementProxy,IfcBuildingElementProxyTypeEnum,PARTIAL,undocumented legacy deprecation,"Not used - kept for upward compatibility"
+IfcBuildingElementProxy,IfcBuildingElementProxyTypeEnum,PROVISIONFORVOID,IFC4.3.0.0,"Use IfcVirtualElementTypeEnum.PROVISIONFORVOID"
+IfcBuildingElementProxy,IfcBuildingElementProxyTypeEnum,PROVISIONFORSPACE,IFC4.3.0.0,"Use IfcVirtualElementTypeEnum.CLEARANCE"
+IfcSpace,IfcSpaceTypeEnum,EXTERNAL,IFC4.3.2.0,"Use Pset_SpaceCommon.IsExternal instead"
+IfcSpace,IfcSpaceTypeEnum,INTERNAL,IFC4.3.2.0,"Use Pset_SpaceCommon.IsExternal instead"
+IfcWall,IfcWallTypeEnum,POLYGONAL,IFC4,"Deprecated and shall no longer be used"
+IfcWall,IfcWallTypeEnum,STANDARD,IFC4,"Use IfcMaterialLayerSet with IfcMaterialLayerSetUsage in occurrences"

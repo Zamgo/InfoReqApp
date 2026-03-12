@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import type { ClassificationNode } from "../../classification/types";
 import type { ClassificationData } from "../../classification/types";
@@ -35,6 +36,20 @@ import { useSchema } from "../../schema/SchemaProvider";
 type TabKey = "attributes" | "properties" | "partOf" | "material" | "classification" | "ids";
 type IdsSubTabKey = "schema" | "readable" | "metadata";
 type OccurrenceFilter = "all" | "required" | "prohibited" | "optional";
+
+/** Překlad poznámek z CSV (replacement_or_note) do češtiny pro zobrazení v komentáři pod PredefinedType. */
+const DEPRECATED_NOTE_TRANSLATIONS: Record<string, string> = {
+  "Not used - kept for upward compatibility": "Nepoužívá se – zachováno pro zpětnou kompatibilitu.",
+  "Use IfcVirtualElementTypeEnum.PROVISIONFORVOID": "Použijte IfcVirtualElementTypeEnum.PROVISIONFORVOID.",
+  "Use IfcVirtualElementTypeEnum.CLEARANCE": "Použijte IfcVirtualElementTypeEnum.CLEARANCE.",
+  "Use Pset_SpaceCommon.IsExternal instead": "Použijte místo toho Pset_SpaceCommon.IsExternal.",
+  "Deprecated and shall no longer be used": "Zastaralé a již by se nemělo používat.",
+  "Use IfcMaterialLayerSet with IfcMaterialLayerSetUsage in occurrences": "Použijte IfcMaterialLayerSet s IfcMaterialLayerSetUsage u výskytů.",
+};
+
+function translateDeprecatedNote(note: string): string {
+  return DEPRECATED_NOTE_TRANSLATIONS[note] ?? note;
+}
 
 type RequirementsTabsProps = {
   /** Aktuální sada požadavků, se kterou uživatel pracuje */
@@ -2103,7 +2118,7 @@ export const ObjectDetail: React.FC<Props> = ({
   onAssignGroupToObjects,
 }) => {
   const isLocked = object.locked === true;
-  const { deprecatedEntities } = useSchema();
+  const { deprecatedEntities, deprecatedPredefinedByEnum, deprecatedPredefinedNotesByEnum } = useSchema();
   /** Zvýraznění červeně: zkopírovaný objekt má stále stejnou entitu a predefinedType jako zdroj */
   const isIncompleteCopy = useMemo(() => {
     if (!object.copiedFrom || !project?.objects[object.copiedFrom]) return false;
@@ -2128,6 +2143,10 @@ export const ObjectDetail: React.FC<Props> = ({
   const [showRelationHelpModal, setShowRelationHelpModal] = useState(false);
   /** Počet prázdných slotů pro třídění autorských nástrojů (přidáno přes +) – klíč = systemEntryId */
   const [extraAuthoringSlots, setExtraAuthoringSlots] = useState<Record<string, number>>({});
+  const [predefinedTypeDropdownOpen, setPredefinedTypeDropdownOpen] = useState(false);
+  const predefinedTypeButtonRef = useRef<HTMLButtonElement>(null);
+  const predefinedTypeContainerRef = useRef<HTMLDivElement>(null);
+  const [predefinedTypePanelAnchor, setPredefinedTypePanelAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
 
   const [requirementsViewMode, setRequirementsViewMode] = useState<"object" | "groups">(() => {
     try {
@@ -2147,6 +2166,39 @@ export const ObjectDetail: React.FC<Props> = ({
     const groups = groupRequirementsByItem(project);
     return groups.find((g) => g.fingerprint === selectedItemGroup.fingerprint && g.kind === selectedItemGroup.kind) ?? null;
   }, [project, selectedItemGroup]);
+
+  const predefinedEnumType = useMemo(() => {
+    if (!schema || !object.ifcEntity) return null;
+    const ent = schema.entities[object.ifcEntity];
+    if (!ent) return null;
+    const attr = ent.attributes.find((a) => a.name === "PredefinedType");
+    if (!attr?.dataType || !attr.dataType.endsWith("Enum")) return null;
+    return attr.dataType;
+  }, [schema, object.ifcEntity]);
+
+  const isCurrentPredefinedDeprecated = useMemo(() => {
+    if (!predefinedEnumType) return false;
+    const set = deprecatedPredefinedByEnum[predefinedEnumType];
+    if (!set) return false;
+    const mode = object.predefinedType.mode;
+    const rawVal =
+      mode === "ENUM" || mode === "USERDEFINED"
+        ? object.predefinedType.value?.trim().toUpperCase()
+        : undefined;
+    if (!rawVal) return false;
+    return set.has(rawVal);
+  }, [deprecatedPredefinedByEnum, object.predefinedType.mode, object.predefinedType.value, predefinedEnumType]);
+
+  const currentDeprecatedPredefinedNote = useMemo(() => {
+    if (!predefinedEnumType || !isCurrentPredefinedDeprecated) return null;
+    const rawVal =
+      object.predefinedType.mode === "ENUM" || object.predefinedType.mode === "USERDEFINED"
+        ? object.predefinedType.value?.trim().toUpperCase()
+        : undefined;
+    if (!rawVal) return null;
+    const note = deprecatedPredefinedNotesByEnum[predefinedEnumType]?.[rawVal];
+    return note ? translateDeprecatedNote(note) : null;
+  }, [deprecatedPredefinedNotesByEnum, isCurrentPredefinedDeprecated, object.predefinedType.mode, object.predefinedType.value, predefinedEnumType]);
 
   // Při vybrané skupině uložit stabilní klíč (id reprezentativního požadavku); při zrušení výběru smazat.
   useEffect(() => {
@@ -2181,6 +2233,51 @@ export const ObjectDetail: React.FC<Props> = ({
       setSelectedItemGroup({ kind: found.kind, fingerprint: found.fingerprint });
     }
   }, [project, requirementsViewMode, selectedItemGroup, selectedItemGroupData]);
+
+  const updatePredefinedTypePanelAnchor = useCallback(() => {
+    const el = predefinedTypeButtonRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setPredefinedTypePanelAnchor({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(rect.width, 180),
+    });
+  }, []);
+  useEffect(() => {
+    if (!predefinedTypeDropdownOpen) {
+      setPredefinedTypePanelAnchor(null);
+      return;
+    }
+    updatePredefinedTypePanelAnchor();
+    const onScrollOrResize = () => updatePredefinedTypePanelAnchor();
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
+    return () => {
+      window.removeEventListener("scroll", onScrollOrResize, true);
+      window.removeEventListener("resize", onScrollOrResize);
+    };
+  }, [predefinedTypeDropdownOpen, updatePredefinedTypePanelAnchor]);
+  useEffect(() => {
+    if (!predefinedTypeDropdownOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        predefinedTypeContainerRef.current?.contains(target) ||
+        (e.target as Element).closest?.("[data-predefined-type-dropdown-panel]")
+      ) return;
+      setPredefinedTypeDropdownOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPredefinedTypeDropdownOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [predefinedTypeDropdownOpen]);
 
   const effectiveRequirements: ObjectRequirements = useMemo(() => {
     if (requirementsViewMode !== "groups" || !selectedItemGroupData) return object.requirements;
@@ -3994,13 +4091,64 @@ export const ObjectDetail: React.FC<Props> = ({
               )}
               <div className="flex flex-wrap items-center gap-2">
                 <label className="text-xs text-slate-600 shrink-0">PredefinedType</label>
-                <select className="min-w-[120px] max-w-[180px] rounded border border-slate-300 px-2 py-1 text-sm" value={object.predefinedType.mode === "NONE" ? "NOTDEFINED" : (object.predefinedType.mode === "USERDEFINED" ? "USERDEFINED" : object.predefinedType.value ?? "NOTDEFINED")} onChange={(e) => handlePredefinedChange(e.target.value)}>
-                  {predefinedOptions.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                </select>
+                <div ref={predefinedTypeContainerRef} className="relative inline-block">
+                  <button
+                    ref={predefinedTypeButtonRef}
+                    type="button"
+                    className="min-w-[120px] max-w-[180px] rounded border border-slate-300 bg-white px-2 py-1 text-left text-sm hover:border-slate-400 focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+                    onClick={() => setPredefinedTypeDropdownOpen((o) => !o)}
+                  >
+                    {object.predefinedType.mode === "NONE"
+                      ? "NOTDEFINED"
+                      : object.predefinedType.mode === "USERDEFINED"
+                        ? "USERDEFINED"
+                        : object.predefinedType.value ?? "NOTDEFINED"}
+                  </button>
+                  {predefinedTypeDropdownOpen &&
+                    predefinedTypePanelAnchor &&
+                    createPortal(
+                      <div
+                        data-predefined-type-dropdown-panel
+                        className="min-w-[180px] max-h-[280px] overflow-auto rounded-lg border-2 border-slate-300 bg-white py-1 shadow-xl ring-2 ring-slate-200/60"
+                        style={{
+                          position: "fixed",
+                          top: predefinedTypePanelAnchor.top,
+                          left: predefinedTypePanelAnchor.left,
+                          width: predefinedTypePanelAnchor.width,
+                          zIndex: 9999,
+                        }}
+                      >
+                        {predefinedOptions.map((opt) => {
+                          const isDeprecated =
+                            predefinedEnumType &&
+                            !!deprecatedPredefinedByEnum[predefinedEnumType]?.has(opt.trim().toUpperCase());
+                          const isSelected =
+                            (object.predefinedType.mode === "NONE" && opt === "NOTDEFINED") ||
+                            (object.predefinedType.mode === "USERDEFINED" && opt === "USERDEFINED") ||
+                            (object.predefinedType.mode === "ENUM" && (object.predefinedType.value ?? "NOTDEFINED") === opt);
+                          return (
+                            <button
+                              key={opt}
+                              type="button"
+                              className={`w-full px-3 py-1.5 text-left text-sm text-slate-800 hover:bg-slate-100 ${
+                                isSelected ? "bg-red-50 text-red-800" : ""
+                              }`}
+                              onClick={() => {
+                                handlePredefinedChange(opt);
+                                setPredefinedTypeDropdownOpen(false);
+                              }}
+                            >
+                              {opt}
+                              {isDeprecated && (
+                                <span className="text-amber-700 font-normal"> (zastaralé - bude odstraněno)</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>,
+                      document.body,
+                    )}
+                </div>
                 {object.predefinedType.mode === "USERDEFINED" && (
                   <input
                     className="min-w-[100px] max-w-[160px] rounded border border-slate-300 px-2 py-1 text-sm"
@@ -4038,6 +4186,16 @@ export const ObjectDetail: React.FC<Props> = ({
                   onChange={(ids) => updateObject({ predefinedTypePhases: ids })}
                 />
               </div>
+              {isCurrentPredefinedDeprecated && (
+                <div className="text-xs text-amber-700">
+                  Tento <span className="font-semibold">PredefinedType</span> je zastaralý a bude v budoucí verzi IFC odstraněn nebo nahrazen.
+                  {currentDeprecatedPredefinedNote ? (
+                    <> Doporučení: {currentDeprecatedPredefinedNote}</>
+                  ) : (
+                    <> Zvažte použití doporučené náhrady uvedené v dokumentaci IFC.</>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

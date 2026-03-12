@@ -30,6 +30,8 @@ function parseValueCell(cell: string): string[] {
 interface DeprecatedOutput {
   deprecatedEntities: string[];
   deprecatedPredefinedTypesByEnum: Record<string, string[]>;
+  /** enum -> value (UPPERCASE) -> replacement_or_note z CSV */
+  deprecatedPredefinedNotesByEnum: Record<string, Record<string, string>>;
 }
 
 interface SchemaIndexMinimal {
@@ -169,16 +171,150 @@ function buildDeprecatedFromGherkin(html: string): {
     ? JSON.parse(fs.readFileSync(schemaPath4, "utf-8"))
     : null;
 
-  return {
-    ifc43: {
-      deprecatedEntities: [...ifc43Entities].sort(),
-      deprecatedPredefinedTypesByEnum: buildByEnum(ifc43EnumRows, schema43),
-    },
-    ifc4: {
-      deprecatedEntities: [...ifc4Entities].sort(),
-      deprecatedPredefinedTypesByEnum: buildByEnum(ifc4EnumRows, schema4),
-    },
+  const ifc43: DeprecatedOutput = {
+    deprecatedEntities: [...ifc43Entities].sort(),
+    deprecatedPredefinedTypesByEnum: buildByEnum(ifc43EnumRows, schema43),
+    deprecatedPredefinedNotesByEnum: {},
   };
+  const ifc4: DeprecatedOutput = {
+    deprecatedEntities: [...ifc4Entities].sort(),
+    deprecatedPredefinedTypesByEnum: buildByEnum(ifc4EnumRows, schema4),
+    deprecatedPredefinedNotesByEnum: {},
+  };
+
+  return { ifc43, ifc4 };
+}
+
+/**
+ * Sloučí do IFC4.3 deprecated predefined types z lokálního CSV souboru
+ * (např. IFC/ifc43_deprecated_predefined_types.csv).
+ * CSV formát: entity,enum_name,deprecated_value,deprecation_version,replacement_or_note
+ */
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === '"') {
+      let end = i + 1;
+      while (end < line.length) {
+        if (line[end] === '"') {
+          if (line[end + 1] === '"') end += 2;
+          else break;
+        } else end++;
+      }
+      result.push(line.slice(i + 1, end).replace(/""/g, '"'));
+      i = end + 1;
+      if (line[i] === ",") i++;
+    } else {
+      const comma = line.indexOf(",", i);
+      if (comma < 0) {
+        result.push(line.slice(i).trim());
+        break;
+      }
+      result.push(line.slice(i, comma).trim());
+      i = comma + 1;
+    }
+  }
+  return result;
+}
+
+function mergeCsvDeprecatedForIfc43(base: DeprecatedOutput): DeprecatedOutput {
+  const csvPathEnv = process.env.IFC43_DEPRECATED_CSV;
+  const candidatePaths = [
+    csvPathEnv && csvPathEnv.trim(),
+    path.join(ROOT, "IFC", "ifc43_deprecated_predefined_types.csv"),
+  ].filter((p): p is string => !!p);
+
+  let csvPath: string | null = null;
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) {
+      csvPath = p;
+      break;
+    }
+  }
+  if (!csvPath) return base;
+
+  const text = fs.readFileSync(csvPath, "utf-8");
+  const lines = text.split(/\r?\n/).slice(1); // skip header
+
+  const merged: DeprecatedOutput = {
+    deprecatedEntities: [...base.deprecatedEntities],
+    deprecatedPredefinedTypesByEnum: Object.fromEntries(
+      Object.entries(base.deprecatedPredefinedTypesByEnum).map(([k, v]) => [k, [...v]]),
+    ),
+    deprecatedPredefinedNotesByEnum: Object.fromEntries(
+      Object.entries(base.deprecatedPredefinedNotesByEnum || {}).map(([k, v]) => [k, { ...v }]),
+    ),
+  };
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const parts = parseCsvLine(line);
+    const enumName = parts[1]?.trim();
+    const rawVal = parts[2]?.trim();
+    const note = parts[4]?.trim();
+    if (!enumName || !rawVal) continue;
+    const value = rawVal.toUpperCase();
+    if (!merged.deprecatedPredefinedTypesByEnum[enumName]) {
+      merged.deprecatedPredefinedTypesByEnum[enumName] = [];
+    }
+    const arr = merged.deprecatedPredefinedTypesByEnum[enumName];
+    if (!arr.includes(value)) arr.push(value);
+    if (note) {
+      if (!merged.deprecatedPredefinedNotesByEnum[enumName]) {
+        merged.deprecatedPredefinedNotesByEnum[enumName] = {};
+      }
+      merged.deprecatedPredefinedNotesByEnum[enumName][value] = note;
+    }
+  }
+
+  return merged;
+}
+
+/** Do libovolného výstupu (IFC4 nebo IFC4.3) doplní pouze poznámky z CSV – aby se doporučení zobrazovala i při verzi IFC4. */
+function mergeCsvNotesInto(base: DeprecatedOutput): DeprecatedOutput {
+  const csvPathEnv = process.env.IFC43_DEPRECATED_CSV;
+  const candidatePaths = [
+    csvPathEnv && csvPathEnv.trim(),
+    path.join(ROOT, "IFC", "ifc43_deprecated_predefined_types.csv"),
+  ].filter((p): p is string => !!p);
+
+  let csvPath: string | null = null;
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) {
+      csvPath = p;
+      break;
+    }
+  }
+  if (!csvPath) return base;
+
+  const text = fs.readFileSync(csvPath, "utf-8");
+  const lines = text.split(/\r?\n/).slice(1);
+
+  const result: DeprecatedOutput = {
+    deprecatedEntities: [...base.deprecatedEntities],
+    deprecatedPredefinedTypesByEnum: Object.fromEntries(
+      Object.entries(base.deprecatedPredefinedTypesByEnum).map(([k, v]) => [k, [...v]]),
+    ),
+    deprecatedPredefinedNotesByEnum: Object.fromEntries(
+      Object.entries(base.deprecatedPredefinedNotesByEnum || {}).map(([k, v]) => [k, { ...v }]),
+    ),
+  };
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const parts = parseCsvLine(line);
+    const enumName = parts[1]?.trim();
+    const rawVal = parts[2]?.trim();
+    const note = parts[4]?.trim();
+    if (!enumName || !rawVal || !note) continue;
+    const value = rawVal.toUpperCase();
+    if (!result.deprecatedPredefinedNotesByEnum[enumName]) {
+      result.deprecatedPredefinedNotesByEnum[enumName] = {};
+    }
+    result.deprecatedPredefinedNotesByEnum[enumName][value] = note;
+  }
+  return result;
 }
 
 async function fetchText(url: string): Promise<string> {
@@ -209,7 +345,9 @@ function ensureDir(dir: string): void {
 const main = async () => {
   console.log("\n🔧 Načítám IFC102 deprecated z buildingSMART Gherkin rules ...\n");
   const html = await fetchText(GHERKIN_SOURCE_URL);
-  const { ifc43, ifc4 } = buildDeprecatedFromGherkin(html);
+  const fromGherkin = buildDeprecatedFromGherkin(html);
+  const ifc43 = mergeCsvDeprecatedForIfc43(fromGherkin.ifc43);
+  const ifc4 = mergeCsvNotesInto(fromGherkin.ifc4);
 
   ensureDir(OUTPUT_DIR);
 

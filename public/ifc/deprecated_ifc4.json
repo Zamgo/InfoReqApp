@@ -78,5 +78,22 @@
       "STANDARD",
       "ELEMENTEDWALL"
     ]
+  },
+  "deprecatedPredefinedNotesByEnum": {
+    "IfcBuildingElementProxyTypeEnum": {
+      "COMPLEX": "Not used - kept for upward compatibility",
+      "ELEMENT": "Not used - kept for upward compatibility",
+      "PARTIAL": "Not used - kept for upward compatibility",
+      "PROVISIONFORVOID": "Use IfcVirtualElementTypeEnum.PROVISIONFORVOID",
+      "PROVISIONFORSPACE": "Use IfcVirtualElementTypeEnum.CLEARANCE"
+    },
+    "IfcSpaceTypeEnum": {
+      "EXTERNAL": "Use Pset_SpaceCommon.IsExternal instead",
+      "INTERNAL": "Use Pset_SpaceCommon.IsExternal instead"
+    },
+    "IfcWallTypeEnum": {
+      "POLYGONAL": "Deprecated and shall no longer be used",
+      "STANDARD": "Use IfcMaterialLayerSet with IfcMaterialLayerSetUsage in occurrences"
+    }
   }
 }
