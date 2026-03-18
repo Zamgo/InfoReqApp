@@ -3,7 +3,7 @@ ASR.KAN	domovni kanalizace (KAN)	2
 ASR.KAN.001	vpust KAN	3		IfcWasteTerminal
 ASR.KAN.002	zarizovaci predmet KAN	3		IfcSanitaryTerminal
 ASR.MAP	mistnosti a prostory	2		
-ASR.MAP.001	mistnost	3		IfcSpace
+ASR.MAP.001	mistnost	3		IfcSpace	INTERNAL
 ASR.MAP.002	parkovaci misto	3		IfcSpace
 ASR.STR	stresni konstrukce	2		
 ASR.STR.001	plast strechy	3		IfcSlab
