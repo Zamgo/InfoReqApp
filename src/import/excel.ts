@@ -7,7 +7,7 @@
  * - ČÍSELNÍKY: Název, Hodnoty (oddělené ;), Poznámka. Pokud Hodnoty chybí, hodnoty se načtou z listu se jménem = Název nebo ČÍSELNÍK_<Název> (sloupce Název/Hodnoty/Kód).
  * - KLASIFIKACE_<název>: Třídící_kód (nebo Kód), Popis, Úroveň – hierarchie pro namapovaný systém.
  * - PRVKY / POŽADAVKY: Třídící_kód, Třídění_úroveň_1..N (primární strom), dále:
- *   - Sloupce Třídění_AN_<název> = autorské nástroje (authoring), Třídění_<název> = jiné klasifikace.
+ *   - Sloupce Třídění_AN_<název> nebo Třídění_<název>_AN = autorské nástroje (authoring), Třídění_<název> = jiné klasifikace.
  *   - Hodnoty z těchto sloupců se ukládají do mappedValues na listech primárního stromu a vytvoří se příslušný ClassificationSystemEntry (nodes z listu KLASIFIKACE_<název> nebo z unikátních hodnot ve sloupci).
  *   - IFC_entita, IFC_predefinedType doplní ifcEntity/predefinedType u uzlů (pro editor a mapování).
  */
@@ -300,6 +300,8 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
         hierarchyCols.push({ col: i, level: parseInt(matchUroven[1], 10) });
       } else if (v.startsWith("Třídění_AN_")) {
         mappedColInfos.push({ header: v, col: i, name: v.replace("Třídění_AN_", ""), isAuthoring: true });
+      } else if (v.startsWith("Třídění_") && v.endsWith("_AN")) {
+        mappedColInfos.push({ header: v, col: i, name: v.slice("Třídění_".length, -"_AN".length), isAuthoring: true });
       } else if (v.startsWith("Třídění_") && !v.match(/^Třídění_úroveň_\d+$/)) {
         mappedColInfos.push({ header: v, col: i, name: v.replace("Třídění_", ""), isAuthoring: false });
       }
