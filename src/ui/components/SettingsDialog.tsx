@@ -69,6 +69,8 @@ export const SettingsDialog: React.FC<Props> = ({
         entityDescriptionsEn: { ...existing?.entityDescriptionsEn, ...parsed.entityDescriptionsEn },
         predefinedTypeDescriptionsCz: { ...existing?.predefinedTypeDescriptionsCz, ...parsed.predefinedTypeDescriptionsCz },
         predefinedTypeDescriptionsEn: { ...existing?.predefinedTypeDescriptionsEn, ...parsed.predefinedTypeDescriptionsEn },
+        propertySetNames: { ...existing?.propertySetNames, ...parsed.propertySetNames },
+        propertyNames: { ...existing?.propertyNames, ...parsed.propertyNames },
       };
       onSave({ czTranslationSource: "CUSTOM", customTranslations: merged });
     } catch (err) {
@@ -109,6 +111,8 @@ export const SettingsDialog: React.FC<Props> = ({
         entityDescriptionsEn: { ...existing?.entityDescriptionsEn, ...parsed.entityDescriptionsEn },
         predefinedTypeDescriptionsCz: { ...existing?.predefinedTypeDescriptionsCz, ...parsed.predefinedTypeDescriptionsCz },
         predefinedTypeDescriptionsEn: { ...existing?.predefinedTypeDescriptionsEn, ...parsed.predefinedTypeDescriptionsEn },
+        propertySetNames: { ...existing?.propertySetNames, ...parsed.propertySetNames },
+        propertyNames: { ...existing?.propertyNames, ...parsed.propertyNames },
       };
       onSave({ customTranslations: merged });
     } catch (err) {
@@ -134,6 +138,8 @@ export const SettingsDialog: React.FC<Props> = ({
           entityDescriptionsEn: parsed.entityDescriptionsEn,
           predefinedTypeDescriptionsCz: parsed.predefinedTypeDescriptionsCz,
           predefinedTypeDescriptionsEn: parsed.predefinedTypeDescriptionsEn,
+          propertySetNames: { ...existing.propertySetNames, ...parsed.propertySetNames },
+          propertyNames: { ...existing.propertyNames, ...parsed.propertyNames },
         };
         currentProject = { ...project, customTranslations: mergedTranslations };
         onSave({ customTranslations: mergedTranslations });

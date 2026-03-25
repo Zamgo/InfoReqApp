@@ -44,7 +44,9 @@ export async function getObjectDescriptionAndTranslations(
           entityDescriptionsEn: parsed.entityDescriptionsEn,
           predefinedTypeDescriptionsCz: parsed.predefinedTypeDescriptionsCz,
           predefinedTypeDescriptionsEn: parsed.predefinedTypeDescriptionsEn,
-        }
+          propertySetNames: { ...existing.propertySetNames, ...parsed.propertySetNames },
+          propertyNames: { ...existing.propertyNames, ...parsed.propertyNames },
+        },
       };
     } catch (err) {
       console.error("Nepodařilo se stáhnout výchozí překlady pro popis:", err);

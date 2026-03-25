@@ -375,8 +375,8 @@ const TreeItem: React.FC<{
   const { showCzTranslations } = useTranslation();
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
-  /** Výběr jen u skutečných objektů (kód existuje v objects). Po vyhledání může být uzel „list“ bez dětí, ale bez odpovídajícího objektu – ten nesmí otevřít nový objekt. */
-  const isSelectableLeaf = isLeaf && !!objects?.[node.code];
+  /** List = prvek klasifikace zvoleného pohledu; výběr zpracuje App.tsx (doplní project.objects přes ensureObject, pokud zatím chybí). */
+  const isSelectableLeaf = isLeaf;
   const isSelected = selectedCode === node.code;
   const obj = isLeaf ? objects?.[node.code] : undefined;
   const src = obj?.copiedFrom ? objects?.[obj.copiedFrom] : undefined;
@@ -455,7 +455,7 @@ const TreeItem: React.FC<{
                 </span>
               )}
               {czTranslation && (
-                <span className="shrink-0 rounded-md bg-blue-50 border border-blue-200 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                <span className="shrink-0 rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">
                   {czTranslation}
                 </span>
               )}
@@ -547,14 +547,14 @@ export const ClassificationPanel: React.FC<Props> = ({
     [baseNodes],
   );
   const orphanObjectCodes = useMemo(
-    () => Object.keys(objects).filter((code) => !codesInTree.has(code)),
+    () => Object.keys(objects ?? {}).filter((code) => !codesInTree.has(code)),
     [objects, codesInTree],
   );
   const filteredOrphanCodes = useMemo(() => {
     if (!search.trim() || orphanObjectCodes.length === 0) return orphanObjectCodes;
     const q = search.trim().toLowerCase();
     return orphanObjectCodes.filter((code) => {
-      const obj = objects[code];
+      const obj = (objects ?? {})[code];
       const desc = (obj?.description ?? code).toLowerCase();
       return desc.includes(q) || code.toLowerCase().includes(q);
     });
@@ -710,7 +710,7 @@ export const ClassificationPanel: React.FC<Props> = ({
                         Entity mimo hierarchii
                       </div>
                       {filteredOrphanCodes.map((code) => {
-                        const obj = objects[code];
+                        const obj = (objects ?? {})[code];
                         const desc = obj?.description ?? code;
                         const isSelected = selectedCode === code;
                         const label =

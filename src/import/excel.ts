@@ -33,22 +33,26 @@ import { findNodeByCode } from "../classification/parser";
 
 const MAX_COLS = 80;
 
-function cellToString(val: ExcelJS.CellValue | null | undefined): string {
-  if (val == null) return "";
-  if (typeof val === "object" && val !== null) {
-    if ("result" in val && (val as { result?: unknown }).result !== undefined) {
-      return String((val as { result: unknown }).result);
-    }
-    // Formule bez uloženého výsledku – import spoléhá na Číselník sloupec pro allowedValues
-    if ("formula" in val) return "";
-  }
-  return String(val).trim();
+/**
+ * Čitelný text buňky (včetně RichText / hypertextu / výsledku vzorce).
+ * Čtení přes `.value` u formátovaných hlaviček vrací objekt → dříve vznikalo `[object Object]` a sloupce CZ se nenašly.
+ */
+function getCellPlainText(cell: ExcelJS.Cell): string {
+  const t = cell.text;
+  if (t == null || t === undefined) return "";
+  return String(t).trim();
+}
+
+/** Nesevřitelná mezera z Excelu → normální mezera pro porovnání hlaviček */
+function normalizeHeaderLabel(raw: string): string {
+  return raw.replace(/\u00a0/g, " ").trim().toLowerCase();
 }
 
 function findCol(row: ExcelJS.Row, header: string): number {
+  const want = normalizeHeaderLabel(header);
   for (let i = 1; i <= MAX_COLS; i++) {
-    const v = cellToString(row.getCell(i).value);
-    if (v.toLowerCase() === header.toLowerCase()) return i;
+    const v = normalizeHeaderLabel(getCellPlainText(row.getCell(i)));
+    if (v === want) return i;
   }
   return -1;
 }
@@ -64,7 +68,7 @@ function findColFirst(row: ExcelJS.Row, headers: string[]): number {
 
 function getVal(row: ExcelJS.Row, col: number): string {
   if (col < 1) return "";
-  return cellToString(row.getCell(col).value);
+  return getCellPlainText(row.getCell(col));
 }
 
 const OMEZENI_MAP: Record<string, string> = {
@@ -482,8 +486,8 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     };
     const colIfcEntity = findCol(h1, "IFC_entita") >= 0 ? findCol(h1, "IFC_entita") : findCol(h1, "IFC Entita");
     const colPredefined = findCol(h1, "IFC_predefinedType") >= 0 ? findCol(h1, "IFC_predefinedType") : findCol(h1, "IFC PredefinedType");
-    const colIfcEntityCz = findCol(h1, "IFC_entita_CZ");
-    const colPredefinedCz = findCol(h1, "IFC_predefinedType_CZ");
+    const colIfcEntityCz = findColFirst(h1, ["IFC_entita_CZ", "IFC_entita CZ"]);
+    const colPredefinedCz = findColFirst(h1, ["IFC_predefinedType_CZ", "IFC_predefinedType CZ", "IFC PredefinedType CZ"]);
     const colPopis = findCol(h1, "Popis");
     const colPoznamka = findCol(h1, "Poznámka");
     const colPriklady = findCol(h1, "Příklady");
@@ -601,21 +605,26 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     const colTyp = findCol(h1, "Typ_požadavku");
     const colIfcEntityPoz = findCol(h1, "IFC_entita") >= 0 ? findCol(h1, "IFC_entita") : findCol(h1, "IFC Entita");
     const colPredefinedPoz = findCol(h1, "IFC_predefinedType") >= 0 ? findCol(h1, "IFC_predefinedType") : findCol(h1, "IFC PredefinedType");
-    const colIfcEntityCzPoz = findCol(h1, "IFC_entita_CZ");
-    const colPredefinedCzPoz = findCol(h1, "IFC_predefinedType_CZ");
+    const colIfcEntityCzPoz = findColFirst(h1, ["IFC_entita_CZ", "IFC_entita CZ"]);
+    const colPredefinedCzPoz = findColFirst(h1, ["IFC_predefinedType_CZ", "IFC_predefinedType CZ", "IFC PredefinedType CZ"]);
     const colSkupina =
       findCol(h1, "Skupina") >= 0
         ? findCol(h1, "Skupina")
         : findCol(h1, "Skupina_vlastností") >= 0
           ? findCol(h1, "Skupina_vlastností")
           : findCol(h1, "Seskupení");
-    const colSkupinaCz = findCol(h1, "Skupina_CZ");
+    const colSkupinaCz = findColFirst(h1, ["Skupina_CZ", "Skupina CZ"]);
     const colParametrHodnoty = findCol(h1, "Parametr_hodnoty");
-    const colParametrHodnotyCz = findCol(h1, "Parametr_hodnoty_CZ");
+    const colParametrHodnotyCz = findColFirst(h1, [
+      "Parametr_hodnoty_CZ",
+      "Parametr_hodnoty CZ",
+      "Vlastnost_CZ",
+      "Vlastnost CZ",
+    ]);
     const colDataType = findCol(h1, "IFC_datový_typ");
     const colOmezeni = findCol(h1, "Omezení");
     const colHodnoty = findCol(h1, "Požadované_hodnoty");
-    const colHodnotyCz = findCol(h1, "Požadované_hodnoty_CZ");
+    const colHodnotyCz = findColFirst(h1, ["Požadované_hodnoty_CZ", "Požadované_hodnoty CZ"]);
     const colJednotka = findCol(h1, "Jednotka");
     const colCiselnik = findColFirst(h1, ["Číselník", "Čísleník"]);
     const colUri = findCol(h1, "URI");

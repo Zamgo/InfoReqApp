@@ -574,6 +574,15 @@ const generateSpecification = (
 };
 
 /**
+ * Check whether a generated specification XML has an empty requirements block
+ * (contains only whitespace between <ids:requirements> and </ids:requirements>).
+ */
+const hasEmptyRequirements = (specXml: string): boolean => {
+  const match = specXml.match(/<ids:requirements>([\s\S]*?)<\/ids:requirements>/);
+  return match != null && match[1].trim() === "";
+};
+
+/**
  * Generate complete IDS XML document
  */
 export const generateIDS = (options: IDSExportOptions): string => {
@@ -594,8 +603,9 @@ export const generateIDS = (options: IDSExportOptions): string => {
   const phaseCode = phase.code ?? phaseId;
 
   // Při exportu "Vše" vytváříme oddělenou specifikaci pro každý typ výskytu (požadované, zakázané, možné)
+  const isSplitByOccurrence = occurrenceFilter === "all";
   const occurrenceTypes: OccurrenceFilter[] =
-    occurrenceFilter === "all"
+    isSplitByOccurrence
       ? (["required", "prohibited", "optional"] as const)
       : [occurrenceFilter];
 
@@ -605,7 +615,12 @@ export const generateIDS = (options: IDSExportOptions): string => {
   for (const obj of objectsToExport) {
     for (const occ of occurrenceTypes) {
       const spec = generateSpecification(obj, phaseId, phase.name, phaseCode, occ, classificationSystemEntries, ifcVersion, options.useCaseId);
-      if (spec) specifications.push(spec);
+      if (spec) {
+        // When splitting "all" into per-occurrence specs, skip those with empty requirements
+        // (empty <ids:requirements> only makes sense when user explicitly chose that occurrence type)
+        if (isSplitByOccurrence && hasEmptyRequirements(spec)) continue;
+        specifications.push(spec);
+      }
     }
   }
   

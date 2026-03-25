@@ -326,6 +326,10 @@ export interface CustomTranslations {
   entityDescriptionsEn?: Record<string, string>;
   predefinedTypeDescriptionsCz?: Record<string, string>;
   predefinedTypeDescriptionsEn?: Record<string, string>;
+  /** List Pset_Qto v IFC_*_cs.xlsx: klíč = Name_EN (např. Pset_Condition), hodnota = Name_CZ */
+  propertySetNames?: Record<string, string>;
+  /** List Pset_Qto: klíč = "PsetName::Property_Name_EN" → Property_Name_CZ */
+  propertyNames?: Record<string, string>;
 }
 
 export interface Project {
@@ -343,7 +347,7 @@ export interface Project {
   fillDescriptionCz?: boolean;
   /** Nastavení doplňování popisů: doplnit anglický popis z IFC/TRANSLATION */
   fillDescriptionEn?: boolean;
-  /** Vlastní překlady z nahraného Excelu (entity + predefined types). */
+  /** Vlastní překlady z nahraného Excelu (entity, predefined types, Pset/Qto/vlastnosti z listu Pset_Qto). */
   customTranslations?: CustomTranslations;
   /** Project description */
   description?: string;

@@ -1,6 +1,6 @@
 /**
  * Export šablony překladů (Entity + PredefinedTypes) do Excelu a import z Excelu do CustomTranslations.
- * Jeden Excel může obsahovat překlady pro více IFC verzí – listy Entity, PredefinedTypes (později Pset).
+ * Jeden Excel může obsahovat překlady pro více IFC verzí – listy Entity/Entity_PredefinedType, PredefinedTypes, **Pset_Qto**.
  * Volitelný sloupec IFC_verze (IFC4 / IFC4X3) filtruje řádky podle verze projektu.
  */
 import ExcelJS from "exceljs";
@@ -15,7 +15,7 @@ const COL_PREDEFINED_TYPE = "PredefinedType";
 const COL_TRANSLATION = "Překlad";
 const COL_IFC_VERZE = "IFC_verze";
 
-/** URL výchozího Excelu s překlady (v public/ifc/translations/). Jeden soubor pro všechny verze, listy Entity, PredefinedTypes, později Pset; volitelný sloupec IFC_verze. */
+/** URL výchozího Excelu s překlady (v public/ifc/translations/). */
 export const DEFAULT_TRANSLATIONS_EXCEL_URL = "/ifc/translations/Preklady.xlsx";
 
 /** URL překladů podle IFC verze (soubory z IFC/TRANSLATION zkopírované do public/ifc/translations/). */
@@ -30,12 +30,11 @@ export function getDefaultTranslationsUrl(ifcVersion: IfcSchemaVersion | null): 
   return DEFAULT_TRANSLATIONS_EXCEL_URL;
 }
 
-function cellToString(val: ExcelJS.CellValue | null | undefined): string {
-  if (val == null) return "";
-  if (typeof val === "object" && val !== null && "result" in val) {
-    return String((val as { result: unknown }).result ?? "").trim();
-  }
-  return String(val).trim();
+/** Text buňky včetně RichText / výsledku vzorce (stejně jako import projektu z Excelu). */
+function getCellText(cell: ExcelJS.Cell): string {
+  const t = cell.text;
+  if (t == null || t === undefined) return "";
+  return String(t).replace(/\u00a0/g, " ").trim();
 }
 
 /** Vygeneruje Excel šablonu s listy Entity a PredefinedTypes z SchemaIndex. */
@@ -89,9 +88,9 @@ export async function downloadTranslationsTemplate(schemaIndex: SchemaIndex): Pr
 }
 
 const findCol = (row: ExcelJS.Row, ...names: string[]) => {
-  for (let i = 1; i <= 24; i++) {
-    const v = cellToString(row.getCell(i).value);
-    if (names.some((n) => n.toLowerCase() === v.toLowerCase())) return i;
+  for (let i = 1; i <= 40; i++) {
+    const v = getCellText(row.getCell(i)).toLowerCase();
+    if (names.some((n) => n.toLowerCase() === v)) return i;
   }
   return -1;
 };
@@ -103,9 +102,21 @@ function rowMatchesVersion(
   ifcVersion: IfcSchemaVersion | null
 ): boolean {
   if (colVersion < 1 || !ifcVersion) return true;
-  const v = cellToString(row.getCell(colVersion).value).trim().toUpperCase();
+  const v = getCellText(row.getCell(colVersion)).trim().toUpperCase();
   if (!v) return true;
   return v === ifcVersion.toUpperCase();
+}
+
+function findPsetQtoWorksheet(wb: ExcelJS.Workbook): ExcelJS.Worksheet | undefined {
+  for (const name of ["Pset_Qto", "pset_qto", "PSET_QTO"]) {
+    const ws = wb.getWorksheet(name);
+    if (ws) return ws;
+  }
+  for (const ws of wb.worksheets) {
+    const n = ws.name?.trim() ?? "";
+    if (/^pset[_-]?qto$/i.test(n)) return ws;
+  }
+  return undefined;
 }
 
 /** Načte Excel z bufferu a vrátí CustomTranslations. Volitelně filtruje řádky podle IFC_verze. */
@@ -123,6 +134,8 @@ export async function parseTranslationsFromBuffer(
   const entityDescriptionsEn: Record<string, string> = {};
   const predefinedTypeDescriptionsCz: Record<string, string> = {};
   const predefinedTypeDescriptionsEn: Record<string, string> = {};
+  const propertySetNames: Record<string, string> = {};
+  const propertyNames: Record<string, string> = {};
 
   const validEntities = schemaIndex
     ? new Set(Object.keys(schemaIndex.entities))
@@ -143,23 +156,23 @@ export async function parseTranslationsFromBuffer(
     if (colTranslationCz >= 1 && colLevel1 >= 1) {
       for (let r = 2; r <= (entitySheet.rowCount ?? 0); r++) {
         const row = entitySheet.getRow(r);
-        const translation = cellToString(row.getCell(colTranslationCz).value).trim();
-        const descCz = colDescCz >= 1 ? cellToString(row.getCell(colDescCz).value).trim() : "";
-        const descEn = colDescEn >= 1 ? cellToString(row.getCell(colDescEn).value).trim() : "";
+        const translation = getCellText(row.getCell(colTranslationCz));
+        const descCz = colDescCz >= 1 ? getCellText(row.getCell(colDescCz)) : "";
+        const descEn = colDescEn >= 1 ? getCellText(row.getCell(colDescEn)) : "";
 
         if (!translation && !descCz && !descEn) continue;
         const entityLevels: string[] = [];
         for (let i = 1; i <= 8; i++) {
           const col = findCol(header, `Entity_level_${i}`);
           if (col >= 1) {
-            const v = cellToString(row.getCell(col).value).trim();
+            const v = getCellText(row.getCell(col));
             if (v) entityLevels.push(v);
           }
         }
         const entityName = entityLevels.length > 0 ? entityLevels[entityLevels.length - 1]! : "";
         if (!entityName) continue;
         if (validEntities && !validEntities.has(entityName)) continue;
-        const pt = colPredefinedType >= 1 ? cellToString(row.getCell(colPredefinedType).value).trim() : "";
+        const pt = colPredefinedType >= 1 ? getCellText(row.getCell(colPredefinedType)) : "";
         if (pt) {
           if (validPredefinedByEntity) {
             const allowed = validPredefinedByEntity(entityName);
@@ -182,10 +195,10 @@ export async function parseTranslationsFromBuffer(
         for (let r = 2; r <= (entitySheet.rowCount ?? 0); r++) {
           const row = entitySheet.getRow(r);
           if (!rowMatchesVersion(row, colVerze, ifcVersion)) continue;
-          const entityName = cellToString(row.getCell(colEntity).value).trim();
-          const translation = colTranslation >= 1 ? cellToString(row.getCell(colTranslation).value).trim() : "";
-          const descCz = colDescCz >= 1 ? cellToString(row.getCell(colDescCz).value).trim() : "";
-          const descEn = colDescEn >= 1 ? cellToString(row.getCell(colDescEn).value).trim() : "";
+          const entityName = getCellText(row.getCell(colEntity));
+          const translation = colTranslation >= 1 ? getCellText(row.getCell(colTranslation)) : "";
+          const descCz = colDescCz >= 1 ? getCellText(row.getCell(colDescCz)) : "";
+          const descEn = colDescEn >= 1 ? getCellText(row.getCell(colDescEn)) : "";
           if (!entityName) continue;
           if (validEntities && !validEntities.has(entityName)) continue;
           if (translation) entities[entityName] = translation;
@@ -210,11 +223,11 @@ export async function parseTranslationsFromBuffer(
       for (let r = 2; r <= (ptSheet.rowCount ?? 0); r++) {
         const row = ptSheet.getRow(r);
         if (!rowMatchesVersion(row, colVerze, ifcVersion)) continue;
-        const entityName = cellToString(row.getCell(colEntity).value).trim();
-        const pt = cellToString(row.getCell(colPt).value).trim();
-        const translation = colTranslation >= 1 ? cellToString(row.getCell(colTranslation).value).trim() : "";
-        const descCz = colDescCz >= 1 ? cellToString(row.getCell(colDescCz).value).trim() : "";
-        const descEn = colDescEn >= 1 ? cellToString(row.getCell(colDescEn).value).trim() : "";
+        const entityName = getCellText(row.getCell(colEntity));
+        const pt = getCellText(row.getCell(colPt));
+        const translation = colTranslation >= 1 ? getCellText(row.getCell(colTranslation)) : "";
+        const descCz = colDescCz >= 1 ? getCellText(row.getCell(colDescCz)) : "";
+        const descEn = colDescEn >= 1 ? getCellText(row.getCell(colDescEn)) : "";
         if (!entityName || !pt) continue;
         if (validPredefinedByEntity) {
           const allowed = validPredefinedByEntity(entityName);
@@ -227,13 +240,37 @@ export async function parseTranslationsFromBuffer(
     }
   }
 
-  return { 
-    entities, 
-    predefinedTypes, 
-    entityDescriptionsCz, 
-    entityDescriptionsEn, 
-    predefinedTypeDescriptionsCz, 
-    predefinedTypeDescriptionsEn 
+  const psetQtoSheet = findPsetQtoWorksheet(wb);
+  if (psetQtoSheet && (psetQtoSheet.rowCount ?? 0) >= 2) {
+    const header = psetQtoSheet.getRow(1);
+    const colNameEn = findCol(header, "Name_EN");
+    const colNameCz = findCol(header, "Name_CZ");
+    const colPropEn = findCol(header, "Property_Name_EN");
+    const colPropCz = findCol(header, "Property_Name_CZ");
+    const colVerze = findCol(header, COL_IFC_VERZE, "IFC_verze");
+    if (colNameEn >= 1 && colNameCz >= 1 && colPropEn >= 1 && colPropCz >= 1) {
+      for (let r = 2; r <= (psetQtoSheet.rowCount ?? 0); r++) {
+        const row = psetQtoSheet.getRow(r);
+        if (!rowMatchesVersion(row, colVerze, ifcVersion)) continue;
+        const nameEn = getCellText(row.getCell(colNameEn));
+        const nameCz = getCellText(row.getCell(colNameCz));
+        const propEn = getCellText(row.getCell(colPropEn));
+        const propCz = getCellText(row.getCell(colPropCz));
+        if (nameEn && nameCz) propertySetNames[nameEn] = nameCz;
+        if (nameEn && propEn && propCz) propertyNames[`${nameEn}::${propEn}`] = propCz;
+      }
+    }
+  }
+
+  return {
+    entities,
+    predefinedTypes,
+    entityDescriptionsCz,
+    entityDescriptionsEn,
+    predefinedTypeDescriptionsCz,
+    predefinedTypeDescriptionsEn,
+    propertySetNames,
+    propertyNames,
   };
 }
 
@@ -254,7 +291,7 @@ export async function fetchAndParseDefaultTranslations(
   ifcVersion: IfcSchemaVersion | null
 ): Promise<CustomTranslations> {
   const res = await fetch(url);
-  if (!res.ok) return { entities: {}, predefinedTypes: {} };
+  if (!res.ok) return { entities: {}, predefinedTypes: {}, propertySetNames: {}, propertyNames: {} };
   const arrayBuffer = await res.arrayBuffer();
   return parseTranslationsFromBuffer(arrayBuffer, schemaIndex, ifcVersion);
 }

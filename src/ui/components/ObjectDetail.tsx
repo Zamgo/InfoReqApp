@@ -3022,6 +3022,7 @@ export const ObjectDetail: React.FC<Props> = ({
             propertyName: firstUnused.name,
             dataType: firstUnused.dataType ?? prev.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
             unit: firstUnused.unit ?? "",
+            propertyNameCz: undefined,
           };
           return;
         }
@@ -3113,6 +3114,7 @@ export const ObjectDetail: React.FC<Props> = ({
           propertyName: def.name,
           dataType: def.dataType ?? prev.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
           unit: def.unit ?? "",
+          propertyNameCz: undefined,
         };
       });
 
@@ -3208,7 +3210,7 @@ export const ObjectDetail: React.FC<Props> = ({
         const options = propertyOptionsForGroup(p.source, trimmed, p.id);
         // Pokud je propertyName prázdný, ponecháme ho prázdný - uživatel si vybere sám
         if (!updated.propertyName || updated.propertyName === "") {
-          return updated;
+          return { ...updated, propertyNameCz: undefined };
         }
         // Pouze pokud propertyName není prázdný a není validní, nastavíme první dostupnou hodnotu
         const stillValid = options.some((d) => d.name === updated.propertyName);
@@ -3219,6 +3221,7 @@ export const ObjectDetail: React.FC<Props> = ({
             propertyName: first?.name ?? "",
             dataType: first?.dataType ?? updated.dataType,
             unit: first?.unit ?? updated.unit,
+            propertyNameCz: undefined,
           };
         }
         return updated;
@@ -3674,6 +3677,15 @@ export const ObjectDetail: React.FC<Props> = ({
           }
         }
 
+        const psetNameChanged = (prev.psetName ?? "") !== (next.psetName ?? "");
+        const propertyNameChanged = (prev.propertyName ?? "") !== (next.propertyName ?? "");
+        if (psetNameChanged) {
+          if (patch.psetNameCz === undefined) next.psetNameCz = undefined;
+          if (patch.propertyNameCz === undefined) next.propertyNameCz = undefined;
+        } else if (propertyNameChanged && patch.propertyNameCz === undefined) {
+          next.propertyNameCz = undefined;
+        }
+
         reqs.properties[idx] = next;
       }
     });
@@ -3700,7 +3712,15 @@ export const ObjectDetail: React.FC<Props> = ({
         if (next.constraint && !isAttributeConstraintAllowed(next.attribute, next.constraint, next.dataType)) {
           next = { ...next, constraint: "FILLED", value: "" };
         }
-        
+
+        if (
+          patch.attribute !== undefined &&
+          (prev.attribute ?? "") !== (next.attribute ?? "") &&
+          patch.attributeCz === undefined
+        ) {
+          next.attributeCz = undefined;
+        }
+
         reqs.attributes[idx] = next;
       }
     });
@@ -3717,9 +3737,53 @@ export const ObjectDetail: React.FC<Props> = ({
   const looksLikePlaceholderCz = useCallback((s: string | undefined) =>
     !!s?.trim() && /^NOVÝ\s+[0-9a-fA-F-]+/i.test(s.trim()), []);
 
+  /**
+   * Podpis „co je potřeba doplnit“ – bez editace CZ v jiných řádcích (aby se efekt nespouštěl při každém stisku klávesy).
+   * Zároveň se změní po přidání Psetu/vlastnosti za již zapnuté překlady (dříve měl efekt prázdné deps a nespustil se znovu).
+   */
+  const czAutofillNeedsKey = useMemo(() => {
+    const ent = object.ifcEntity ?? "";
+    const attrs = effectiveRequirements.attributes;
+    const props = effectiveRequirements.properties;
+    const rels = effectiveRequirements.relations;
+    const needAttr = attrs
+      .filter((a) => a.attribute?.trim() && (!a.attributeCz?.trim() || looksLikePlaceholderCz(a.attributeCz)))
+      .map((a) => `${a.id}:${a.attribute}`)
+      .sort()
+      .join(",");
+    const needPset = props
+      .filter((p) => p.psetName?.trim() && !p.psetName.startsWith("_NEW_") && (!p.psetNameCz?.trim() || looksLikePlaceholderCz(p.psetNameCz)))
+      .map((p) => `${p.id}:${p.psetName}`)
+      .sort()
+      .join(",");
+    const needPropName = props
+      .filter(
+        (p) =>
+          p.propertyName?.trim() &&
+          !p.propertyName.startsWith("_NEW_") &&
+          (!p.propertyNameCz?.trim() || looksLikePlaceholderCz(p.propertyNameCz)),
+      )
+      .map((p) => `${p.id}:${p.propertyName}:${p.psetName ?? ""}`)
+      .sort()
+      .join(",");
+    const needRel = rels
+      .filter((r) => r.entityType?.trim() && !r.entityTypeCz?.trim())
+      .map((r) => `${r.id}:${r.entityType}`)
+      .sort()
+      .join(",");
+    return [ent, needAttr, needPset, needPropName, needRel].join("\x1f");
+  }, [
+    object.ifcEntity,
+    effectiveRequirements.attributes,
+    effectiveRequirements.properties,
+    effectiveRequirements.relations,
+    looksLikePlaceholderCz,
+  ]);
+
   /** Jednorázové vyplnění prázdných CZ políček u požadavků – jedna dávková aktualizace, aby nedošlo k zavěšení (RESULT_CODE_HUNG). */
   useEffect(() => {
     if (!shouldAutoFillCz) return;
+    const cancelled = { current: false };
     const run = async () => {
       const reqs = effectiveRequirements;
       const attrUpdates = new Map<string, string>();
@@ -3728,12 +3792,14 @@ export const ObjectDetail: React.FC<Props> = ({
       const relUpdates = new Map<string, string>();
 
       for (const attr of reqs.attributes) {
+        if (cancelled.current) return;
         if (attr.attribute?.trim() && (!attr.attributeCz?.trim() || looksLikePlaceholderCz(attr.attributeCz))) {
           const r = await translate(czTranslationSource, { type: "property", officialName: attr.attribute, context: { entity: object.ifcEntity } }, project);
           if (r.translated?.trim()) attrUpdates.set(attr.id, r.translated.trim());
         }
       }
       for (const prop of reqs.properties) {
+        if (cancelled.current) return;
         const needsPsetCz = prop.psetName?.trim() && !prop.psetName.startsWith("_NEW_") && (!prop.psetNameCz?.trim() || looksLikePlaceholderCz(prop.psetNameCz));
         if (needsPsetCz) {
           const type = prop.source === "CUSTOM" ? "property" : prop.psetName!.startsWith("Qto_") ? "qto" : "pset";
@@ -3747,12 +3813,14 @@ export const ObjectDetail: React.FC<Props> = ({
         }
       }
       for (const rel of reqs.relations) {
+        if (cancelled.current) return;
         if (rel.entityType?.trim() && !rel.entityTypeCz?.trim()) {
           const r = await translate(czTranslationSource, { type: "entity", officialName: rel.entityType }, project);
           if (r.translated?.trim()) relUpdates.set(rel.id, r.translated.trim());
         }
       }
 
+      if (cancelled.current) return;
       if (attrUpdates.size === 0 && propPsetUpdates.size === 0 && propNameUpdates.size === 0 && relUpdates.size === 0) return;
 
       updateRequirements((next) => {
@@ -3767,7 +3835,10 @@ export const ObjectDetail: React.FC<Props> = ({
       });
     };
     void run();
-  }, [shouldAutoFillCz, czTranslationSource, projectCustomTranslations]);
+    return () => {
+      cancelled.current = true;
+    };
+  }, [shouldAutoFillCz, czTranslationSource, projectCustomTranslations, czAutofillNeedsKey, updateRequirements, project]);
 
   const removeRequirement = (type: keyof ProjectObject["requirements"], id: string) => {
     updateRequirements((reqs) => {
@@ -3870,7 +3941,7 @@ export const ObjectDetail: React.FC<Props> = ({
                   : (node.description || node.code)}
               </span>
               {showCzTranslations && isIfcPrimary && object.ifcEntity && (object.ifcEntityCz || object.predefinedTypeCz) && (
-                <span className="shrink-0 text-sm font-normal text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
+                <span className="shrink-0 text-sm font-normal text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
                   {object.ifcEntityCz}{object.ifcEntityCz && object.predefinedTypeCz ? " - " : ""}{object.predefinedTypeCz}
                 </span>
               )}
@@ -4057,7 +4128,7 @@ export const ObjectDetail: React.FC<Props> = ({
                 {showCzTranslations && object.ifcEntity && (
                   <>
                     <input
-                      className="min-w-[100px] max-w-[140px] bg-blue-50 border border-blue-200 text-blue-700 not-italic font-medium rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-blue-300 placeholder:font-normal"
+                      className="min-w-[100px] max-w-[140px] bg-slate-100 border border-slate-200 text-slate-700 not-italic font-medium rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400 placeholder:text-slate-400 placeholder:font-normal"
                       placeholder="CZ"
                       value={object.ifcEntityCz ?? ""}
                       onChange={(e) => updateObject({ ifcEntityCz: e.target.value || undefined })}
@@ -4160,7 +4231,7 @@ export const ObjectDetail: React.FC<Props> = ({
                 {showCzTranslations && object.predefinedType.mode === "ENUM" && object.predefinedType.value && (
                   <>
                     <input
-                      className="min-w-[80px] max-w-[120px] bg-blue-50 border border-blue-200 text-blue-700 not-italic font-medium rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 placeholder:text-blue-300 placeholder:font-normal"
+                      className="min-w-[80px] max-w-[120px] bg-slate-100 border border-slate-200 text-slate-700 not-italic font-medium rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400 placeholder:text-slate-400 placeholder:font-normal"
                       placeholder="CZ"
                       value={object.predefinedTypeCz ?? ""}
                       onChange={(e) => updateObject({ predefinedTypeCz: e.target.value || undefined })}
@@ -4843,7 +4914,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               </select>
                               {showCzTranslations && (
                                 <input
-                                  className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                  className="w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                   placeholder="CZ"
                                   value={attr.attributeCz ?? ""}
                                   onChange={(e) => updateAttributeField(attr.id, { attributeCz: e.target.value || undefined })}
@@ -5126,7 +5197,7 @@ export const ObjectDetail: React.FC<Props> = ({
                             })()}
                             {showCzTranslations && (attr.constraint !== "ENUM" || !attr.extensions?.[ENUM_CODELIST_ID_KEY]) && (
                               <input
-                                className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                className="mt-1 w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                 placeholder={attr.constraint === "ENUM" ? "Výčet CZ (oddělte ;)" : "CZ"}
                                 value={attr.valueCz ?? ""}
                                 onChange={(e) => updateAttributeField(attr.id, { valueCz: e.target.value || undefined })}
@@ -5385,17 +5456,19 @@ export const ObjectDetail: React.FC<Props> = ({
 
                 return (
                   <div key={group.key} className={`rounded border-2 ${cardBorder} bg-white shadow-sm`}>
-                    <div className={`flex items-center justify-between border-b ${cardBorder} px-3 py-2`}>
-                      <div className="flex flex-wrap items-center gap-2">
+                    <div
+                      className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b ${cardBorder} px-3 py-2`}
+                    >
+                      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <input
                           type="checkbox"
-                          className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500"
+                          className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500"
                           checked={selectedGroups.has(group.key)}
                           onChange={() => toggleGroupSelection(group.key)}
                           onClick={(e) => e.stopPropagation()}
                         />
                         <button
-                          className="flex items-center justify-center rounded border border-slate-300 p-1.5 hover:bg-slate-50"
+                          className="flex shrink-0 items-center justify-center rounded border border-slate-300 p-1.5 hover:bg-slate-50"
                           onClick={() => toggleGroup(group.key)}
                           title={expanded ? "Skrýt" : "Zobrazit"}
                         >
@@ -5412,18 +5485,18 @@ export const ObjectDetail: React.FC<Props> = ({
                             <path d="m6 9 6 6 6-6" />
                           </svg>
                         </button>
-                        <span className={`rounded px-2 py-1 text-[11px] font-semibold uppercase ${badgeClass}`}>
+                        <span className={`shrink-0 rounded px-2 py-1 text-[11px] font-semibold uppercase ${badgeClass}`}>
                           {group.source === "PSET" ? "Pset dle IFC" : group.source === "QTO" ? "Qto dle IFC" : "Vlastní"}
                         </span>
                         {isInvalidGroup && (
-                          <span className="rounded bg-red-100 px-2 py-1 text-[11px] font-semibold uppercase text-red-800">
+                          <span className="shrink-0 rounded bg-red-100 px-2 py-1 text-[11px] font-semibold uppercase text-red-800">
                             Neplatné pro PredefinedType
                           </span>
                         )}
                         {group.source === "CUSTOM" ? (
-                          <div className="flex items-center gap-2">
+                          <>
                             <input
-                              className={`rounded border px-2 py-1 text-sm ${
+                              className={`h-8 w-[min(18rem,40vw)] min-w-[8rem] max-w-full shrink-0 rounded border px-2 py-1 text-sm ${
                                 customGroupErrors[group.key] ? "border-red-300 bg-red-50" : "border-slate-300"
                               }`}
                               value={customGroupNames[group.key] !== undefined ? customGroupNames[group.key] : (group.psetName && !group.psetName.startsWith("_NEW_") ? group.psetName : "")}
@@ -5431,9 +5504,12 @@ export const ObjectDetail: React.FC<Props> = ({
                               onBlur={() => handleCustomGroupBlur(group.key)}
                               placeholder="Vyplnit název"
                             />
+                            {customGroupErrors[group.key] && (
+                              <span className="shrink-0 text-xs text-red-600 whitespace-nowrap">{customGroupErrors[group.key]}</span>
+                            )}
                             {showCzTranslations && group.psetName && !group.psetName.startsWith("_NEW_") && (
                               <input
-                                className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                                className="h-8 min-w-[7rem] flex-1 basis-[10rem] rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                 placeholder="Skupina CZ"
                                 value={group.properties[0]?.psetNameCz ?? ""}
                                 onChange={(e) => {
@@ -5448,17 +5524,14 @@ export const ObjectDetail: React.FC<Props> = ({
                                 title="Překlad skupiny do češtiny"
                               />
                             )}
-                            {customGroupErrors[group.key] && (
-                              <span className="text-xs text-red-600 whitespace-nowrap">{customGroupErrors[group.key]}</span>
-                            )}
-                          </div>
+                          </>
                         ) : (
-                          <div className="flex items-center gap-2">
+                          <>
                             {docHref && (
                               <DocLink href={docHref} label={(displayPsetName || group.psetName) ?? "IFC"} type="ifc" />
                             )}
                             <select
-                              className={`rounded border px-2 py-1 text-sm ${
+                              className={`h-8 w-auto min-w-[11rem] max-w-[min(24rem,40vw)] shrink-0 rounded border px-2 py-1 text-sm ${
                                 isInvalidGroup ? "border-red-400 bg-red-50 text-red-900" : "border-slate-300"
                               }`}
                               value={displayPsetName}
@@ -5482,12 +5555,10 @@ export const ObjectDetail: React.FC<Props> = ({
                                 </option>
                               ))}
                             </select>
-                            {displayPsetName ? (
-                              <DocLink href={docHref} label={group.psetName ?? ""} />
-                            ) : null}
+                            {displayPsetName ? <DocLink href={docHref} label={group.psetName ?? ""} /> : null}
                             {showCzTranslations && displayPsetName && (
                               <input
-                                className="min-w-[80px] max-w-[120px] rounded border border-slate-200 px-2 py-0.5 text-xs italic text-slate-600"
+                                className="h-8 min-w-[7rem] flex-1 basis-0 rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                 placeholder="Skupina CZ"
                                 value={group.properties[0]?.psetNameCz ?? ""}
                                 onChange={(e) => {
@@ -5503,15 +5574,16 @@ export const ObjectDetail: React.FC<Props> = ({
                               />
                             )}
                             {isInvalidGroup && (
-                              <div className="text-xs text-red-700">
+                              <div className="basis-full text-xs text-red-700 sm:basis-auto sm:max-w-md">
                                 Skupina nepatří k aktuálnímu PredefinedType{" "}
-                                <span className="font-semibold">{effectivePredefinedValue ?? "(není vybrán)"}</span>. Vyberte jiný Pset/Qto nebo změňte PredefinedType.
+                                <span className="font-semibold">{effectivePredefinedValue ?? "(není vybrán)"}</span>. Vyberte jiný
+                                Pset/Qto nebo změňte PredefinedType.
                               </div>
                             )}
-                          </div>
+                          </>
                         )}
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
                         <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addPropertyToGroup(group.key)}>
                           Přidat vlastnost
                         </button>
@@ -5732,7 +5804,7 @@ export const ObjectDetail: React.FC<Props> = ({
                                         />
                                         {showCzTranslations && (
                                           <input
-                                            className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                            className="w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                             placeholder="CZ"
                                             value={prop.propertyNameCz ?? ""}
                                             onChange={(e) => updatePropertyField(prop.id, { propertyNameCz: e.target.value || undefined })}
@@ -5765,7 +5837,7 @@ export const ObjectDetail: React.FC<Props> = ({
                                         </div>
                                         {showCzTranslations && (
                                           <input
-                                            className="mt-0.5 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                            className="mt-0.5 w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                             placeholder="CZ"
                                             value={prop.propertyNameCz ?? ""}
                                             onChange={(e) => updatePropertyField(prop.id, { propertyNameCz: e.target.value || undefined })}
@@ -6299,7 +6371,7 @@ export const ObjectDetail: React.FC<Props> = ({
                                     })()}
                                     {showCzTranslations && (prop.constraint !== "ENUM" || !prop.extensions?.[ENUM_CODELIST_ID_KEY]) && (
                                       <input
-                                        className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                        className="mt-1 w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                         placeholder={prop.constraint === "ENUM" ? "Výčet CZ (oddělte ;)" : "CZ"}
                                         value={prop.valueCz ?? ""}
                                         onChange={(e) => updatePropertyField(prop.id, { valueCz: e.target.value || undefined })}
@@ -6795,7 +6867,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               />
                               {showCzTranslations && (
                                 <input
-                                  className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                  className="w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                   placeholder="CZ"
                                   value={rel.entityTypeCz ?? ""}
                                   onChange={(e) => updateRelationField(rel.id, { entityTypeCz: e.target.value || undefined })}
@@ -6846,7 +6918,7 @@ export const ObjectDetail: React.FC<Props> = ({
                             </div>
                             {showCzTranslations && (
                               <input
-                                className="mt-0.5 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                className="mt-0.5 w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                 placeholder="CZ"
                                 value={rel.relationTypeCz ?? ""}
                                 onChange={(e) => updateRelationField(rel.id, { relationTypeCz: e.target.value || undefined })}
@@ -7504,7 +7576,7 @@ export const ObjectDetail: React.FC<Props> = ({
                           })()}
                           {showCzTranslations && mat.category && (
                             <input
-                              className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                              className="mt-1 w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                               placeholder="Kategorie CZ"
                               value={mat.categoryCz ?? ""}
                               onChange={(e) => updateMaterialField(mat.id, { categoryCz: e.target.value || undefined })}
@@ -7512,7 +7584,7 @@ export const ObjectDetail: React.FC<Props> = ({
                           )}
                           {showCzTranslations && (mat.constraint !== "ENUM" || !mat.extensions?.[ENUM_CODELIST_ID_KEY]) && (
                             <input
-                              className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                              className="mt-1 w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                               placeholder={mat.constraint === "ENUM" ? "Výčet CZ (oddělte ;)" : "CZ"}
                               value={mat.valueCz ?? ""}
                               onChange={(e) => updateMaterialField(mat.id, { valueCz: e.target.value || undefined })}
@@ -7816,7 +7888,7 @@ export const ObjectDetail: React.FC<Props> = ({
                           )}
                           {showCzTranslations && (
                             <input
-                              className="mt-1 w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                              className="mt-1 w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                               placeholder="Systém CZ"
                               value={cls.systemCz ?? ""}
                               onChange={(e) =>
@@ -7863,7 +7935,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               />
                               {showCzTranslations && cls.constraint !== "ENUM" && (
                                 <input
-                                  className="w-full rounded border border-slate-200 px-1.5 py-0.5 text-xs italic text-slate-600"
+                                  className="w-full rounded border border-slate-200 bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-700 not-italic placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-400 focus:border-slate-400"
                                   placeholder="CZ"
                                   value={cls.valueCz ?? ""}
                                   onChange={(e) =>

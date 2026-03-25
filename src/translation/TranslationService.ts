@@ -3,7 +3,7 @@ import type { TranslationMode } from "../project/types";
 import type { TranslationRequest, TranslationResult } from "./types";
 import { translateBsdd } from "./translators/BsddTranslator";
 
-/** Vrátí překlad z project.customTranslations (entity a predefinedType). Pro pset/qto/property zatím null. */
+/** Vrátí překlad z project.customTranslations (entity, predefinedType, Pset/Qto a vlastnosti z listu Pset_Qto). */
 export function translateFromProject(
   project: Project | null | undefined,
   req: TranslationRequest
@@ -19,6 +19,17 @@ export function translateFromProject(
   if (req.type === "predefinedType" && req.context?.entity) {
     const key = `${req.context.entity}::${req.officialName.trim()}`;
     const t = ct.predefinedTypes[key];
+    return t != null && t !== "" ? { translated: t, source: "custom" } : { translated: null, source: null };
+  }
+
+  if (req.type === "pset" || req.type === "qto") {
+    const t = ct.propertySetNames?.[req.officialName.trim()];
+    return t != null && t !== "" ? { translated: t, source: "custom" } : { translated: null, source: null };
+  }
+
+  if (req.type === "property" && req.context?.psetName?.trim()) {
+    const key = `${req.context.psetName.trim()}::${req.officialName.trim()}`;
+    const t = ct.propertyNames?.[key];
     return t != null && t !== "" ? { translated: t, source: "custom" } : { translated: null, source: null };
   }
 
