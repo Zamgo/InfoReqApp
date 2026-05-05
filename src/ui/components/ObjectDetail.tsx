@@ -2510,6 +2510,32 @@ export const ObjectDetail: React.FC<Props> = ({
     selectedPropertiesRef.current = selectedProperties;
   }, [selectedProperties]);
 
+  useEffect(() => {
+    const clearSelections = () => {
+      setSelectedGroups(new Set());
+      setSelectedProperties(new Set());
+      setSelectedAttributes(new Set());
+      setSelectedRelations(new Set());
+      setSelectedMaterials(new Set());
+      setSelectedClassifications(new Set());
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      const hasSelection =
+        selectedGroupsRef.current.size > 0 ||
+        selectedPropertiesRef.current.size > 0 ||
+        selectedAttributes.size > 0 ||
+        selectedRelations.size > 0 ||
+        selectedMaterials.size > 0 ||
+        selectedClassifications.size > 0;
+      if (!hasSelection) return;
+      e.preventDefault();
+      clearSelections();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedAttributes, selectedRelations, selectedMaterials, selectedClassifications]);
+
   // Persistovat skryté sloupce do localStorage
   useEffect(() => {
     saveHiddenColumns("infoReqApp_hiddenPropertyColumns", hiddenPropertyColumns);
@@ -3597,15 +3623,18 @@ export const ObjectDetail: React.FC<Props> = ({
   };
 
   const updateMaterialField = (id: string, patch: Partial<MaterialRequirement>) => {
+    const targetIds = selectedMaterials.has(id) ? selectedMaterials : new Set([id]);
     updateRequirements((reqs) => {
-      reqs.materials = reqs.materials.map((m) => (m.id === id ? { ...m, ...patch } : m));
+      reqs.materials = reqs.materials.map((m) => (targetIds.has(m.id) ? { ...m, ...patch } : m));
     });
   };
 
   const updatePropertyField = (id: string, patch: Partial<PropertyRequirement>) => {
+    const targetIds = selectedProperties.has(id) ? selectedProperties : new Set([id]);
     updateRequirements((reqs) => {
-      const idx = reqs.properties.findIndex((p) => p.id === id);
-      if (idx >= 0) {
+      for (const targetId of targetIds) {
+        const idx = reqs.properties.findIndex((p) => p.id === targetId);
+        if (idx < 0) continue;
         const prev = reqs.properties[idx];
         let next = { ...prev, ...patch };
         
@@ -3643,14 +3672,14 @@ export const ObjectDetail: React.FC<Props> = ({
             patch.propertyName !== undefined &&
             reqs.properties.some(
               (p) =>
-                p.id !== id &&
+                p.id !== targetId &&
                 groupKey(p.source, p.psetName) === key &&
                 p.propertyName === patch.propertyName,
             );
           if (duplicateName) return;
 
           if (patch.psetName !== undefined) {
-            const options = propertyOptionsForGroup(next.source, next.psetName, id);
+            const options = propertyOptionsForGroup(next.source, next.psetName, targetId);
             // Pokud je propertyName prázdný, ponecháme ho prázdný - uživatel si vybere sám
             if (!next.propertyName || next.propertyName === "") {
               // Pouze aktualizujeme dataType a unit, pokud je to vhodné, ale propertyName zůstane prázdný
@@ -3692,9 +3721,11 @@ export const ObjectDetail: React.FC<Props> = ({
   };
 
   const updateAttributeField = (id: string, patch: Partial<import("../../project/types").AttributeRequirement>) => {
+    const targetIds = selectedAttributes.has(id) ? selectedAttributes : new Set([id]);
     updateRequirements((reqs) => {
-      const idx = reqs.attributes.findIndex((a) => a.id === id);
-      if (idx >= 0) {
+      for (const targetId of targetIds) {
+        const idx = reqs.attributes.findIndex((a) => a.id === targetId);
+        if (idx < 0) continue;
         const prev = reqs.attributes[idx];
         let next = { ...prev, ...patch };
         
@@ -3727,9 +3758,9 @@ export const ObjectDetail: React.FC<Props> = ({
   };
 
   const updateRelationField = (id: string, patch: Partial<RelationRequirement>) => {
+    const targetIds = selectedRelations.has(id) ? selectedRelations : new Set([id]);
     updateRequirements((reqs) => {
-      const idx = reqs.relations.findIndex((p) => p.id === id);
-      if (idx >= 0) reqs.relations[idx] = { ...reqs.relations[idx], ...patch };
+      reqs.relations = reqs.relations.map((r) => (targetIds.has(r.id) ? { ...r, ...patch } : r));
     });
   };
 
@@ -3883,7 +3914,7 @@ export const ObjectDetail: React.FC<Props> = ({
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="flex h-full flex-col overflow-y-auto overflow-x-hidden">
       {/* Globální přepínač režimu zobrazení požadavků.
           - „Zobrazení po objektech“: standardní detail objektu (Popis, Identifikační údaje, Požadavky).
           - „Zobrazení všech požadavků“: pouze sekce Požadavky, vhodná pro práci se skupinami. */}

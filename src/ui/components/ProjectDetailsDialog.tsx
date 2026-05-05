@@ -94,6 +94,13 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
     }
   };
 
+  const handleBackdropMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    // Close only when the actual backdrop is clicked, not form interactions.
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  };
+
   if (!isOpen) return null;
 
   // Format date for display
@@ -114,13 +121,12 @@ export const ProjectDetailsDialog: React.FC<Props> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/50 p-4"
+      onMouseDown={handleBackdropMouseDown}
       onKeyDown={handleKeyDown}
     >
       <div
-        className="w-full max-w-lg rounded-lg bg-white shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-lg bg-white shadow-xl"
       >
         {/* Header */}
         <div className="border-b border-slate-200 px-6 py-4">
