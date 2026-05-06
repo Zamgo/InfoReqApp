@@ -11,7 +11,6 @@ import { PhaseManager } from "./PhaseManager";
 import { PurposeOfUseManager } from "./PurposeOfUseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
-import { useTranslation } from "../../translation/TranslationContext";
 
 /**
  * Get maximum depth of the tree
@@ -372,13 +371,18 @@ const TreeItem: React.FC<{
   /** Při primárním „Třídění dle IFC“ se název bere z IFC/object; jinak vždy z node (klasifikace) */
   isIfcPrimary?: boolean;
 }> = ({ node, selectedCode, onSelectLeaf, expandLevel, expandTrigger, getIfcBadgeLabel, objects, isIfcPrimary }) => {
-  const { showCzTranslations } = useTranslation();
   const [expanded, setExpanded] = useState(node.level <= 2);
   const isLeaf = node.children.length === 0;
   /** List = prvek klasifikace zvoleného pohledu; výběr zpracuje App.tsx (doplní project.objects přes ensureObject, pokud zatím chybí). */
   const isSelectableLeaf = isLeaf;
   const isSelected = selectedCode === node.code;
   const obj = isLeaf ? objects?.[node.code] : undefined;
+  const objPredefinedType =
+    obj?.predefinedType?.mode === "ENUM" || obj?.predefinedType?.mode === "USERDEFINED"
+      ? obj.predefinedType.value?.trim()
+      : undefined;
+  const effectiveIfcEntity = (node.ifcEntity || obj?.ifcEntity || "").trim();
+  const effectivePredefinedType = (node.predefinedType || objPredefinedType || "NOTDEFINED").trim() || "NOTDEFINED";
   const src = obj?.copiedFrom ? objects?.[obj.copiedFrom] : undefined;
   const isIncompleteCopy = !!(
     isLeaf &&
@@ -388,26 +392,21 @@ const TreeItem: React.FC<{
     ((obj.predefinedType?.mode === "ENUM" || obj.predefinedType?.mode === "USERDEFINED" ? obj.predefinedType?.value : undefined) ===
       (src.predefinedType?.mode === "ENUM" || src.predefinedType?.mode === "USERDEFINED" ? src.predefinedType?.value : undefined))
   );
-  // Při primární klasifikaci (ne IFC) vždy název z node; při Třídění dle IFC z IFC entity nebo object.description
+  // V ne-IFC primárním pohledu držíme vlevo klasifikační název; IFC zobrazuje badge.
+  // IFC label vlevo patří jen do IFC-primárního pohledu.
   const displayLabel =
     !isIfcPrimary && isLeaf
       ? (node.description || node.code)
-      : isLeaf && node.ifcEntity
-        ? `${node.ifcEntity}.${node.predefinedType ?? "NOTDEFINED"}`
+      : isLeaf && effectiveIfcEntity
+        ? `${effectiveIfcEntity}.${effectivePredefinedType}`
         : isLeaf && objects?.[node.code]?.description
           ? objects[node.code].description
           : (node.description || node.code);
 
-  // Badge nezobrazovat u NOTDEFINED – jen u konkrétních predefined typů
-  const ifcBadgeLabel =
-    isLeaf &&
-    node.ifcEntity &&
-    node.predefinedType &&
-    node.predefinedType !== "NOTDEFINED" &&
-    (getIfcBadgeLabel?.(node) ?? `${node.ifcEntity}.${node.predefinedType}`);
-
-  const czTranslation = showCzTranslations && isLeaf && obj && (obj.ifcEntityCz || obj.predefinedTypeCz)
-    ? `${obj.ifcEntityCz || ""}${obj.ifcEntityCz && obj.predefinedTypeCz ? " - " : ""}${obj.predefinedTypeCz || ""}`
+  // IFC badge: prefer explicit mapping label; fallback to entity.predefinedType from node/object.
+  // Keep NOTDEFINED visible so users always see full IFC assignment.
+  const ifcBadgeLabel = isLeaf
+    ? (getIfcBadgeLabel?.(node) ?? (effectiveIfcEntity ? `${effectiveIfcEntity}.${effectivePredefinedType}` : undefined))
     : undefined;
 
   useEffect(() => {
@@ -454,11 +453,7 @@ const TreeItem: React.FC<{
                   {ifcBadgeLabel.replace(/::/g, ".")}
                 </span>
               )}
-              {czTranslation && (
-                <span className="shrink-0 rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-medium text-slate-700">
-                  {czTranslation}
-                </span>
-              )}
+              {/* Translation badges are intentionally hidden in left hierarchy panel. */}
             </div>
           </div>
         </div>

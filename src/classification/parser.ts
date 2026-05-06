@@ -263,3 +263,25 @@ export const updateLeafIfcEntityPredefinedType = (
     }
     return node;
   });
+
+/** Aktualizuje description uzlu se zadaným code (listu i vnitřního); vrací nový strom (imutabilně). */
+export const updateNodeDescriptionByCode = (
+  nodes: ClassificationNode[],
+  code: string,
+  description: string,
+): ClassificationNode[] =>
+  nodes.map((node) => {
+    if (node.code === code) {
+      return {
+        ...node,
+        description,
+      };
+    }
+    if (node.children.length) {
+      return {
+        ...node,
+        children: updateNodeDescriptionByCode(node.children, code, description),
+      };
+    }
+    return node;
+  });

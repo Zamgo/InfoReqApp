@@ -6,7 +6,7 @@ import { SettingsDialog } from "./ui/components/SettingsDialog";
 import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
-import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode, addNodeAsSibling, updateLeafMappedValue, updateLeafIfcEntityPredefinedType } from "./classification/parser";
+import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode, addNodeAsSibling, updateLeafMappedValue, updateLeafIfcEntityPredefinedType, updateNodeDescriptionByCode } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import {
   buildClassificationFromSchema,
@@ -704,6 +704,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
       prevObj &&
       (prevObj.ifcEntity !== mergedObj.ifcEntity ||
         JSON.stringify(prevObj.predefinedType) !== JSON.stringify(mergedObj.predefinedType));
+    const descriptionChanged = !!prevObj && prevObj.description !== mergedObj.description;
 
     const ptVal = mergedObj.predefinedType.mode === "ENUM" && mergedObj.predefinedType.value ? mergedObj.predefinedType.value : undefined;
     const newCode =
@@ -770,6 +771,23 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
       objects: { ...project.objects, [mergedObj.code]: mergedObj },
       updatedAt: new Date().toISOString(),
     };
+
+    // Propagace názvu objektu do uzlu klasifikace, aby se přejmenování promítlo ve stromu i detailech.
+    if (primaryEntry?.nodes && descriptionChanged) {
+      const nextNodes = updateNodeDescriptionByCode(primaryEntry.nodes, mergedObj.code, mergedObj.description);
+      next = {
+        ...next,
+        classificationSystemEntries: (next.classificationSystemEntries ?? []).map((e) =>
+          e.id === primaryEntry.id ? { ...e, nodes: nextNodes } : e
+        ),
+        classification: project.classification && primaryEntry
+          ? { ...project.classification, nodes: nextNodes }
+          : next.classification,
+      };
+      if (project.classification && primaryEntry) {
+        setClassification({ ...project.classification, nodes: nextNodes });
+      }
+    }
 
     // Propagace autor. nástrojů zpět do namapované klasifikace (node.mappedValues)
     const authoringSystemIds = (primaryEntry?.authoringToolSystemIds?.length

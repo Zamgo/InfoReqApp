@@ -2141,6 +2141,8 @@ export const ObjectDetail: React.FC<Props> = ({
   const [enumDraftByAttrId, setEnumDraftByAttrId] = useState<Record<string, string>>({});
   const [enumDraftByMatId, setEnumDraftByMatId] = useState<Record<string, string>>({});
   const [showRelationHelpModal, setShowRelationHelpModal] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(object.description ?? node.description ?? node.code);
   /** Počet prázdných slotů pro třídění autorských nástrojů (přidáno přes +) – klíč = systemEntryId */
   const [extraAuthoringSlots, setExtraAuthoringSlots] = useState<Record<string, number>>({});
   const [predefinedTypeDropdownOpen, setPredefinedTypeDropdownOpen] = useState(false);
@@ -2278,6 +2280,23 @@ export const ObjectDetail: React.FC<Props> = ({
       document.removeEventListener("keydown", onKey);
     };
   }, [predefinedTypeDropdownOpen]);
+
+  useEffect(() => {
+    if (isEditingTitle) return;
+    setTitleDraft(object.description ?? node.description ?? node.code);
+  }, [isEditingTitle, object.code, object.description, node.code, node.description]);
+
+  const submitTitleChange = useCallback(() => {
+    if (isLocked) return;
+    const trimmed = titleDraft.trim();
+    if (!trimmed || trimmed === object.description) {
+      setIsEditingTitle(false);
+      setTitleDraft(object.description ?? node.description ?? node.code);
+      return;
+    }
+    onChange({ ...object, description: trimmed });
+    setIsEditingTitle(false);
+  }, [isLocked, node.code, node.description, object, onChange, titleDraft]);
 
   const effectiveRequirements: ObjectRequirements = useMemo(() => {
     if (requirementsViewMode !== "groups" || !selectedItemGroupData) return object.requirements;
@@ -3966,11 +3985,33 @@ export const ObjectDetail: React.FC<Props> = ({
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="h-8 w-1 flex-shrink-0 rounded-full bg-red-500"></div>
             <div className="min-w-0 flex items-center flex-wrap gap-2 text-xl font-bold text-slate-800">
-              <span className="truncate">
-                {isIfcPrimary && object.ifcEntity
-                  ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
-                  : (node.description || node.code)}
-              </span>
+              {isEditingTitle ? (
+                <input
+                  type="text"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onBlur={submitTitleChange}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      submitTitleChange();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setIsEditingTitle(false);
+                      setTitleDraft(object.description ?? node.description ?? node.code);
+                    }
+                  }}
+                  autoFocus
+                  disabled={isLocked}
+                  className="h-9 min-w-[14rem] max-w-full rounded border border-slate-300 px-2 text-base font-semibold text-slate-800 focus:border-red-400 focus:outline-none focus:ring-2 focus:ring-red-100"
+                />
+              ) : (
+                <span className="truncate">
+                  {isIfcPrimary && object.ifcEntity
+                    ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
+                    : (object.description || node.description || node.code)}
+                </span>
+              )}
               {showCzTranslations && isIfcPrimary && object.ifcEntity && (object.ifcEntityCz || object.predefinedTypeCz) && (
                 <span className="shrink-0 text-sm font-normal text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
                   {object.ifcEntityCz}{object.ifcEntityCz && object.predefinedTypeCz ? " - " : ""}{object.predefinedTypeCz}
@@ -4018,6 +4059,21 @@ export const ObjectDetail: React.FC<Props> = ({
                   ) : (
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
                   )}
+                </svg>
+              </button>
+            )}
+            {!isLocked && (
+              <button
+                type="button"
+                onClick={() => {
+                  setTitleDraft(object.description || node.description || node.code);
+                  setIsEditingTitle(true);
+                }}
+                className="rounded p-2 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                title="Přejmenovat prvek"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 11l6.232-6.232a2.5 2.5 0 013.536 3.536L12.536 14.536A4 4 0 0110.95 15.5L7 17l1.5-3.95A4 4 0 019 11z" />
                 </svg>
               </button>
             )}
