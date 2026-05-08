@@ -747,6 +747,12 @@ interface Props {
     objectCodes: string[],
     representativeItems: import("../../project/requirementFingerprint").RequirementItemGroup["representativeItems"],
   ) => void;
+  onMoveGroupToKind?: (
+    sourceKind: import("../../project/requirementFingerprint").RequirementItemKind,
+    fingerprint: string,
+    targetKind: import("../../project/requirementFingerprint").RequirementItemKind,
+    representativeItems: import("../../project/requirementFingerprint").RequirementItemGroup["representativeItems"],
+  ) => void;
 }
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -787,9 +793,9 @@ const PROPERTY_COLUMNS_HIDEABLE: Record<number, string> = {
   12: "Akce",
 };
 
-/** Výchozí šířky sloupců: Atributy (14), Součásti (13), Materiál (12), Klasifikace (13) */
+/** Výchozí šířky sloupců: Atributy (14), Součásti (12), Materiál (12), Klasifikace (13) */
 const DEFAULT_ATTRIBUTE_COL_WIDTHS = [40, 90, 150, 100, 95, 120, 120, 100, 100, 100, 100, 140, 50, 80];
-const DEFAULT_PARTOF_COL_WIDTHS = [40, 90, 180, 140, 160, 120, 120, 100, 100, 100, 140, 50, 80];
+const DEFAULT_PARTOF_COL_WIDTHS = [40, 90, 180, 160, 120, 120, 100, 100, 100, 140, 50, 80];
 const DEFAULT_MATERIAL_COL_WIDTHS = [40, 90, 95, 150, 100, 120, 100, 100, 100, 140, 50, 80];
 const DEFAULT_CLASSIFICATION_COL_WIDTHS = [40, 100, 180, 95, 150, 100, 120, 100, 100, 100, 140, 50, 80];
 
@@ -816,16 +822,15 @@ const PARTOF_COLUMNS_HIDEABLE: Record<number, string> = {
   0: "Checkbox",
   1: "Výskyt",
   2: "Součást entity",
-  3: "PredefinedType",
-  4: "Vztah",
-  5: "URI",
-  6: "Popis",
-  7: "Poznámka",
-  8: "Příklady",
-  9: "Fáze",
-  10: "Účel užití",
-  11: "Použitelnost",
-  12: "Akce",
+  3: "Vztah",
+  4: "URI",
+  5: "Popis",
+  6: "Poznámka",
+  7: "Příklady",
+  8: "Fáze",
+  9: "Účel užití",
+  10: "Použitelnost",
+  11: "Akce",
 };
 
 /** Sloupce tabulky Materiál (index → label) */
@@ -2116,6 +2121,7 @@ export const ObjectDetail: React.FC<Props> = ({
   onDuplicateRelationsToObjects,
   onUpdateRequirementItemGroup,
   onAssignGroupToObjects,
+  onMoveGroupToKind,
 }) => {
   const isLocked = object.locked === true;
   const { deprecatedEntities, deprecatedPredefinedByEnum, deprecatedPredefinedNotesByEnum } = useSchema();
@@ -2719,6 +2725,15 @@ export const ObjectDetail: React.FC<Props> = ({
     return Array.from(map.values());
   }, [effectiveRequirements.properties]);
 
+  const isPropertyGroupLocked = useCallback(
+    (groupKeyValue: string) => {
+      const group = propertyGroups.find((g) => g.key === groupKeyValue);
+      if (!group) return false;
+      return group.properties.some((p) => p.groupLocked === true);
+    },
+    [propertyGroups],
+  );
+
   const propertyOptionsForGroup = (
     source: PropertyRequirement["source"],
     psetName: string | undefined,
@@ -2850,6 +2865,19 @@ export const ObjectDetail: React.FC<Props> = ({
       }
     },
     [effectiveRequirements, updateObject, requirementsViewMode, selectedItemGroup, onUpdateRequirementItemGroup, selectedItemGroupData],
+  );
+
+  const togglePropertyGroupLock = useCallback(
+    (groupKeyValue: string) => {
+      if (isLocked) return;
+      const shouldLock = !isPropertyGroupLocked(groupKeyValue);
+      updateRequirements((reqs) => {
+        reqs.properties = reqs.properties.map((p) =>
+          groupKey(p.source, p.psetName) === groupKeyValue ? { ...p, groupLocked: shouldLock } : p,
+        );
+      });
+    },
+    [isLocked, isPropertyGroupLocked, updateRequirements],
   );
 
   const handlePredefinedChange = (value: string) => {
@@ -3029,6 +3057,7 @@ export const ObjectDetail: React.FC<Props> = ({
         id: makeId(),
         source,
         psetName: tempId,
+        groupLocked: false,
         propertyName: "",
         dataType: schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
@@ -3046,6 +3075,7 @@ export const ObjectDetail: React.FC<Props> = ({
   const addPropertyToGroup = (groupKeyValue: string) => {
     const group = propertyGroups.find((g) => g.key === groupKeyValue);
     if (!group) return;
+    if (isPropertyGroupLocked(groupKeyValue)) return;
     // Pro custom skupiny a dočasné skupiny vždy povolíme přidání vlastnosti
     const isTempGroup = group.psetName?.startsWith("_NEW_");
     if (group.source !== "CUSTOM" && !isTempGroup && !isGroupAllowed(group.source, group.psetName)) return;
@@ -3080,6 +3110,7 @@ export const ObjectDetail: React.FC<Props> = ({
         id: makeId(),
         source: group.source,
         psetName: group.psetName ?? "",
+        groupLocked: isPropertyGroupLocked(groupKeyValue),
         propertyName: newPropertyName,
         dataType: group.source === "CUSTOM" || isTempGroup ? schema?.dataTypes?.[0] ?? "IfcText" : firstUnused?.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
         required: true,
@@ -3099,6 +3130,7 @@ export const ObjectDetail: React.FC<Props> = ({
     async (groupKeyValue: string) => {
       const group = propertyGroups.find((g) => g.key === groupKeyValue);
       if (!group?.psetName || group.source === "CUSTOM" || group.psetName.startsWith("_NEW_")) return;
+      if (isPropertyGroupLocked(groupKeyValue)) return;
       setFillingDescriptionsGroupKey(groupKeyValue);
       try {
         let definitions: Record<string, string> = await fetchPsetOrQtoPropertyDefinitions(group.psetName);
@@ -3130,12 +3162,13 @@ export const ObjectDetail: React.FC<Props> = ({
         setFillingDescriptionsGroupKey(null);
       }
     },
-    [propertyGroups, updateRequirements]
+    [isPropertyGroupLocked, propertyGroups, updateRequirements]
   );
 
   const addAllFromSchema = (groupKeyValue: string) => {
     const group = propertyGroups.find((g) => g.key === groupKeyValue);
     if (!group || group.source === "CUSTOM" || !group.psetName) return;
+    if (isPropertyGroupLocked(groupKeyValue)) return;
     // Kontrola, že nejde o dočasnou skupinu
     if (group.psetName.startsWith("_NEW_")) return;
     if (!isGroupAllowed(group.source, group.psetName)) return;
@@ -3169,6 +3202,7 @@ export const ObjectDetail: React.FC<Props> = ({
           id: makeId(),
           source: group.source,
           psetName: group.psetName ?? "",
+          groupLocked: isPropertyGroupLocked(groupKeyValue),
           propertyName: def.name,
           dataType: def.dataType ?? schema?.dataTypes?.[0] ?? "IfcText",
           required: true,
@@ -3185,6 +3219,7 @@ export const ObjectDetail: React.FC<Props> = ({
   };
 
   const deleteGroup = (groupKeyValue: string) => {
+    if (isPropertyGroupLocked(groupKeyValue)) return;
     updateRequirements((reqs) => {
       // Vytvořit nové pole s filtrovanými vlastnostmi
       const filteredProperties = reqs.properties.filter((p) => groupKey(p.source, p.psetName) !== groupKeyValue);
@@ -3193,6 +3228,7 @@ export const ObjectDetail: React.FC<Props> = ({
   };
 
   const renameGroup = (groupKeyValue: string, newName: string, isCustomInput = false) => {
+    if (isPropertyGroupLocked(groupKeyValue)) return;
     const guessedSource = groupKeyValue.startsWith("PSET")
       ? "PSET"
       : groupKeyValue.startsWith("QTO")
@@ -3323,12 +3359,25 @@ export const ObjectDetail: React.FC<Props> = ({
     // Získat aktuální hodnoty z ref (vždy aktuální)
     const groupKeysToDelete = Array.from(selectedGroupsRef.current);
     const propertyIdsToDelete = Array.from(selectedPropertiesRef.current);
+    const lockedGroupKeys = new Set(
+      propertyGroups.filter((group) => isPropertyGroupLocked(group.key)).map((group) => group.key),
+    );
+    const lockedPropertyIds = new Set(
+      propertyGroups
+        .filter((group) => lockedGroupKeys.has(group.key))
+        .flatMap((group) => group.properties.map((p) => p.id)),
+    );
     
     // Smazat vlastnosti
     updateRequirements((reqs) => {
       // Vytvořit nové pole s filtrovanými vlastnostmi (smazat označené skupiny i jednotlivé vlastnosti)
       const filteredProperties = reqs.properties.filter(
-        (p) => !groupKeysToDelete.includes(groupKey(p.source, p.psetName)) && !propertyIdsToDelete.includes(p.id),
+        (p) =>
+          !(
+            groupKeysToDelete.includes(groupKey(p.source, p.psetName)) &&
+            !lockedGroupKeys.has(groupKey(p.source, p.psetName))
+          ) &&
+          !(propertyIdsToDelete.includes(p.id) && !lockedPropertyIds.has(p.id)),
       );
       reqs.properties = filteredProperties;
     });
@@ -3349,6 +3398,7 @@ export const ObjectDetail: React.FC<Props> = ({
       const insertAfterIdx: { index: number; props: PropertyRequirement[] }[] = [];
 
       for (const gkey of selectedGroupsSet) {
+        if (isPropertyGroupLocked(gkey)) continue;
         const first = reqs.properties.find((p) => groupKey(p.source, p.psetName) === gkey);
         if (!first) continue;
         const groupProps = reqs.properties.filter((p) => groupKey(p.source, p.psetName) === gkey);
@@ -3371,6 +3421,7 @@ export const ObjectDetail: React.FC<Props> = ({
       for (const propId of selectedPropertiesSet) {
         const prop = reqs.properties.find((p) => p.id === propId);
         if (!prop) continue;
+        if (prop.groupLocked) continue;
         const gk = groupKey(prop.source, prop.psetName);
         if (selectedGroupsSet.has(gk)) continue;
         const copy = { ...prop, id: makeId() };
@@ -3585,7 +3636,6 @@ export const ObjectDetail: React.FC<Props> = ({
         relationType: "IFCRELAGGREGATES",
         occurrence: "optional",
         entityType: "",
-        entityPredefinedType: "",
         targetType: "", // legacy field for backwards compatibility
         minCardinality: 0,
         maxCardinality: 1,
@@ -3655,6 +3705,7 @@ export const ObjectDetail: React.FC<Props> = ({
         const idx = reqs.properties.findIndex((p) => p.id === targetId);
         if (idx < 0) continue;
         const prev = reqs.properties[idx];
+        if (prev.groupLocked) continue;
         let next = { ...prev, ...patch };
         
         // Zajistíme, že propertyName nikdy nebude obsahovat psetName (zejména pro dočasné skupiny)
@@ -4658,7 +4709,6 @@ export const ObjectDetail: React.FC<Props> = ({
                           </div>
                           <div className="mt-0.5 text-slate-500">
                             <span>{rel.relationType}</span>
-                            {rel.entityPredefinedType && <span className="ml-1">• {rel.entityPredefinedType}</span>}
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-1">
                             <span className="text-[10px] text-slate-500">Fáze:</span>
@@ -5491,6 +5541,7 @@ export const ObjectDetail: React.FC<Props> = ({
               <div className="space-y-3 pr-1">
                 {propertyGroups.map((group) => {
                 const expanded = expandedGroups[group.key] ?? true;
+                const isGroupLocked = isPropertyGroupLocked(group.key);
                 const isSchemaBound = group.source !== "CUSTOM";
                 const schemaOptionsRaw = group.source === "PSET" ? allPsets : allQtos;
                 const schemaOptions = mergeAssignmentsByName(schemaOptionsRaw);
@@ -5572,6 +5623,26 @@ export const ObjectDetail: React.FC<Props> = ({
                             <path d="m6 9 6 6 6-6" />
                           </svg>
                         </button>
+                        <button
+                          type="button"
+                          className={`flex shrink-0 items-center justify-center rounded border p-1.5 ${
+                            isGroupLocked
+                              ? "border-amber-400 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                              : "border-slate-300 text-slate-600 hover:bg-slate-50"
+                          }`}
+                          onClick={() => togglePropertyGroupLock(group.key)}
+                          disabled={isLocked}
+                          title={isGroupLocked ? "Odemknout skupinu vlastností" : "Zamknout skupinu vlastností"}
+                          aria-label={isGroupLocked ? "Odemknout skupinu vlastností" : "Zamknout skupinu vlastností"}
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            {isGroupLocked ? (
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                            ) : (
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                            )}
+                          </svg>
+                        </button>
                         <span className={`shrink-0 rounded px-2 py-1 text-[11px] font-semibold uppercase ${badgeClass}`}>
                           {group.source === "PSET" ? "Pset dle IFC" : group.source === "QTO" ? "Qto dle IFC" : "Vlastní"}
                         </span>
@@ -5590,6 +5661,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               onChange={(e) => renameGroup(group.key, e.target.value, true)}
                               onBlur={() => handleCustomGroupBlur(group.key)}
                               placeholder="Vyplnit název"
+                              disabled={isGroupLocked}
                             />
                             {customGroupErrors[group.key] && (
                               <span className="shrink-0 text-xs text-red-600 whitespace-nowrap">{customGroupErrors[group.key]}</span>
@@ -5609,6 +5681,7 @@ export const ObjectDetail: React.FC<Props> = ({
                                   });
                                 }}
                                 title="Překlad skupiny do češtiny"
+                                disabled={isGroupLocked}
                               />
                             )}
                           </>
@@ -5623,6 +5696,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               }`}
                               value={displayPsetName}
                               onChange={(e) => renameGroup(group.key, e.target.value)}
+                              disabled={isGroupLocked}
                             >
                               <option value="">Vyplnit název</option>
                               {!schemaOptions.some((o) => o.name === group.psetName) && group.psetName && !isTempGroup && (
@@ -5658,6 +5732,7 @@ export const ObjectDetail: React.FC<Props> = ({
                                   });
                                 }}
                                 title="Překlad skupiny do češtiny"
+                                disabled={isGroupLocked}
                               />
                             )}
                             {isInvalidGroup && (
@@ -5671,22 +5746,28 @@ export const ObjectDetail: React.FC<Props> = ({
                         )}
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center gap-2">
-                        <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addPropertyToGroup(group.key)}>
+                        <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => addPropertyToGroup(group.key)} disabled={isGroupLocked}>
                           Přidat vlastnost
                         </button>
                         {isSchemaBound && displayPsetName && displayPsetName.length > 0 && isGroupAllowed(group.source, group.psetName) && (
-                          <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50" onClick={() => addAllFromSchema(group.key)}>
+                          <button className="rounded border border-slate-300 px-2 py-1 text-[11px] hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => addAllFromSchema(group.key)} disabled={isGroupLocked}>
                             Přidat všechny dle IFC
                           </button>
                         )}
-                        <button className="rounded border border-red-300 px-2 py-1 text-[11px] text-red-600 hover:bg-red-50" onClick={() => deleteGroup(group.key)}>
+                        <button className="rounded border border-red-300 px-2 py-1 text-[11px] text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed" onClick={() => deleteGroup(group.key)} disabled={isGroupLocked}>
                           Smazat skupinu
                         </button>
                       </div>
                     </div>
 
                     {expanded && (
+                      <fieldset disabled={isGroupLocked} className="m-0 min-w-0 border-0 p-0">
                       <div className="overflow-x-auto overflow-y-visible px-3 py-2" style={{ maxWidth: "100%" }}>
+                        {isGroupLocked && (
+                          <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                            Tato skupina je zamčená. Pro úpravy ji nejprve odemkněte.
+                          </div>
+                        )}
                         {group.psetName && !group.psetName.startsWith("_NEW_") && (
                           <div className="mb-2 flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-slate-50/50 px-2 py-1.5">
                             <span className="text-xs font-medium text-slate-600">Výchozí účely užití pro tuto skupinu (dědi se na všechny vlastnosti):</span>
@@ -5791,7 +5872,7 @@ export const ObjectDetail: React.FC<Props> = ({
                                     <div className="flex items-center gap-1 pr-1">
                                       <span>Popis</span>
                                       {(group.source === "PSET" || group.source === "QTO") && group.psetName && !isTempGroup && (
-                                        <button type="button" className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium" title="Propíš z bSDD Definition do sloupce Popis u všech vlastností v této skupině" onClick={() => fillDescriptionsFromBsdd(group.key)} disabled={fillingDescriptionsGroupKey === group.key}>
+                                        <button type="button" className="flex items-center gap-1 rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-300 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-medium" title="Propíš z bSDD Definition do sloupce Popis u všech vlastností v této skupině" onClick={() => fillDescriptionsFromBsdd(group.key)} disabled={fillingDescriptionsGroupKey === group.key || isGroupLocked}>
                                           {fillingDescriptionsGroupKey === group.key ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-red-600" /> : <><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0"><path d="m6 9 6 6 6-6" /></svg><span>bSDD</span></>}
                                         </button>
                                       )}
@@ -6594,6 +6675,7 @@ export const ObjectDetail: React.FC<Props> = ({
                           </table>
                         )}
                       </div>
+                      </fieldset>
                     )}
                   </div>
                 );
@@ -6761,7 +6843,7 @@ export const ObjectDetail: React.FC<Props> = ({
                               <div className="flex gap-1">
                                 <button type="button" className="text-[10px] text-red-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set())}>Zobrazit vše</button>
                                 <span className="text-slate-300">|</span>
-                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11,12]))}>Skrýt vše</button>
+                                <button type="button" className="text-[10px] text-slate-600 hover:underline" onClick={() => setHiddenPartOfColumns(new Set([0,1,2,3,4,5,6,7,8,9,10,11]))}>Skrýt vše</button>
                               </div>
                             </div>
                             {Object.entries(PARTOF_COLUMNS_HIDEABLE).map(([k, label]) => {
@@ -6811,9 +6893,9 @@ export const ObjectDetail: React.FC<Props> = ({
                 <>
               <div className="text-xs text-slate-500">Vztahy mezi IFC entitami (IfcRelAggregates, IfcRelNests, ...)</div>
               <div className="overflow-x-auto overflow-y-visible rounded border border-slate-200" style={{ maxWidth: "100%" }}>
-                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenPartOfColumns.has(i)).reduce((s, i) => s + (partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i]), 0)) }}>
+                <table className="text-sm table-fixed" style={{ tableLayout: "fixed", minWidth: Math.max(400, [0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenPartOfColumns.has(i)).reduce((s, i) => s + (partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i]), 0)) }}>
                   <colgroup>
-                    {[0,1,2,3,4,5,6,7,8,9,10,11,12].filter((i) => !hiddenPartOfColumns.has(i)).map((i) => (
+                    {[0,1,2,3,4,5,6,7,8,9,10,11].filter((i) => !hiddenPartOfColumns.has(i)).map((i) => (
                       <col key={i} style={{ width: partOfTableColWidths[i] ?? DEFAULT_PARTOF_COL_WIDTHS[i] }} />
                     ))}
                   </colgroup>
@@ -6839,76 +6921,65 @@ export const ObjectDetail: React.FC<Props> = ({
                       )}
                       {!hiddenPartOfColumns.has(3) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">PredefinedType</span>
+                          <span className="block pr-1">Vztah</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 3 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[3] ?? DEFAULT_PARTOF_COL_WIDTHS[3]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(4) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Vztah</span>
+                          <span className="block pr-1">URI</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 4 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[4] ?? DEFAULT_PARTOF_COL_WIDTHS[4]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(5) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">URI</span>
+                          <span className="block pr-1">Popis</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 5 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[5] ?? DEFAULT_PARTOF_COL_WIDTHS[5]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(6) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Popis</span>
+                          <span className="block pr-1">Poznámka</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 6 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[6] ?? DEFAULT_PARTOF_COL_WIDTHS[6]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(7) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Poznámka</span>
+                          <span className="block pr-1">Příklady</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 7 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[7] ?? DEFAULT_PARTOF_COL_WIDTHS[7]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(8) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Příklady</span>
+                          <span className="block pr-1">Fáze</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 8 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[8] ?? DEFAULT_PARTOF_COL_WIDTHS[8]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(9) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Fáze</span>
+                          <span className="block pr-1">Účel užití</span>
                           <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 9 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[9] ?? DEFAULT_PARTOF_COL_WIDTHS[9]; }} aria-hidden />
                         </th>
                       )}
                       {!hiddenPartOfColumns.has(10) && (
                         <th className="px-2 py-2 relative select-none">
-                          <span className="block pr-1">Účel užití</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
-                        </th>
-                      )}
-                      {!hiddenPartOfColumns.has(11) && (
-                        <th className="px-2 py-2 text-center relative select-none">
                           <div className="flex items-center justify-center gap-1 pr-1">
                             <span>Použitelnost</span>
                             <button type="button" className="flex items-center justify-center w-5 h-5 rounded-full bg-slate-200 text-slate-600 hover:bg-red-100 hover:text-red-600 text-xs font-bold flex-shrink-0" title="Použitelnost indikuje, jestli se daný požadavek vnímá dle IDS jako identifikační údaj.">?</button>
                           </div>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[11] ?? DEFAULT_PARTOF_COL_WIDTHS[11]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 10 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[10] ?? DEFAULT_PARTOF_COL_WIDTHS[10]; }} aria-hidden />
                         </th>
                       )}
-                      {!hiddenPartOfColumns.has(12) && (
+                      {!hiddenPartOfColumns.has(11) && (
                         <th className="px-2 py-2 text-right relative select-none">
                           <span className="block pr-1">Akce</span>
-                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 12 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[12] ?? DEFAULT_PARTOF_COL_WIDTHS[12]; }} aria-hidden />
+                          <div className="absolute right-0 top-0 bottom-0 w-2 -mr-1 z-10 cursor-col-resize hover:bg-red-200 shrink-0" onMouseDown={(e) => { e.preventDefault(); setResizingContext({ table: "partOf", col: 11 }); resizingStartX.current = e.clientX; resizingStartW.current = partOfTableColWidths[11] ?? DEFAULT_PARTOF_COL_WIDTHS[11]; }} aria-hidden />
                         </th>
                       )}
                     </tr>
                   </thead>
                   <tbody>
                     {effectiveRequirements.relations.map((rel) => {
-                      // Get predefined types for selected entity
-                      const relEntityDef = rel.entityType ? schema?.entities[rel.entityType] : undefined;
-                      const relPtValues = relEntityDef?.predefinedTypeValues ?? [];
-                      const relPredefinedOptions = relPtValues.length ? ["NOTDEFINED", ...relPtValues] : [];
-                      
                       return (
                         <tr key={rel.id} className="border-t border-slate-200">
                           {!hiddenPartOfColumns.has(0) && (
@@ -6945,7 +7016,6 @@ export const ObjectDetail: React.FC<Props> = ({
                                 onChange={(entity) => {
                                   updateRelationField(rel.id, {
                                     entityType: entity,
-                                    entityPredefinedType: "NOTDEFINED",
                                     targetType: entity,
                                   });
                                 }}
@@ -6964,22 +7034,6 @@ export const ObjectDetail: React.FC<Props> = ({
                             </td>
                           )}
                           {!hiddenPartOfColumns.has(3) && (
-                            <td className="px-2 py-2">
-                            <select
-                              className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${!rel.entityType ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
-                              value={rel.entityPredefinedType ?? "NOTDEFINED"}
-                              onChange={(e) => updateRelationField(rel.id, { entityPredefinedType: e.target.value })}
-                              disabled={!rel.entityType || relPredefinedOptions.length === 0}
-                            >
-                              {relPredefinedOptions.map((opt) => (
-                                <option key={opt} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                            </select>
-                            </td>
-                          )}
-                          {!hiddenPartOfColumns.has(4) && (
                             <td className="px-2 py-2">
                             <div className="flex flex-col gap-0.5">
                               <div className="flex items-center gap-1">
@@ -7014,32 +7068,32 @@ export const ObjectDetail: React.FC<Props> = ({
                             </div>
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(5) && (
+                          {!hiddenPartOfColumns.has(4) && (
                             <td className="px-2 py-2">
                               <input type="text" className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.uri ?? ""} onChange={(e) => updateRelationField(rel.id, { uri: e.target.value })} placeholder="URI" />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(6) && (
+                          {!hiddenPartOfColumns.has(5) && (
                             <td className="px-2 py-2">
                               <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.popis ?? ""} onChange={(e) => updateRelationField(rel.id, { popis: e.target.value })} placeholder="Popis" />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(7) && (
+                          {!hiddenPartOfColumns.has(6) && (
                             <td className="px-2 py-2">
                               <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.note ?? ""} onChange={(e) => updateRelationField(rel.id, { note: e.target.value })} placeholder="Poznámka k relaci" />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(8) && (
+                          {!hiddenPartOfColumns.has(7) && (
                             <td className="px-2 py-2">
                               <input className="w-full rounded border border-slate-300 px-2 py-1 text-sm" value={rel.priklady ?? ""} onChange={(e) => updateRelationField(rel.id, { priklady: e.target.value })} placeholder="Příklady" />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(9) && (
+                          {!hiddenPartOfColumns.has(8) && (
                             <td className="px-2 py-2">
                             <PhaseSelector phases={phases} value={rel.phases} onChange={(ids) => updateRelationField(rel.id, { phases: ids })} />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(10) && (
+                          {!hiddenPartOfColumns.has(9) && (
                             <td className="px-2 py-2">
                             <UseCaseMultiSelect
                               entries={project?.purposeOfUseEntries ?? []}
@@ -7048,12 +7102,12 @@ export const ObjectDetail: React.FC<Props> = ({
                             />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(11) && (
+                          {!hiddenPartOfColumns.has(10) && (
                             <td className="px-2 py-2 text-center">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-green-600 focus:ring-green-500" checked={rel.isApplicability ?? false} onChange={(e) => updateRelationField(rel.id, { isApplicability: e.target.checked })} title="Pokud je zaškrtnuto, požadavek bude v části Použitelnost (applicability)" />
                             </td>
                           )}
-                          {!hiddenPartOfColumns.has(12) && (
+                          {!hiddenPartOfColumns.has(11) && (
                             <td className="px-2 py-2 text-right">
                               <button className="text-xs text-red-600 hover:underline" onClick={() => removeRequirement("relations", rel.id)}>Odebrat</button>
                             </td>
@@ -8639,6 +8693,7 @@ export const ObjectDetail: React.FC<Props> = ({
                 selectedFingerprint={selectedItemGroup?.fingerprint}
                 onSelectGroup={(fp, kind) => setSelectedItemGroup(fp && kind ? { kind, fingerprint: fp } : null)}
                 onAssignGroupToObjects={onAssignGroupToObjects}
+                onMoveGroupToKind={onMoveGroupToKind}
               >
                 {selectedItemGroup && selectedItemGroupData && (
                   <>

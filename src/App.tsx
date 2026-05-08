@@ -1845,6 +1845,274 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     [project],
   );
 
+  const onMoveGroupToKind = useCallback(
+    (
+      sourceKind: RequirementItemKind,
+      fingerprint: string,
+      targetKind: RequirementItemKind,
+      representativeItems: import("./project/requirementFingerprint").RequirementItemGroup["representativeItems"],
+    ) => {
+      if (!project || sourceKind === targetKind) return;
+
+      type AnyReq =
+        | PropertyRequirement
+        | AttributeRequirement
+        | ClassificationRequirement
+        | MaterialRequirement
+        | RelationRequirement;
+      const relationFallback: RelationRequirement["relationType"] = "IFCRELAGGREGATES";
+
+      const normalizeOccurrence = (item: AnyReq): "required" | "prohibited" | "optional" => {
+        if ("occurrence" in item && item.occurrence) return item.occurrence;
+        if ("required" in item) return item.required ? "required" : "optional";
+        return "required";
+      };
+      const pickLabel = (item: AnyReq, idx: number): string => {
+        if ("propertyName" in item && item.propertyName) return item.propertyName;
+        if ("attribute" in item && item.attribute) return item.attribute;
+        if ("value" in item && item.value) return item.value;
+        if ("entityType" in item && item.entityType) return item.entityType;
+        if ("category" in item && item.category) return item.category;
+        if ("identification" in item && item.identification) return item.identification;
+        return `Položka ${idx + 1}`;
+      };
+      const pickGroupName = (items: AnyReq[]): string => {
+        const first = items[0];
+        if (!first) return "Přesunutá skupina";
+        if ("psetName" in first && first.psetName) return first.psetName;
+        return "Přesunutá skupina";
+      };
+      const extractSourceItems = (
+        reqs: ObjectRequirements,
+      ): { hasSource: boolean; sourceItems: AnyReq[]; nextReqs: ObjectRequirements } => {
+        if (sourceKind === "pset") {
+          const psetMap = new Map<string, PropertyRequirement[]>();
+          for (const p of reqs.properties) {
+            const key = (p.psetName ?? "").trim();
+            const arr = psetMap.get(key);
+            if (arr) arr.push(p);
+            else psetMap.set(key, [p]);
+          }
+          for (const [psetName, props] of psetMap) {
+            if (computePsetFingerprint(psetName, props) === fingerprint) {
+              const other = reqs.properties.filter((p) => (p.psetName ?? "").trim() !== psetName);
+              return { hasSource: true, sourceItems: props, nextReqs: { ...reqs, properties: other } };
+            }
+          }
+          return { hasSource: false, sourceItems: [], nextReqs: reqs };
+        }
+        if (sourceKind === "attribute") {
+          const idx = reqs.attributes.findIndex((a) => !a.isApplicability && computeAttributeItemFingerprint(a) === fingerprint);
+          if (idx < 0) return { hasSource: false, sourceItems: [], nextReqs: reqs };
+          return {
+            hasSource: true,
+            sourceItems: [reqs.attributes[idx]],
+            nextReqs: { ...reqs, attributes: reqs.attributes.filter((_, i) => i !== idx) },
+          };
+        }
+        if (sourceKind === "classification") {
+          const idx = reqs.classifications.findIndex((c) => !c.readOnly && !c.isApplicability && computeClassificationItemFingerprint(c) === fingerprint);
+          if (idx < 0) return { hasSource: false, sourceItems: [], nextReqs: reqs };
+          return {
+            hasSource: true,
+            sourceItems: [reqs.classifications[idx]],
+            nextReqs: { ...reqs, classifications: reqs.classifications.filter((_, i) => i !== idx) },
+          };
+        }
+        if (sourceKind === "material") {
+          const idx = reqs.materials.findIndex((m) => !m.isApplicability && computeMaterialItemFingerprint(m) === fingerprint);
+          if (idx < 0) return { hasSource: false, sourceItems: [], nextReqs: reqs };
+          return {
+            hasSource: true,
+            sourceItems: [reqs.materials[idx]],
+            nextReqs: { ...reqs, materials: reqs.materials.filter((_, i) => i !== idx) },
+          };
+        }
+        const idx = reqs.relations.findIndex((r) => !r.isApplicability && computeRelationItemFingerprint(r) === fingerprint);
+        if (idx < 0) return { hasSource: false, sourceItems: [], nextReqs: reqs };
+        return {
+          hasSource: true,
+          sourceItems: [reqs.relations[idx]],
+          nextReqs: { ...reqs, relations: reqs.relations.filter((_, i) => i !== idx) },
+        };
+      };
+      const convertToTarget = (sourceItems: AnyReq[], fallbackItems: AnyReq[]): ObjectRequirements => {
+        const items = sourceItems.length ? sourceItems : fallbackItems;
+        const baseReqs: ObjectRequirements = { attributes: [], properties: [], relations: [], classifications: [], materials: [] };
+        if (!items.length) return baseReqs;
+
+        if (targetKind === "pset") {
+          baseReqs.properties = items.map((item, idx) => ({
+            id: makeId(),
+            extensions: { ...item.extensions },
+            phases: item.phases ? [...item.phases] : undefined,
+            purposeOfUseId: item.purposeOfUseId,
+            useCaseMode: item.useCaseMode,
+            useCaseIds: item.useCaseIds ? [...item.useCaseIds] : undefined,
+            source: "CUSTOM",
+            psetName: pickGroupName(items),
+            psetNameCz: "psetNameCz" in item ? item.psetNameCz : undefined,
+            propertyName: pickLabel(item, idx),
+            propertyNameCz: "propertyNameCz" in item ? item.propertyNameCz : undefined,
+            dataType: "dataType" in item && item.dataType ? item.dataType : "IfcLabel",
+            required: normalizeOccurrence(item) !== "prohibited",
+            occurrence: normalizeOccurrence(item),
+            constraint: "constraint" in item && item.constraint ? item.constraint : "FILLED",
+            value: "value" in item ? item.value : undefined,
+            valueCz: "valueCz" in item ? item.valueCz : undefined,
+            allowedValues: "allowedValues" in item && item.allowedValues ? [...item.allowedValues] : undefined,
+            unit: "unit" in item ? item.unit : undefined,
+            uri: item.uri,
+            popis: "popis" in item ? item.popis : undefined,
+            note: item.note,
+            priklady: item.priklady,
+            isApplicability: item.isApplicability,
+          }));
+          return baseReqs;
+        }
+        if (targetKind === "attribute") {
+          baseReqs.attributes = items.map((item, idx) => ({
+            id: makeId(),
+            extensions: { ...item.extensions },
+            phases: item.phases ? [...item.phases] : undefined,
+            purposeOfUseId: item.purposeOfUseId,
+            useCaseMode: item.useCaseMode,
+            useCaseIds: item.useCaseIds ? [...item.useCaseIds] : undefined,
+            attribute: pickLabel(item, idx),
+            attributeCz: "attributeCz" in item ? item.attributeCz : undefined,
+            required: normalizeOccurrence(item) !== "prohibited",
+            dataType: "dataType" in item && item.dataType ? item.dataType : "IfcLabel",
+            occurrence: normalizeOccurrence(item),
+            constraint: "constraint" in item && item.constraint ? item.constraint : "FILLED",
+            value: "value" in item ? item.value : undefined,
+            valueCz: "valueCz" in item ? item.valueCz : undefined,
+            allowedValues: "allowedValues" in item && item.allowedValues ? [...item.allowedValues] : undefined,
+            unit: "unit" in item ? item.unit : undefined,
+            uri: item.uri,
+            popis: "popis" in item ? item.popis : undefined,
+            note: item.note,
+            priklady: item.priklady,
+            isApplicability: item.isApplicability,
+          }));
+          return baseReqs;
+        }
+        if (targetKind === "classification") {
+          baseReqs.classifications = items.map((item, idx) => ({
+            id: makeId(),
+            extensions: { ...item.extensions },
+            phases: item.phases ? [...item.phases] : undefined,
+            purposeOfUseId: item.purposeOfUseId,
+            useCaseMode: item.useCaseMode,
+            useCaseIds: item.useCaseIds ? [...item.useCaseIds] : undefined,
+            classificationId: makeId(),
+            systemEntryId: "systemEntryId" in item ? item.systemEntryId : undefined,
+            system: "system" in item && item.system ? item.system : "Uživatelský převod",
+            systemCz: "systemCz" in item ? item.systemCz : undefined,
+            identification: "identification" in item && item.identification ? item.identification : pickLabel(item, idx),
+            value: "value" in item ? item.value : undefined,
+            valueCz: "valueCz" in item ? item.valueCz : undefined,
+            name: "name" in item && item.name ? item.name : pickLabel(item, idx),
+            uri: item.uri,
+            description: "description" in item ? item.description : undefined,
+            location: "location" in item ? item.location : undefined,
+            sort: "sort" in item ? item.sort : undefined,
+            readOnly: false,
+            code: "code" in item ? item.code : undefined,
+            note: item.note,
+            priklady: item.priklady,
+            constraint: "constraint" in item && (item.constraint === "FILLED" || item.constraint === "ENUM" || item.constraint === "PATTERN")
+              ? item.constraint
+              : "FILLED",
+            occurrence: normalizeOccurrence(item),
+            isApplicability: item.isApplicability,
+          }));
+          return baseReqs;
+        }
+        if (targetKind === "material") {
+          baseReqs.materials = items.map((item, idx) => ({
+            id: makeId(),
+            extensions: { ...item.extensions },
+            phases: item.phases ? [...item.phases] : undefined,
+            purposeOfUseId: item.purposeOfUseId,
+            useCaseMode: item.useCaseMode,
+            useCaseIds: item.useCaseIds ? [...item.useCaseIds] : undefined,
+            occurrence: normalizeOccurrence(item),
+            categoryMode: "categoryMode" in item && item.categoryMode ? item.categoryMode : "SIMPLE",
+            category: "category" in item && item.category ? item.category : pickLabel(item, idx),
+            categoryCz: "categoryCz" in item ? item.categoryCz : undefined,
+            uri: item.uri,
+            constraint: "constraint" in item && item.constraint ? item.constraint : "FILLED",
+            value: "value" in item ? item.value : undefined,
+            valueCz: "valueCz" in item ? item.valueCz : undefined,
+            required: normalizeOccurrence(item) !== "prohibited",
+            materialType: "materialType" in item ? item.materialType : undefined,
+            popis: "popis" in item ? item.popis : undefined,
+            note: item.note,
+            priklady: item.priklady,
+            isApplicability: item.isApplicability,
+          }));
+          return baseReqs;
+        }
+        baseReqs.relations = items.map((item, idx) => ({
+          id: makeId(),
+          extensions: { ...item.extensions },
+          phases: item.phases ? [...item.phases] : undefined,
+          purposeOfUseId: item.purposeOfUseId,
+          useCaseMode: item.useCaseMode,
+          useCaseIds: item.useCaseIds ? [...item.useCaseIds] : undefined,
+          relationType: "relationType" in item && item.relationType ? item.relationType : relationFallback,
+          entityTypeCz: "entityTypeCz" in item ? item.entityTypeCz : undefined,
+          relationTypeCz: "relationTypeCz" in item ? item.relationTypeCz : undefined,
+          targetType: "targetType" in item ? item.targetType : undefined,
+          occurrence: normalizeOccurrence(item),
+          entityType: "entityType" in item && item.entityType ? item.entityType : pickLabel(item, idx),
+          entityPredefinedType: "entityPredefinedType" in item ? item.entityPredefinedType : undefined,
+          minCardinality: "minCardinality" in item ? item.minCardinality : undefined,
+          maxCardinality: "maxCardinality" in item ? item.maxCardinality : undefined,
+          uri: item.uri,
+          popis: "popis" in item ? item.popis : undefined,
+          note: item.note,
+          priklady: item.priklady,
+          isApplicability: item.isApplicability,
+        }));
+        return baseReqs;
+      };
+
+      const fallbackSource = (sourceKind === "pset"
+        ? (representativeItems as PropertyRequirement[])
+        : (representativeItems as [AttributeRequirement | ClassificationRequirement | MaterialRequirement | RelationRequirement])) as AnyReq[];
+      let changed = false;
+      const nextObjects: Project["objects"] = { ...project.objects };
+
+      for (const [code, obj] of Object.entries(project.objects)) {
+        const extracted = extractSourceItems(obj.requirements);
+        if (!extracted.hasSource) continue;
+
+        const converted = convertToTarget(extracted.sourceItems, fallbackSource);
+        const nextReqs: ObjectRequirements = {
+          ...extracted.nextReqs,
+          attributes: [...extracted.nextReqs.attributes, ...converted.attributes],
+          properties: [...extracted.nextReqs.properties, ...converted.properties],
+          relations: [...extracted.nextReqs.relations, ...converted.relations],
+          classifications: [...extracted.nextReqs.classifications, ...converted.classifications],
+          materials: [...extracted.nextReqs.materials, ...converted.materials],
+        };
+        nextObjects[code] = { ...obj, requirements: nextReqs };
+        changed = true;
+      }
+
+      if (!changed) return;
+      updateProjectWithHistory({
+        ...project,
+        objects: nextObjects,
+        updatedAt: new Date().toISOString(),
+      });
+      setStatus("Skupina byla přesunuta do jiné facety.");
+      setTimeout(() => setStatus(""), 3000);
+    },
+    [project],
+  );
+
   const onUpdateRequirementItemGroup = useCallback(
     (kind: RequirementItemKind, fingerprint: string, updatedItems: import("./project/types").PropertyRequirement[] | [import("./project/types").AttributeRequirement] | [import("./project/types").ClassificationRequirement] | [import("./project/types").MaterialRequirement] | [import("./project/types").RelationRequirement]) => {
       if (!project) return;
@@ -2352,6 +2620,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
               onDuplicateRelationsToObjects={onDuplicateRelationsToObjects}
               onUpdateRequirementItemGroup={onUpdateRequirementItemGroup}
               onAssignGroupToObjects={onAssignGroupToObjects}
+              onMoveGroupToKind={onMoveGroupToKind}
             />
           )}
         </div>

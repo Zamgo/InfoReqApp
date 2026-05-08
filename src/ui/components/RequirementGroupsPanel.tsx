@@ -25,6 +25,12 @@ interface Props {
     objectCodes: string[],
     representativeItems: RequirementItemGroup["representativeItems"],
   ) => void;
+  onMoveGroupToKind?: (
+    sourceKind: RequirementItemKind,
+    fingerprint: string,
+    targetKind: RequirementItemKind,
+    representativeItems: RequirementItemGroup["representativeItems"],
+  ) => void;
   children?: React.ReactNode;
 }
 
@@ -340,6 +346,7 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
   selectedFingerprint,
   onSelectGroup,
   onAssignGroupToObjects,
+  onMoveGroupToKind,
   children,
 }) => {
   const [filter, setFilter] = useState<RequestFilter>(null);
@@ -348,6 +355,7 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
   const [sort, setSort] = useState<RequestSort>(DEFAULT_SORT);
   const [sortOptionKey, setSortOptionKey] = useState("objectCount-desc");
   const [assignDialogGroup, setAssignDialogGroup] = useState<RequirementItemGroup | null>(null);
+  const [moveMenuFingerprint, setMoveMenuFingerprint] = useState<string | null>(null);
 
   const groups = useMemo(() => groupRequirementsByItem(project), [project]);
 
@@ -443,16 +451,61 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                       </span>
-                      <span className={`inline-flex flex-shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${KIND_COLORS[group.kind]}`}>
-                        {KIND_LABELS[group.kind]}
-                      </span>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          className={`inline-flex flex-shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${KIND_COLORS[group.kind]} ${onMoveGroupToKind ? "cursor-pointer hover:brightness-95" : "cursor-default"}`}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (!onMoveGroupToKind) return;
+                            setMoveMenuFingerprint((prev) => (prev === group.fingerprint ? null : group.fingerprint));
+                          }}
+                          title={onMoveGroupToKind ? "Přesunout skupinu do jiné facety" : undefined}
+                        >
+                          {KIND_LABELS[group.kind]}
+                        </button>
+                        {onMoveGroupToKind && moveMenuFingerprint === group.fingerprint && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setMoveMenuFingerprint(null);
+                              }}
+                              aria-hidden
+                            />
+                            <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded border border-slate-200 bg-white p-1 shadow-lg">
+                              <div className="px-2 py-1 text-[10px] font-semibold uppercase text-slate-500">Přesunout do</div>
+                              {(Object.keys(KIND_LABELS) as RequirementItemKind[])
+                                .filter((targetKind) => targetKind !== group.kind)
+                                .map((targetKind) => (
+                                  <button
+                                    key={targetKind}
+                                    type="button"
+                                    className="block w-full rounded px-2 py-1 text-left text-xs text-slate-700 hover:bg-slate-100"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      onMoveGroupToKind(group.kind, group.fingerprint, targetKind, group.representativeItems);
+                                      setMoveMenuFingerprint(null);
+                                    }}
+                                  >
+                                    {KIND_LABELS[targetKind]}
+                                  </button>
+                                ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
                       <span className="inline-flex flex-shrink-0 items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">
                         {count}
                       </span>
-                      <span className="min-w-0 flex-1 truncate font-medium text-slate-800">
+                      <span className="min-w-0 flex-1 truncate text-left font-medium text-slate-800">
                         {group.label}
                       </span>
-                      <span className="flex-shrink-0 text-[10px] text-slate-400 max-w-[30%] truncate">
+                      <span className="flex-shrink-0 max-w-[30%] truncate text-left text-[10px] text-slate-400">
                         {bound}
                       </span>
                     </button>

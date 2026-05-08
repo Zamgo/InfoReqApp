@@ -254,7 +254,7 @@ export const computeRelationItemFingerprint = (rel: RelationRequirement): string
 
 const buildPsetLabel = (psetName: string, count: number): string => {
   const name = psetName || "(bez názvu)";
-  return `Vlastnosti: ${name} (${count} vl.)`;
+  return `${name} (${count} vl.)`;
 };
 
 export const groupRequirementsByItem = (project: Project): RequirementItemGroup[] => {
@@ -296,7 +296,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "attribute",
-          label: `Atribut: ${attr.attribute || "(bez názvu)"}`,
+          label: attr.attribute || "(bez názvu)",
           codes: new Set([code]),
           representative: [attr],
         });
@@ -313,7 +313,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "classification",
-          label: `Klasifikace: ${cls.system || cls.name || "(bez názvu)"}`,
+          label: cls.system || cls.name || "(bez názvu)",
           codes: new Set([code]),
           representative: [cls],
         });
@@ -330,7 +330,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "material",
-          label: `Materiál: ${mat.category || mat.value || "(bez názvu)"}`,
+          label: mat.category || mat.value || "(bez názvu)",
           codes: new Set([code]),
           representative: [mat],
         });
@@ -347,7 +347,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "relation",
-          label: `Součásti: ${rel.relationType || ""} ${rel.entityType || ""}`.trim(),
+          label: `${rel.relationType || ""} ${rel.entityType || ""}`.trim() || "(bez názvu)",
           codes: new Set([code]),
           representative: [rel],
         });

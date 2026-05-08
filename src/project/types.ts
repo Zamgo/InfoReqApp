@@ -59,6 +59,8 @@ export interface AttributeRequirement extends RequirementBase {
 export interface PropertyRequirement extends RequirementBase {
   source: "PSET" | "QTO" | "CUSTOM";
   psetName: string;
+  /** Zamčení celé skupiny vlastností (Pset/Qto/custom). */
+  groupLocked?: boolean;
   /** Překlad skupiny do češtiny (Skupina_CZ) */
   psetNameCz?: string;
   propertyName: string;
