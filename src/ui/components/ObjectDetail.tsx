@@ -3791,8 +3791,22 @@ export const ObjectDetail: React.FC<Props> = ({
   };
 
   const updateAttributeField = (id: string, patch: Partial<import("../../project/types").AttributeRequirement>) => {
-    const targetIds = selectedAttributes.has(id) ? selectedAttributes : new Set([id]);
+    // Některá pole musí být unikátní v rámci objektu (název atributu a jeho překlad),
+    // takže se nesmí hromadně přepsat na všechny vybrané řádky – jinak by všechny dostaly stejný název
+    // a uživatel by ztratil data (typicky pozorováno po duplikaci atributů do více objektů).
+    const isUniquePerRowField = patch.attribute !== undefined || patch.attributeCz !== undefined;
+    const targetIds =
+      !isUniquePerRowField && selectedAttributes.has(id) ? selectedAttributes : new Set([id]);
     updateRequirements((reqs) => {
+      // Při změně názvu atributu zabráníme vytvoření duplicitního názvu v rámci objektu
+      // (každá entita má v IFC každý atribut maximálně jednou).
+      if (patch.attribute !== undefined) {
+        const newName = patch.attribute;
+        const wouldDuplicate = reqs.attributes.some(
+          (a) => a.id !== id && (a.attribute ?? "") === newName,
+        );
+        if (wouldDuplicate) return;
+      }
       for (const targetId of targetIds) {
         const idx = reqs.attributes.findIndex((a) => a.id === targetId);
         if (idx < 0) continue;
@@ -5045,9 +5059,16 @@ export const ObjectDetail: React.FC<Props> = ({
                                 value={attr.attribute}
                                 onChange={(e) => updateAttributeField(attr.id, { attribute: e.target.value })}
                               >
-                                {getAvailableAttributes(attr.id).map((opt: string) => (
-                                  <option key={opt} value={opt}>{opt}</option>
-                                ))}
+                                {(() => {
+                                  const opts = getAvailableAttributes(attr.id);
+                                  const finalOpts =
+                                    attr.attribute && !opts.includes(attr.attribute)
+                                      ? [attr.attribute, ...opts]
+                                      : opts;
+                                  return finalOpts.map((opt: string) => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ));
+                                })()}
                               </select>
                               {showCzTranslations && (
                                 <input

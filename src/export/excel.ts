@@ -154,6 +154,523 @@ const finalizeSheet = (sheet: ExcelJS.Worksheet, widths: number[]) => {
   sheet.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
 };
 
+type GuideBlock =
+  | { type: "title"; text: string }
+  | { type: "heading"; text: string }
+  | { type: "paragraph"; text: string }
+  | { type: "bullets"; items: string[] }
+  | { type: "example"; lines: string[] }
+  | { type: "table"; headers: string[]; rows: string[][] };
+
+const GUIDE_BLOCKS: GuideBlock[] = [
+  { type: "title", text: "Uživatelský návod k Excel exportu informačních požadavků" },
+  {
+    type: "paragraph",
+    text: "Tento Excel představuje přehled alfanumerických požadavků na informace v rámci projektu v tabulkové podobě. Je určen pro předání požadavků na informace, které mají být dodány v digitálním modelu stavby (DiMS) podle standardu IFC.",
+  },
+  { type: "paragraph", text: "Hlavním účelem souboru je srozumitelně popsat:" },
+  {
+    type: "bullets",
+    items: [
+      "na jaké prvky modelu se požadavky vztahují,",
+      "jaké informace mají tyto prvky obsahovat,",
+      "jak mají být hodnoty vyplněny nebo omezeny,",
+      "ve kterých projektových fázích požadavky platí.",
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Excel je pracovní a uživatelsky čitelná forma datového standardu. Navazuje na principy IDS, ale prezentuje je ve formě tabulek, se kterými lze běžně pracovat v Excelu.",
+  },
+  { type: "heading", text: "Vazba na IDS a IFC" },
+  {
+    type: "paragraph",
+    text: "Struktura požadavků vychází z IDS, tedy Information Delivery Specification. IDS je standard buildingSMART pro definování informačních požadavků ve strojově čitelné podobě. Umožňuje popsat, jaké objekty mají být v IFC modelu obsaženy a jaké informace k nim mají být dodány.",
+  },
+  { type: "paragraph", text: "V praxi IDS odpovídá na otázky:" },
+  {
+    type: "bullets",
+    items: [
+      "pro jaký typ prvku požadavek platí,",
+      "jakou vlastnost, atribut, materiál, klasifikaci nebo vazbu má prvek obsahovat,",
+      "jaká hodnota je očekávaná,",
+      "zda je informace povinná, volitelná, nebo naopak zakázaná.",
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Tento Excel používá stejnou logiku, ale převádí ji do přehledné tabulkové podoby. Slouží tedy jako čitelný podklad nad informačními požadavky, které mohou být následně využity i pro tvorbu nebo kontrolu IDS.",
+  },
+  { type: "paragraph", text: "Oficiální zdroje k IDS:" },
+  {
+    type: "bullets",
+    items: [
+      "buildingSMART IDS: https://www.buildingsmart.org/standards/bsi-standards/information-delivery-specification-ids/",
+      "GitHub repozitář standardu IDS: https://github.com/buildingSMART/IDS",
+    ],
+  },
+  { type: "heading", text: "Základní princip čtení" },
+  {
+    type: "paragraph",
+    text: "Nejdůležitějším listem je POŽADAVKY. Každý řádek tohoto listu představuje jeden konkrétní informační požadavek pro určitý typ prvku.",
+  },
+  { type: "paragraph", text: "Řádek je vhodné číst jako větu:" },
+  {
+    type: "example",
+    lines: [
+      "Pro daný prvek požadujeme danou informaci, v určité podobě, s daným pravidlem a v určených fázích projektu.",
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "První část řádku identifikuje prvek nebo skupinu prvků. Další část popisuje požadovanou informaci. Poslední část určuje platnost požadavku v projektových fázích.",
+  },
+  { type: "paragraph", text: "Příklad čtení řádku:" },
+  {
+    type: "example",
+    lines: [
+      "Pro dveře je požadována vlastnost FireRating ve skupině Pset_DoorCommon.",
+      "Hodnota musí být vybrána z povoleného seznamu.",
+      "Požadavek platí ve fázích označených hodnotou Ano.",
+    ],
+  },
+  { type: "heading", text: "Proč se rozlišují typy požadavků" },
+  {
+    type: "paragraph",
+    text: "IFC standard neukládá všechny informace jedním způsobem. Některé informace jsou základní součástí IFC entity jako atributy, jiné jsou uloženy jako vlastnosti ve specifických skupinách vlastností, další vyjadřují materiál, klasifikaci nebo vztah mezi prvky.",
+  },
+  {
+    type: "paragraph",
+    text: "Proto list POŽADAVKY rozlišuje sloupec Typ_požadavku. Tento sloupec určuje, jaký druh informace má být v modelu kontrolován a kde se taková informace v IFC logice obvykle nachází.",
+  },
+  {
+    type: "paragraph",
+    text: "Rozlišení typů požadavků je důležité pro správnou interpretaci dat. Stejná textová hodnota může mít jiný význam podle toho, zda jde o vlastnost, atribut, klasifikaci nebo materiálový požadavek.",
+  },
+  { type: "heading", text: "Typ požadavku Atribut" },
+  {
+    type: "paragraph",
+    text: "Atribut označuje informaci, která je přímo součástí IFC entity. Nejde o běžnou uživatelskou vlastnost v property setu, ale o údaj patřící k základní IFC struktuře objektu.",
+  },
+  {
+    type: "paragraph",
+    text: "Typickým příkladem mohou být základní identifikační nebo systémové údaje IFC entity.",
+  },
+  {
+    type: "paragraph",
+    text: "U tohoto typu je důležitý zejména sloupec Parametr_hodnoty, který uvádí název požadovaného atributu. Sloupec Požadované_hodnoty následně říká, jaká hodnota se očekává, případně jaké hodnoty jsou povolené.",
+  },
+  { type: "heading", text: "Typ požadavku Vlastnost" },
+  {
+    type: "paragraph",
+    text: "Vlastnost je nejčastější typ informačního požadavku. Popisuje údaj uložený v property setu (skupině vlastností), quantity setu (skupině výměr) nebo v uživatelsky definované skupině vlastností.",
+  },
+  {
+    type: "paragraph",
+    text: "V IFC jsou vlastnosti obvykle sdruženy do skupin. Například dveře mohou mít vlastnosti ve skupině Pset_DoorCommon, stěny ve skupině Pset_WallCommon a projekt může používat i vlastní skupiny vlastností.",
+  },
+  { type: "paragraph", text: "U typu Vlastnost mají hlavní sloupce tento význam:" },
+  {
+    type: "table",
+    headers: ["Sloupec", "Význam"],
+    rows: [
+      ["Skupina", "Název property setu, quantity setu nebo vlastní skupiny."],
+      ["Parametr_hodnoty", "Název požadované vlastnosti."],
+      ["IFC_datový_typ", "Očekávaný datový typ hodnoty, pokud je definovaný."],
+      ["Omezení", "Pravidlo, podle kterého se hodnota posuzuje."],
+      ["Požadované_hodnoty", "Konkrétní hodnota, seznam hodnot, rozsah nebo jiné pravidlo."],
+    ],
+  },
+  {
+    type: "example",
+    lines: [
+      "Typ_požadavku: Vlastnost",
+      "Skupina: Pset_DoorCommon",
+      "Parametr_hodnoty: FireRating",
+      "Omezení: Výčet",
+      "Požadované_hodnoty: EI30;EI45;EI60",
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Takový řádek znamená, že pro daný prvek je požadována vlastnost FireRating ve skupině Pset_DoorCommon a její hodnota má být jedna z uvedených možností.",
+  },
+  { type: "heading", text: "Typ požadavku Součást" },
+  {
+    type: "paragraph",
+    text: "Součást popisuje vazbu mezi objekty. Tento typ požadavku neříká, jakou textovou nebo číselnou hodnotu má prvek obsahovat, ale jak má být zařazen nebo propojen s jiným objektem v modelu.",
+  },
+  {
+    type: "paragraph",
+    text: "V logice IDS odpovídá tento požadavek vztahům typu partOf. V IFC jsou takové vazby reprezentovány relacemi, například při zařazení prvku do prostorové struktury.",
+  },
+  { type: "paragraph", text: "U typu Součást mají hlavní sloupce tento význam:" },
+  {
+    type: "table",
+    headers: ["Sloupec", "Význam"],
+    rows: [
+      ["Parametr_hodnoty", "Entita souvisejícího objektu."],
+      ["Požadované_hodnoty", "Typ IFC vztahu, který má vazbu vyjadřovat."],
+    ],
+  },
+  {
+    type: "example",
+    lines: [
+      "Typ_požadavku: Součást",
+      "Parametr_hodnoty: IfcBuildingStorey",
+      "Požadované_hodnoty: IFCRELCONTAINEDINSPATIALSTRUCTURE",
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Takový požadavek říká, že prvek má být vztažen k podlaží prostřednictvím odpovídající IFC relace.",
+  },
+  { type: "heading", text: "Typ požadavku Klasifikace" },
+  {
+    type: "paragraph",
+    text: "Klasifikace vyjadřuje požadavek na zatřídění prvku podle klasifikačního systému. Může jít o národní, oborový, projektový nebo firemní klasifikační systém.",
+  },
+  {
+    type: "paragraph",
+    text: "Klasifikace pomáhá sjednotit názvosloví, usnadňuje vyhledávání prvků a umožňuje jejich seskupování podle třídicích kódů.",
+  },
+  { type: "paragraph", text: "U typu Klasifikace mají hlavní sloupce tento význam:" },
+  {
+    type: "table",
+    headers: ["Sloupec", "Význam"],
+    rows: [
+      ["Parametr_hodnoty", "Název klasifikačního systému."],
+      ["Požadované_hodnoty", "Požadovaný klasifikační kód nebo hodnota."],
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "IFC entita a IFC_predefinedType nejsou v tomto Excelu uváděny jako běžný klasifikační požadavek. Jsou vedeny v samostatných sloupcích, protože určují základní IFC typ prvku.",
+  },
+  { type: "heading", text: "Typ požadavku Materiál" },
+  {
+    type: "paragraph",
+    text: "Materiál popisuje požadavek na materiálovou informaci prvku. Používá se tam, kde je potřeba určit materiál, materiálovou kategorii nebo pravidlo pro materiálovou skladbu.",
+  },
+  { type: "paragraph", text: "U typu Materiál mají hlavní sloupce tento význam:" },
+  {
+    type: "table",
+    headers: ["Sloupec", "Význam"],
+    rows: [
+      ["Parametr_hodnoty", "Kategorie nebo druh materiálové informace."],
+      ["Požadované_hodnoty", "Požadovaná hodnota, seznam hodnot nebo jiné omezení."],
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Materiálové požadavky jsou samostatným typem proto, že materiál je v IFC zpravidla reprezentován jinou strukturou než běžné vlastnosti v property setech.",
+  },
+  { type: "heading", text: "Identifikace prvku" },
+  {
+    type: "paragraph",
+    text: "Úvodní sloupce listu POŽADAVKY určují, na jaký prvek nebo typ prvku se požadavek vztahuje.",
+  },
+  {
+    type: "table",
+    headers: ["Sloupec", "Význam"],
+    rows: [
+      ["Třídící_kód", "Kód prvku nebo třídy prvků v primární klasifikaci."],
+      ["Třídění_úroveň_1, Třídění_úroveň_2, ...", "Hierarchické zařazení prvku."],
+      ["Třídění_<systém>", "Mapování prvku na další klasifikační systém."],
+      ["Třídění_AN_<nástroj>", "Mapování na autorský nástroj, například kategorii v modelovacím softwaru."],
+      ["IFC_entita", "IFC entita, kterou má prvek v modelu reprezentovat."],
+      ["IFC_predefinedType", "Upřesnění IFC entity pomocí predefined type."],
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Tyto sloupce odpovídají otázce, čeho se požadavek týká. Sloupce za nimi následně popisují, jaká informace je pro tento prvek požadována.",
+  },
+  { type: "heading", text: "Sloupec Omezení" },
+  {
+    type: "paragraph",
+    text: "Sloupec Omezení určuje pravidlo, podle kterého se má hodnota posuzovat.",
+  },
+  {
+    type: "table",
+    headers: ["Hodnota", "Význam"],
+    rows: [
+      ["Jednoduchá hodnota", "Hodnota má být vyplněná nebo má odpovídat jedné konkrétní hodnotě."],
+      ["Výčet", "Hodnota má být vybrána ze seznamu povolených hodnot."],
+      ["Vzor", "Hodnota má odpovídat předepsanému textovému vzoru."],
+      ["Ohraničení", "Hodnota má být v určeném rozsahu."],
+      ["Délka", "Hodnota má splnit pravidlo pro délku textu nebo hodnoty."],
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Pokud je vyplněn sloupec Číselník, povolené hodnoty jsou spravovány na listu ČÍSELNÍKY. Číselníky pomáhají sjednotit zápis hodnot a omezit rozdíly způsobené volným textem.",
+  },
+  { type: "heading", text: "Sloupec Výskyt" },
+  { type: "paragraph", text: "Sloupec Výskyt určuje závaznost požadavku." },
+  {
+    type: "table",
+    headers: ["Hodnota", "Význam"],
+    rows: [
+      ["Povinný", "Informace má být v modelu uvedena."],
+      ["Volitelný", "Informace může být uvedena, ale není povinná."],
+      ["Zakázaný", "Informace se pro daný prvek nemá uvádět."],
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Hodnota Zakázaný se používá v případech, kdy je potřeba výslovně zabránit použití určité vlastnosti, hodnoty nebo vazby.",
+  },
+  { type: "heading", text: "Projektové fáze" },
+  {
+    type: "paragraph",
+    text: "Na konci listu POŽADAVKY jsou uvedeny sloupce projektových fází. Každá fáze má vlastní sloupec.",
+  },
+  {
+    type: "table",
+    headers: ["Hodnota", "Význam"],
+    rows: [
+      ["Ano", "Požadavek platí v dané fázi."],
+      ["Ne", "Požadavek má určené fáze, ale v této fázi neplatí."],
+      ["prázdná buňka", "U požadavku není fáze určena."],
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Fáze umožňují rozlišit, kdy má být informace dodána. Některé požadavky mohou být relevantní již v raných stupních projektu, jiné až pro dokumentaci, realizaci, předání nebo provoz.",
+  },
+  { type: "heading", text: "Přehled listů v souboru" },
+  {
+    type: "paragraph",
+    text: "Excel může obsahovat několik listů. Jejich dostupnost závisí na zvoleném rozsahu exportu.",
+  },
+  {
+    type: "table",
+    headers: ["List", "Účel"],
+    rows: [
+      ["PROJEKT", "Základní informace o projektu, IFC verzi a dokumentaci."],
+      ["FÁZE", "Přehled projektových fází použitých v požadavcích."],
+      ["POŽADAVKY", "Hlavní tabulka informačních požadavků."],
+      ["ČÍSELNÍKY", "Seznamy povolených hodnot pro výčtové požadavky."],
+      ["PRVKY", "Přehled prvků, jejich zatřídění, IFC entit a mapování."],
+      ["KLASIFIKACE_*", "Přehled klasifikačních systémů použitých v projektu."],
+    ],
+  },
+  { type: "heading", text: "List PROJEKT" },
+  {
+    type: "paragraph",
+    text: "List PROJEKT obsahuje kontext exportu. Uvádí zejména název projektu, autora, popis, použitou IFC specifikaci, odkaz na IFC dokumentaci a Model View Definition.",
+  },
+  {
+    type: "paragraph",
+    text: "Tento list slouží k ověření, že požadavky jsou posuzovány vůči správnému projektu a správné verzi IFC.",
+  },
+  { type: "heading", text: "List FÁZE" },
+  {
+    type: "paragraph",
+    text: "List FÁZE definuje projektové fáze, které se následně používají v listu POŽADAVKY.",
+  },
+  {
+    type: "paragraph",
+    text: "Názvy fází v tomto listu odpovídají názvům fázových sloupců v listu POŽADAVKY. Díky tomu je možné zjistit, v jakém období nebo stupni dokumentace je daný požadavek relevantní.",
+  },
+  { type: "heading", text: "List ČÍSELNÍKY" },
+  {
+    type: "paragraph",
+    text: "List ČÍSELNÍKY obsahuje řízené seznamy povolených hodnot. Používá se zejména pro požadavky typu Výčet.",
+  },
+  {
+    type: "example",
+    lines: ["Název číselníku: Požární odolnost", "Hodnoty: EI15;EI30;EI45;EI60;EI90"],
+  },
+  {
+    type: "paragraph",
+    text: "Pokud je v listu POŽADAVKY uveden číselník, hodnota požadavku má vycházet z příslušného seznamu. Cílem je zajistit jednotný zápis hodnot napříč projektem.",
+  },
+  { type: "heading", text: "List PRVKY" },
+  {
+    type: "paragraph",
+    text: "List PRVKY poskytuje přehled prvků z primární klasifikace. Uvádí jejich hierarchické zařazení, IFC entitu, IFC predefined type a případně mapování na další klasifikační systémy nebo autorské nástroje.",
+  },
+  {
+    type: "paragraph",
+    text: "Tento list neslouží jako seznam jednotlivých požadavků. Slouží jako kontext a kontrolní přehled prvků, ke kterým se požadavky vztahují.",
+  },
+  { type: "heading", text: "Listy KLASIFIKACE_*" },
+  {
+    type: "paragraph",
+    text: "Listy s názvem začínajícím KLASIFIKACE_ obsahují přehled klasifikačních systémů použitých v projektu.",
+  },
+  { type: "paragraph", text: "Obvykle obsahují:" },
+  { type: "bullets", items: ["třídicí kód,", "popis,", "úroveň ve stromu klasifikace."] },
+  {
+    type: "paragraph",
+    text: "Tyto listy slouží jako slovník klasifikačních kódů a popisů. Pomáhají porozumět hodnotám použitým v listech POŽADAVKY a PRVKY.",
+  },
+  { type: "heading", text: "Shrnutí" },
+  {
+    type: "paragraph",
+    text: "Excel je profesionální pracovní přehled informačních požadavků založený na logice IDS. Každý řádek v listu POŽADAVKY určuje:",
+  },
+  {
+    type: "bullets",
+    items: [
+      "na jaký prvek se požadavek vztahuje,",
+      "jaký typ informace je požadován,",
+      "jaké pravidlo nebo hodnota se má uplatnit,",
+      "zda je požadavek povinný, volitelný nebo zakázaný,",
+      "ve kterých projektových fázích požadavek platí.",
+    ],
+  },
+  {
+    type: "paragraph",
+    text: "Při čtení tabulky je vhodné postupovat od identifikace prvku přes typ požadavku až po hodnotu, omezení a fázi. Tím lze každý řádek interpretovat jako konkrétní pravidlo pro dodání informací v rámci IFC modelu.",
+  },
+];
+
+const GUIDE_TITLE_FILL: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FF1E3A8A" },
+};
+
+const GUIDE_HEADING_FILL: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FFEFF6FF" },
+};
+
+const GUIDE_EXAMPLE_FILL: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FFF8FAFC" },
+};
+
+const estimateGuideRowHeight = (text: string): number => {
+  const lineCount = Math.max(1, Math.ceil(text.length / 115));
+  return Math.min(96, lineCount * 18);
+};
+
+const styleMergedGuideRow = (
+  sheet: ExcelJS.Worksheet,
+  rowNumber: number,
+  text: string,
+  options: {
+    font?: Partial<ExcelJS.Font>;
+    fill?: ExcelJS.Fill;
+    alignment?: Partial<ExcelJS.Alignment>;
+    height?: number;
+  } = {}
+) => {
+  sheet.mergeCells(rowNumber, 1, rowNumber, 6);
+  const row = sheet.getRow(rowNumber);
+  const cell = row.getCell(1);
+  cell.value = text;
+  cell.font = options.font ?? { size: 10, color: { argb: "FF0F172A" } };
+  cell.alignment = options.alignment ?? { vertical: "top", wrapText: true };
+  cell.border = CELL_BORDER;
+  if (options.fill) cell.fill = options.fill;
+  row.height = options.height ?? estimateGuideRowHeight(text);
+};
+
+const createGuideSheet = (workbook: ExcelJS.Workbook) => {
+  const sheet = workbook.addWorksheet("NÁVOD");
+  sheet.properties.defaultRowHeight = 18;
+
+  let rowNumber = 1;
+  const addSpacer = () => {
+    sheet.addRow([]);
+    sheet.getRow(rowNumber).height = 8;
+    rowNumber++;
+  };
+
+  GUIDE_BLOCKS.forEach((block) => {
+    if (block.type === "title") {
+      styleMergedGuideRow(sheet, rowNumber, block.text, {
+        font: { bold: true, size: 16, color: { argb: "FFFFFFFF" } },
+        fill: GUIDE_TITLE_FILL,
+        alignment: { vertical: "middle", horizontal: "left", wrapText: true },
+        height: 34,
+      });
+      rowNumber++;
+      addSpacer();
+      return;
+    }
+
+    if (block.type === "heading") {
+      styleMergedGuideRow(sheet, rowNumber, block.text, {
+        font: { bold: true, size: 12, color: { argb: "FF1E3A8A" } },
+        fill: GUIDE_HEADING_FILL,
+        alignment: { vertical: "middle", horizontal: "left", wrapText: true },
+        height: 24,
+      });
+      rowNumber++;
+      return;
+    }
+
+    if (block.type === "paragraph") {
+      styleMergedGuideRow(sheet, rowNumber, block.text);
+      rowNumber++;
+      return;
+    }
+
+    if (block.type === "bullets") {
+      block.items.forEach((item) => {
+        styleMergedGuideRow(sheet, rowNumber, `• ${item}`, {
+          alignment: { vertical: "top", wrapText: true, indent: 1 },
+        });
+        rowNumber++;
+      });
+      return;
+    }
+
+    if (block.type === "example") {
+      block.lines.forEach((line) => {
+        styleMergedGuideRow(sheet, rowNumber, line, {
+          font: { italic: true, size: 10, color: { argb: "FF334155" } },
+          fill: GUIDE_EXAMPLE_FILL,
+        });
+        rowNumber++;
+      });
+      return;
+    }
+
+    if (block.type === "table") {
+      const headerRow = sheet.getRow(rowNumber);
+      block.headers.forEach((header, index) => {
+        const cell = headerRow.getCell(index + 1);
+        cell.value = header;
+        cell.font = HEADER_FONT;
+        cell.alignment = HEADER_ALIGNMENT;
+        cell.fill = HEADER_FILL_IFC;
+        cell.border = CELL_BORDER;
+      });
+      headerRow.height = 24;
+      rowNumber++;
+
+      block.rows.forEach((cells, index) => {
+        const row = sheet.getRow(rowNumber);
+        cells.forEach((value, cellIndex) => {
+          const cell = row.getCell(cellIndex + 1);
+          cell.value = value;
+          cell.font = { size: 10, color: { argb: "FF0F172A" } };
+          cell.alignment = { vertical: "top", wrapText: true };
+          cell.border = CELL_BORDER;
+          if (index % 2 === 1) {
+            cell.fill = GUIDE_EXAMPLE_FILL;
+          }
+        });
+        row.height = Math.max(22, estimateGuideRowHeight(cells.join(" ")));
+        rowNumber++;
+      });
+      addSpacer();
+    }
+  });
+
+  finalizeSheet(sheet, [26, 82, 18, 18, 18, 18]);
+  sheet.views = [{ state: "frozen", ySplit: 1, xSplit: 0 }];
+};
+
 /**
  * Create Sheet 1: PROJEKT (metadata)
  * Bez ID a časů: Název, Autor, Popis, IFC_specifikace, IFC_dokumentace, Model_View_Definition_MVD. Červená hlavička.
@@ -927,7 +1444,8 @@ export const generateExcelWorkbook = async (
   workbook.title = project.name;
   workbook.subject = "BIM Information Requirements";
 
-  // Pořadí listů: PROJEKT, FÁZE, PRVKY, ČÍSELNÍKY (před POŽADAVKY kvůli odkazům), POŽADAVKY, Klasifikace
+  // Pořadí listů: NÁVOD, PROJEKT, FÁZE, PRVKY, ČÍSELNÍKY (před POŽADAVKY kvůli odkazům), POŽADAVKY, Klasifikace
+  createGuideSheet(workbook);
   if (selection.projekt) {
     createProjectSheet(workbook, project);
   }
