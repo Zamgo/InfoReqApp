@@ -531,13 +531,19 @@ const GUIDE_BLOCKS: GuideBlock[] = [
 const GUIDE_TITLE_FILL: ExcelJS.Fill = {
   type: "pattern",
   pattern: "solid",
-  fgColor: { argb: "FF1E3A8A" },
+  fgColor: { argb: "FF334155" },
 };
 
 const GUIDE_HEADING_FILL: ExcelJS.Fill = {
   type: "pattern",
   pattern: "solid",
-  fgColor: { argb: "FFEFF6FF" },
+  fgColor: { argb: "FFF1F5F9" },
+};
+
+const GUIDE_TABLE_HEADER_FILL: ExcelJS.Fill = {
+  type: "pattern",
+  pattern: "solid",
+  fgColor: { argb: "FFE2E8F0" },
 };
 
 const GUIDE_EXAMPLE_FILL: ExcelJS.Fill = {
@@ -567,7 +573,7 @@ const styleMergedGuideRow = (
   const cell = row.getCell(1);
   cell.value = text;
   cell.font = options.font ?? { size: 10, color: { argb: "FF0F172A" } };
-  cell.alignment = options.alignment ?? { vertical: "top", wrapText: true };
+  cell.alignment = options.alignment ?? { vertical: "top", wrapText: true, indent: 1 };
   cell.border = CELL_BORDER;
   if (options.fill) cell.fill = options.fill;
   row.height = options.height ?? estimateGuideRowHeight(text);
@@ -598,11 +604,14 @@ const createGuideSheet = (workbook: ExcelJS.Workbook) => {
     }
 
     if (block.type === "heading") {
+      if (rowNumber > 3) {
+        addSpacer();
+      }
       styleMergedGuideRow(sheet, rowNumber, block.text, {
-        font: { bold: true, size: 12, color: { argb: "FF1E3A8A" } },
+        font: { bold: true, size: 12, color: { argb: "FF334155" } },
         fill: GUIDE_HEADING_FILL,
-        alignment: { vertical: "middle", horizontal: "left", wrapText: true },
-        height: 24,
+        alignment: { vertical: "middle", horizontal: "left", wrapText: true, indent: 1 },
+        height: 26,
       });
       rowNumber++;
       return;
@@ -617,7 +626,7 @@ const createGuideSheet = (workbook: ExcelJS.Workbook) => {
     if (block.type === "bullets") {
       block.items.forEach((item) => {
         styleMergedGuideRow(sheet, rowNumber, `• ${item}`, {
-          alignment: { vertical: "top", wrapText: true, indent: 1 },
+          alignment: { vertical: "top", wrapText: true, indent: 2 },
         });
         rowNumber++;
       });
@@ -629,6 +638,7 @@ const createGuideSheet = (workbook: ExcelJS.Workbook) => {
         styleMergedGuideRow(sheet, rowNumber, line, {
           font: { italic: true, size: 10, color: { argb: "FF334155" } },
           fill: GUIDE_EXAMPLE_FILL,
+          alignment: { vertical: "top", wrapText: true, indent: 1 },
         });
         rowNumber++;
       });
@@ -640,9 +650,9 @@ const createGuideSheet = (workbook: ExcelJS.Workbook) => {
       block.headers.forEach((header, index) => {
         const cell = headerRow.getCell(index + 1);
         cell.value = header;
-        cell.font = HEADER_FONT;
+        cell.font = { bold: true, color: { argb: "FF334155" }, size: 10 };
         cell.alignment = HEADER_ALIGNMENT;
-        cell.fill = HEADER_FILL_IFC;
+        cell.fill = GUIDE_TABLE_HEADER_FILL;
         cell.border = CELL_BORDER;
       });
       headerRow.height = 24;
