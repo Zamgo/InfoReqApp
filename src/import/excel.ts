@@ -29,7 +29,7 @@ import { makeId } from "../utils/id";
 import { parseEnumValues } from "../project/enumeration";
 import { ENUM_CODELIST_ID_KEY } from "../project/enumeration";
 import { ensureProjectPhases } from "../project/phases";
-import { findNodeByCode } from "../classification/parser";
+import { collectLeaves, findNodeByCode } from "../classification/parser";
 
 const MAX_COLS = 80;
 
@@ -45,7 +45,13 @@ function getCellPlainText(cell: ExcelJS.Cell): string {
 
 /** Nesevřitelná mezera z Excelu → normální mezera pro porovnání hlaviček */
 function normalizeHeaderLabel(raw: string): string {
-  return raw.replace(/\u00a0/g, " ").trim().toLowerCase();
+  return raw
+    .replace(/\u00a0/g, " ")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\s_-]+/g, "");
 }
 
 function findCol(row: ExcelJS.Row, header: string): number {
@@ -362,14 +368,37 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     }
     hierarchyCols.sort((a, b) => a.level - b.level);
     const mappedSystemNames = mappedColInfos.map((mc) => mc.name);
-    const primaryClassificationSheet =
-      klasifikaceSheets.find((ws) => namesMatch(getClassificationSheetBaseName(ws), "Primární klasifikace")) ??
-      klasifikaceSheets.find(
-        (ws) => !mappedSystemNames.some((name) => namesMatch(getClassificationSheetBaseName(ws), name))
-      );
-    const primaryNodesFromSheet = primaryClassificationSheet
-      ? readClassificationNodesFromSheet(primaryClassificationSheet)
-      : [];
+    const sourceCodes = new Set<string>();
+    if (colKod >= 0) {
+      for (let r = 2; r <= (sourceSheet.rowCount ?? 0); r++) {
+        const code = getVal(sourceSheet.getRow(r), colKod);
+        if (code) sourceCodes.add(code);
+      }
+    }
+    const classificationSheetCandidates = klasifikaceSheets.map((sheet) => {
+      const nodes = readClassificationNodesFromSheet(sheet);
+      const codes = collectLeaves(nodes).map((node) => node.code);
+      const score = sourceCodes.size > 0 ? codes.filter((code) => sourceCodes.has(code)).length : 0;
+      return {
+        sheet,
+        baseName: getClassificationSheetBaseName(sheet),
+        nodes,
+        score,
+      };
+    });
+    const primaryClassificationCandidate =
+      classificationSheetCandidates.find(
+        (candidate) => candidate.nodes.length > 0 && namesMatch(candidate.baseName, "Primární klasifikace")
+      ) ??
+      [...classificationSheetCandidates]
+        .filter(
+          (candidate) =>
+            candidate.nodes.length > 0 &&
+            !mappedSystemNames.some((name) => namesMatch(candidate.baseName, name))
+        )
+        .sort((a, b) => b.score - a.score)[0];
+    const primaryClassificationSheet = primaryClassificationCandidate?.sheet;
+    const primaryNodesFromSheet = primaryClassificationCandidate?.nodes ?? [];
     if (primaryClassificationSheet && primaryNodesFromSheet.length === 0) {
       warnings.push(`List ${primaryClassificationSheet.name} se nepodařilo načíst jako klasifikaci – použita hierarchie z požadavků.`);
     }
@@ -475,14 +504,8 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     classificationEntries.push(primaryEntry);
 
     for (const mc of mappedColInfos) {
-      const entry = klasifikaceSheets
-        .map((ws) => ({
-          sheet: ws,
-          baseName: getClassificationSheetBaseName(ws),
-        }))
-        .find((x) => namesMatch(x.baseName, mc.name))
-        ?.sheet;
-      let nodes: ClassificationNode[] = entry ? readClassificationNodesFromSheet(entry) : [];
+      const entry = classificationSheetCandidates.find((candidate) => namesMatch(candidate.baseName, mc.name));
+      let nodes: ClassificationNode[] = entry?.nodes ?? [];
       if (nodes.length === 0) {
         const values = new Set<string>();
         for (let r = 2; r <= (sourceSheet.rowCount ?? 0); r++) {
