@@ -333,6 +333,7 @@ interface Props {
   onAddPhase: (phase: Phase) => void;
   onUpdatePhase: (phase: Phase) => void;
   onDeletePhase: (id: string) => void;
+  onMovePhase: (id: string, direction: -1 | 1) => void;
   purposeOfUseEntries: PurposeOfUseEntry[];
   onAddPurposeOfUse: (entry: PurposeOfUseEntry) => void;
   onUpdatePurposeOfUse: (entry: PurposeOfUseEntry) => void;
@@ -486,6 +487,7 @@ export const ClassificationPanel: React.FC<Props> = ({
   onAddPhase,
   onUpdatePhase,
   onDeletePhase,
+  onMovePhase,
   purposeOfUseEntries = [],
   onAddPurposeOfUse,
   onUpdatePurposeOfUse,
@@ -758,6 +760,7 @@ export const ClassificationPanel: React.FC<Props> = ({
             onAddPhase={onAddPhase}
             onUpdatePhase={onUpdatePhase}
             onDeletePhase={onDeletePhase}
+            onMovePhase={onMovePhase}
           />
         </div>
       )}

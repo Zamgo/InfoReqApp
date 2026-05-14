@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import type { Phase } from "../../project/types";
 
 interface Props {
@@ -6,6 +6,7 @@ interface Props {
   onAddPhase: (phase: Phase) => void;
   onUpdatePhase: (phase: Phase) => void;
   onDeletePhase: (id: string) => void;
+  onMovePhase: (id: string, direction: -1 | 1) => void;
 }
 
 interface EditingPhase {
@@ -20,13 +21,12 @@ export const PhaseManager: React.FC<Props> = ({
   onAddPhase,
   onUpdatePhase,
   onDeletePhase,
+  onMovePhase,
 }) => {
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [editingPhase, setEditingPhase] = useState<EditingPhase | null>(null);
-
-  const sortedPhases = useMemo(() => [...phases].sort((a, b) => a.code.localeCompare(b.code)), [phases]);
 
   const handleAdd = () => {
     if (!code.trim() || !name.trim()) return;
@@ -64,7 +64,7 @@ export const PhaseManager: React.FC<Props> = ({
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-hidden">
       <div className="flex-shrink-0">
         <div className="text-sm font-semibold text-slate-800">Správa fází</div>
-        <div className="text-xs text-slate-500">Přidejte nebo upravte fáze projektu</div>
+        <div className="text-xs text-slate-500">Přidejte, upravte nebo seřaďte fáze projektu</div>
       </div>
       <div className="flex-shrink-0 grid grid-cols-1 gap-2 md:grid-cols-3">
         <input
@@ -98,6 +98,7 @@ export const PhaseManager: React.FC<Props> = ({
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
             <tr>
+              <th className="px-3 py-2">Pořadí</th>
               <th className="px-3 py-2">Kód</th>
               <th className="px-3 py-2">Název</th>
               <th className="px-3 py-2">Popis</th>
@@ -105,10 +106,11 @@ export const PhaseManager: React.FC<Props> = ({
             </tr>
           </thead>
           <tbody>
-            {sortedPhases.map((phase) => (
+            {phases.map((phase, index) => (
               <tr key={phase.id} className="border-t border-slate-200">
                 {editingPhase?.id === phase.id ? (
                   <>
+                    <td className="px-3 py-2 text-xs text-slate-500">{index + 1}</td>
                     <td className="px-3 py-2">
                       <input
                         className="w-full rounded border border-red-300 px-2 py-1 text-sm font-semibold"
@@ -152,6 +154,27 @@ export const PhaseManager: React.FC<Props> = ({
                   </>
                 ) : (
                   <>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-1">
+                        <span className="mr-1 text-xs text-slate-500">{index + 1}</span>
+                        <button
+                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => onMovePhase(phase.id, -1)}
+                          disabled={editingPhase !== null || index === 0}
+                          title="Posunout nahoru"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => onMovePhase(phase.id, 1)}
+                          disabled={editingPhase !== null || index === phases.length - 1}
+                          title="Posunout dolů"
+                        >
+                          ↓
+                        </button>
+                      </div>
+                    </td>
                     <td className="px-3 py-2 font-semibold text-slate-800">{phase.code}</td>
                     <td className="px-3 py-2 text-slate-800">{phase.name}</td>
                     <td className="px-3 py-2 text-slate-600">{phase.description}</td>
@@ -177,9 +200,9 @@ export const PhaseManager: React.FC<Props> = ({
                 )}
               </tr>
             ))}
-            {!sortedPhases.length && (
+            {!phases.length && (
               <tr>
-                <td className="px-3 py-3 text-sm text-slate-500" colSpan={4}>
+                <td className="px-3 py-3 text-sm text-slate-500" colSpan={5}>
                   Žádné fáze nejsou definovány.
                 </td>
               </tr>

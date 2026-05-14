@@ -1034,6 +1034,22 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     updateProjectWithHistory(next);
   };
 
+  const onMovePhase = (phaseId: string, direction: -1 | 1) => {
+    if (!project) return;
+    const currentIndex = project.phases.findIndex((p) => p.id === phaseId);
+    const targetIndex = currentIndex + direction;
+    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= project.phases.length) return;
+
+    const nextPhases = [...project.phases];
+    [nextPhases[currentIndex], nextPhases[targetIndex]] = [nextPhases[targetIndex], nextPhases[currentIndex]];
+    const next = ensureProjectPhases({
+      ...project,
+      phases: nextPhases,
+      updatedAt: new Date().toISOString(),
+    });
+    updateProjectWithHistory(next);
+  };
+
   const onAddPurposeOfUse = (entry: import("./project/types").PurposeOfUseEntry) => {
     if (!project) return;
     const next: Project = {
@@ -2546,6 +2562,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
             onAddPhase={onAddPhase}
             onUpdatePhase={onUpdatePhase}
             onDeletePhase={onDeletePhase}
+            onMovePhase={onMovePhase}
             purposeOfUseEntries={project?.purposeOfUseEntries ?? []}
             onAddPurposeOfUse={onAddPurposeOfUse}
             onUpdatePurposeOfUse={onUpdatePurposeOfUse}
