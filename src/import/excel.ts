@@ -66,6 +66,19 @@ function findColFirst(row: ExcelJS.Row, headers: string[]): number {
   return -1;
 }
 
+function normalizeNameForMatch(raw: string): string {
+  return normalizeHeaderLabel(raw)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function namesMatch(a: string, b: string): boolean {
+  const left = normalizeNameForMatch(a);
+  const right = normalizeNameForMatch(b);
+  if (!left || !right) return false;
+  return left === right || left.startsWith(right) || right.startsWith(left);
+}
+
 function getVal(row: ExcelJS.Row, col: number): string {
   if (col < 1) return "";
   return getCellPlainText(row.getCell(col));
@@ -120,6 +133,44 @@ const TYP_POZADAVKU = {
 const KLASIFIKACE_LIST_PREFIX = "KLASIFIKACE_";
 /** Prefix pro list číselníku: list ČÍSELNÍK_<název> obsahuje hodnoty číselníku */
 const CISELNIK_LIST_PREFIX = "ČÍSELNÍK_";
+
+function getClassificationSheetBaseName(sheet: ExcelJS.Worksheet): string {
+  return (sheet.name || "").replace(KLASIFIKACE_LIST_PREFIX, "");
+}
+
+function readClassificationNodesFromSheet(sheet: ExcelJS.Worksheet): ClassificationNode[] {
+  const h1 = sheet.getRow(1);
+  const cCode = findColFirst(h1, ["Třídící_kód", "Třídicí_kód", "Třidící_kód", "Třidicí_kód", "Kód"]);
+  const cPopis = findCol(h1, "Popis");
+  const cUroven = findCol(h1, "Úroveň");
+  if (cCode < 0 || cPopis < 0 || cUroven < 0) return [];
+
+  const roots: ClassificationNode[] = [];
+  const stack: ClassificationNode[] = [];
+  for (let r = 2; r <= (sheet.rowCount ?? 0); r++) {
+    const row = sheet.getRow(r);
+    const code = getVal(row, cCode);
+    const description = getVal(row, cPopis);
+    const levelRaw = getVal(row, cUroven);
+    const levelParsed = Number(levelRaw);
+    const level = Number.isFinite(levelParsed) && levelParsed > 0 ? levelParsed : stack.length + 1;
+    if (!code && !description) continue;
+
+    const node: ClassificationNode = {
+      code: code || description,
+      description: description || code,
+      level,
+      children: [],
+    };
+    while (stack.length && stack[stack.length - 1].level >= node.level) stack.pop();
+    const parent = stack[stack.length - 1];
+    if (parent) parent.children.push(node);
+    else roots.push(node);
+    stack.push(node);
+  }
+
+  return roots;
+}
 
 /**
  * Načte hodnoty číselníku z listu se jménem rovným název nebo ČÍSELNÍK_<název>.
@@ -287,10 +338,13 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
   const classificationEntries: ClassificationSystemEntry[] = [];
   let primaryEntry: ClassificationSystemEntry | undefined;
   const mappedSystemCols: Array<{ header: string; entry: ClassificationSystemEntry; isAuthoring: boolean }> = [];
+  const klasifikaceSheets = wb.worksheets.filter(
+    (ws) => ws.name && ws.name.startsWith(KLASIFIKACE_LIST_PREFIX)
+  );
 
   if (sourceSheet) {
     const h1 = sourceSheet.getRow(1);
-    const colKod = findCol(h1, "Třídící_kód");
+    const colKod = findColFirst(h1, ["Třídící_kód", "Třídicí_kód", "Třidící_kód", "Třidicí_kód"]);
     const hierarchyCols: Array<{ col: number; level: number }> = [];
     const mappedColInfos: Array<{ header: string; col: number; name: string; isAuthoring: boolean }> = [];
     for (let i = 1; i <= MAX_COLS; i++) {
@@ -307,6 +361,18 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
       }
     }
     hierarchyCols.sort((a, b) => a.level - b.level);
+    const mappedSystemNames = mappedColInfos.map((mc) => mc.name);
+    const primaryClassificationSheet =
+      klasifikaceSheets.find((ws) => namesMatch(getClassificationSheetBaseName(ws), "Primární klasifikace")) ??
+      klasifikaceSheets.find(
+        (ws) => !mappedSystemNames.some((name) => namesMatch(getClassificationSheetBaseName(ws), name))
+      );
+    const primaryNodesFromSheet = primaryClassificationSheet
+      ? readClassificationNodesFromSheet(primaryClassificationSheet)
+      : [];
+    if (primaryClassificationSheet && primaryNodesFromSheet.length === 0) {
+      warnings.push(`List ${primaryClassificationSheet.name} se nepodařilo načíst jako klasifikaci – použita hierarchie z požadavků.`);
+    }
 
     const pathToCode = (path: string[]): string =>
       path.filter(Boolean).join("::") || "";
@@ -366,7 +432,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
       return roots;
     };
 
-    const primaryNodes = buildTree();
+    const primaryNodes = primaryNodesFromSheet.length > 0 ? primaryNodesFromSheet : buildTree();
     const looksLikeIfcHierarchy = (): boolean => {
       if (hierarchyCols.length === 0) return false;
       const firstLevelCol = hierarchyCols[0]?.col;
@@ -400,7 +466,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     primaryEntry = {
       id: makeId(),
       name: isIfcPrimary ? "IFC entity" : "Primární klasifikace",
-      sourceName: sourceSheet.name || "Zdroj",
+      sourceName: primaryNodesFromSheet.length > 0 && primaryClassificationSheet ? primaryClassificationSheet.name : sourceSheet.name || "Zdroj",
       nodes: primaryNodes,
       isPrimary: true,
       isIfcSystem: isIfcPrimary,
@@ -408,42 +474,15 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
     };
     classificationEntries.push(primaryEntry);
 
-    const klasifikaceSheets = wb.worksheets.filter(
-      (ws) => ws.name && ws.name.startsWith(KLASIFIKACE_LIST_PREFIX)
-    );
     for (const mc of mappedColInfos) {
-      let entry = klasifikaceSheets
+      const entry = klasifikaceSheets
         .map((ws) => ({
           sheet: ws,
-          baseName: ws.name!.replace(KLASIFIKACE_LIST_PREFIX, ""),
+          baseName: getClassificationSheetBaseName(ws),
         }))
-        .find((x) => x.baseName === mc.name)
+        .find((x) => namesMatch(x.baseName, mc.name))
         ?.sheet;
-      let nodes: ClassificationNode[] = [];
-      if (entry) {
-        const sh1 = entry.getRow(1);
-        const cCode = findCol(sh1, "Třídící_kód") >= 0 ? findCol(sh1, "Třídící_kód") : findCol(sh1, "Kód");
-        const cPopis = findCol(sh1, "Popis");
-        const cUroven = findCol(sh1, "Úroveň");
-        if (cCode >= 0 && cPopis >= 0 && cUroven >= 0) {
-          const flat: Array<{ code: string; description: string; level: number }> = [];
-          for (let r = 2; r <= (entry.rowCount ?? 0); r++) {
-            const rw = entry.getRow(r);
-            const code = getVal(rw, cCode);
-            const desc = getVal(rw, cPopis);
-            const lvl = Number(rw.getCell(cUroven).value) || flat.length + 1;
-            if (code || desc) flat.push({ code: code || desc, description: desc || code, level: lvl });
-          }
-          flat.sort((a, b) => a.level - b.level || (a.code || "").localeCompare(b.code || ""));
-          const stack: ClassificationNode[] = [];
-          flat.forEach((f) => {
-            const node: ClassificationNode = { code: f.code, description: f.description, level: f.level, children: [] };
-            while (stack.length && stack[stack.length - 1].level >= node.level) stack.pop();
-            (stack.length ? stack[stack.length - 1].children! : nodes).push(node);
-            stack.push(node);
-          });
-        }
-      }
+      let nodes: ClassificationNode[] = entry ? readClassificationNodesFromSheet(entry) : [];
       if (nodes.length === 0) {
         const values = new Set<string>();
         for (let r = 2; r <= (sourceSheet.rowCount ?? 0); r++) {
@@ -472,7 +511,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
   const objects: Record<string, ProjectObject> = {};
   if (sourceSheet && primaryEntry) {
     const h1 = sourceSheet.getRow(1);
-    const colKod = findCol(h1, "Třídící_kód");
+    const colKod = findColFirst(h1, ["Třídící_kód", "Třídicí_kód", "Třidící_kód", "Třidicí_kód"]);
     const hierarchyColsObj: Array<{ col: number; level: number }> = [];
     for (let i = 1; i <= MAX_COLS; i++) {
       const v = getVal(h1, i);
@@ -590,7 +629,7 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
 
   if (pozadavkySheet) {
     const h1 = pozadavkySheet.getRow(1);
-    const colKodPoz = findCol(h1, "Třídící_kód");
+    const colKodPoz = findColFirst(h1, ["Třídící_kód", "Třídicí_kód", "Třidící_kód", "Třidicí_kód"]);
     const hierarchyColsPoz: Array<{ col: number; level: number }> = [];
     for (let i = 1; i <= MAX_COLS; i++) {
       const v = getVal(h1, i);
