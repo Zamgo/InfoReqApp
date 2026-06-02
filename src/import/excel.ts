@@ -865,6 +865,8 @@ export async function importProjectFromExcel(file: File): Promise<ExcelImportRes
           ? skupina.split(".", 2)
           : [skupina, ""];
         const psetName = skupina || psetNameFallback || "_NEW_";
+        // Preskočiť riadky bez názvu skupiny – vznikli by neplatné _NEW_ placeholder skupiny
+        if (psetName.startsWith("_NEW_")) continue;
         const source = psetName.startsWith("Qto_")
           ? ("QTO" as const)
           : psetName.startsWith("Pset_")

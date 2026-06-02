@@ -1280,6 +1280,8 @@ const createZdrojSheet = (
     });
 
     obj.requirements.properties.forEach((prop: PropertyRequirement) => {
+      // Preskočiť nedokončené skupiny s dočasným názvom _NEW_ – nemajú byť v exporte
+      if (prop.psetName?.startsWith("_NEW_")) return;
       const clId = getCodeListId(prop.extensions);
       addRow(
         "Vlastnost",
