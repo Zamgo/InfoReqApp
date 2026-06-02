@@ -2649,9 +2649,11 @@ export const ObjectDetail: React.FC<Props> = ({
     onChangeRef.current({ ...objectRef.current, ...pendingUpdatesRef.current });
   }, [isLocked]);
 
-  // Vyčistit propertyName, které obsahují _NEW_ nebo se shodují s psetName
+  // Vyčistit propertyName, které obsahují _NEW_ nebo se shodují s psetName.
+  // Vždy operuje nad object.requirements (plná data), nikoli nad effectiveRequirements,
+  // protože v režimu skupin je effectiveRequirements pouze výřez jedné skupiny.
   useEffect(() => {
-    const needsCleanup = effectiveRequirements.properties.some((prop) => {
+    const needsCleanup = object.requirements.properties.some((prop) => {
       const propPropertyName = prop.propertyName || "";
       const propPsetName = prop.psetName || "";
       return propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName;
@@ -2659,9 +2661,9 @@ export const ObjectDetail: React.FC<Props> = ({
 
     if (needsCleanup) {
       const next = {
-        ...effectiveRequirements,
-        attributes: [...effectiveRequirements.attributes],
-        properties: effectiveRequirements.properties.map((prop) => {
+        ...object.requirements,
+        attributes: [...object.requirements.attributes],
+        properties: object.requirements.properties.map((prop) => {
           const propPropertyName = prop.propertyName || "";
           const propPsetName = prop.psetName || "";
           if (propPropertyName.startsWith("_NEW_") || propPropertyName === propPsetName) {
@@ -2669,21 +2671,22 @@ export const ObjectDetail: React.FC<Props> = ({
           }
           return prop;
         }),
-        relations: [...effectiveRequirements.relations],
-        classifications: [...effectiveRequirements.classifications],
-        materials: [...effectiveRequirements.materials],
+        relations: [...object.requirements.relations],
+        classifications: [...object.requirements.classifications],
+        materials: [...object.requirements.materials],
       };
       updateObject({ requirements: next });
     }
-  }, [effectiveRequirements.properties, object]);
+  }, [object]);
 
-  // Odstranit PredefinedType z atributů – řeší se pouze v identifikačních údajích (entita)
+  // Odstranit PredefinedType z atributů – řeší se pouze v identifikačních údajích (entita).
+  // Vždy operuje nad object.requirements, aby v režimu skupin nedošlo k přepsání plných dat.
   useEffect(() => {
-    const hasPredefinedTypeAttr = effectiveRequirements.attributes.some((a) => a.attribute === "PredefinedType");
+    const hasPredefinedTypeAttr = object.requirements.attributes.some((a) => a.attribute === "PredefinedType");
     if (hasPredefinedTypeAttr) {
-      const nextAttrs = effectiveRequirements.attributes.filter((a) => a.attribute !== "PredefinedType");
+      const nextAttrs = object.requirements.attributes.filter((a) => a.attribute !== "PredefinedType");
       updateObject({
-        requirements: { ...effectiveRequirements, attributes: nextAttrs },
+        requirements: { ...object.requirements, attributes: nextAttrs },
       });
     }
   }, [object]);
