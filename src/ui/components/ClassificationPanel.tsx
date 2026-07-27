@@ -370,6 +370,10 @@ interface Props {
   /** Dočasný filtr levé hierarchie podle specifikace otevřené v pravém panelu. */
   idsSpecification?: IdsProjectSpecification | null;
   onClearIdsSpecificationFocus?: () => void;
+  /** Dočasný filtr stromu podle vybrané globální skupiny požadavků. */
+  focusedObjectCodes?: string[];
+  focusedContextLabel?: string;
+  onClearFocusedContext?: () => void;
 }
 
 const TreeItem: React.FC<{
@@ -519,6 +523,9 @@ export const ClassificationPanel: React.FC<Props> = ({
   onAddIfcClassificationSystem,
   idsSpecification,
   onClearIdsSpecificationFocus,
+  focusedObjectCodes,
+  focusedContextLabel,
+  onClearFocusedContext,
 }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "useCases" | "codelists" | "classificationsystems">("hierarchy");
@@ -535,6 +542,8 @@ export const ClassificationPanel: React.FC<Props> = ({
     () => getHierarchyViewOptions(classification, primarySystem, classificationSystemEntries, objects ?? {}),
     [classification, primarySystem, classificationSystemEntries, objects]
   );
+  const hasGroupContext = focusedObjectCodes !== undefined;
+  const hasHierarchyContext = Boolean(idsSpecification) || hasGroupContext;
 
   const idsClassificationFacets = useMemo(
     () =>
@@ -552,15 +561,18 @@ export const ClassificationPanel: React.FC<Props> = ({
   );
 
   const hierarchyViewOptions = useMemo(() => {
-    if (!idsSpecification) return baseHierarchyViewOptions;
+    if (!hasHierarchyContext) return baseHierarchyViewOptions;
     return [
-      { value: "ids:entities" as PanelHierarchyViewMode, label: "IDS – dotčené entity" },
+      {
+        value: "ids:entities" as PanelHierarchyViewMode,
+        label: idsSpecification ? "IDS – dotčené entity" : "Skupina – dotčené objekty",
+      },
       ...(idsClassificationFacets.length
         ? [{ value: "ids:classifications" as PanelHierarchyViewMode, label: "IDS – klasifikační pravidla" }]
         : []),
       ...baseHierarchyViewOptions,
     ];
-  }, [baseHierarchyViewOptions, idsSpecification, idsClassificationFacets.length]);
+  }, [baseHierarchyViewOptions, hasHierarchyContext, idsSpecification, idsClassificationFacets.length]);
 
   const idsObjectCodes = useMemo(
     () =>
@@ -568,6 +580,10 @@ export const ClassificationPanel: React.FC<Props> = ({
         ? getIdsSpecificationObjectCodes(idsSpecification, objects ?? {})
         : new Set<string>(),
     [idsSpecification, objects],
+  );
+  const contextObjectCodes = useMemo(
+    () => hasGroupContext ? new Set(focusedObjectCodes ?? []) : idsObjectCodes,
+    [hasGroupContext, focusedObjectCodes, idsObjectCodes],
   );
 
   const sourceViewMode: HierarchyViewMode =
@@ -602,10 +618,10 @@ export const ClassificationPanel: React.FC<Props> = ({
 
   const baseNodes = useMemo(
     () =>
-      idsSpecification
-        ? filterHierarchyByObjectCodes(unfilteredViewNodes, idsObjectCodes)
+      hasHierarchyContext
+        ? filterHierarchyByObjectCodes(unfilteredViewNodes, contextObjectCodes)
         : unfilteredViewNodes,
-    [idsSpecification, unfilteredViewNodes, idsObjectCodes],
+    [hasHierarchyContext, unfilteredViewNodes, contextObjectCodes],
   );
 
   const idsEntitySummary = useMemo(() => {
@@ -659,9 +675,9 @@ export const ClassificationPanel: React.FC<Props> = ({
       Object.keys(objects ?? {}).filter(
         (code) =>
           !codesInTree.has(code) &&
-          (!idsSpecification || idsObjectCodes.has(code)),
+          (!hasHierarchyContext || contextObjectCodes.has(code)),
       ),
-    [objects, codesInTree, idsSpecification, idsObjectCodes],
+    [objects, codesInTree, hasHierarchyContext, contextObjectCodes],
   );
   const filteredOrphanCodes = useMemo(() => {
     if (!search.trim() || orphanObjectCodes.length === 0) return orphanObjectCodes;
@@ -694,7 +710,7 @@ export const ClassificationPanel: React.FC<Props> = ({
   }, [viewMode, primarySystem, classificationSystemEntries]);
 
   useEffect(() => {
-    if (idsSpecification) {
+    if (hasHierarchyContext) {
       setActiveTab("hierarchy");
       setViewMode("ids:entities");
       setSearch("");
@@ -707,7 +723,7 @@ export const ClassificationPanel: React.FC<Props> = ({
         ? "classification"
         : current,
     );
-  }, [idsSpecification?.id]);
+  }, [hasHierarchyContext, idsSpecification?.id, focusedContextLabel, focusedObjectCodes]);
 
   // Pokud aktuální pohled už není v seznamu (např. změna primárního systému), přepni na hlavní klasifikaci
   useEffect(() => {
@@ -770,6 +786,34 @@ export const ClassificationPanel: React.FC<Props> = ({
               </select>
             </div>
           </div>
+          {hasGroupContext && (
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-950">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold">Kontext skupiny požadavků</div>
+                  <div className="mt-0.5 break-words">
+                    {focusedContextLabel || "Vybraná skupina"}
+                  </div>
+                </div>
+                {onClearFocusedContext && (
+                  <button
+                    type="button"
+                    onClick={onClearFocusedContext}
+                    className="shrink-0 rounded border border-amber-300 bg-white px-2 py-1 text-[11px] font-semibold text-amber-800 hover:bg-amber-100"
+                  >
+                    Zrušit
+                  </button>
+                )}
+              </div>
+              <div className="mt-1.5">
+                <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                  {contextObjectCodes.size === 1
+                    ? "1 dotčený objekt"
+                    : `${contextObjectCodes.size} dotčených objektů`}
+                </span>
+              </div>
+            </div>
+          )}
           {idsSpecification && (
             <div className="rounded-md border border-violet-300 bg-violet-50 px-2.5 py-2 text-xs text-violet-950">
               <div className="flex items-start justify-between gap-2">

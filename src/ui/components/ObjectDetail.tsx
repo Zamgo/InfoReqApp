@@ -716,7 +716,17 @@ interface Props {
   project?: Project | null;
   /** Otevřená canonical IDS specifikace řídí dočasný kontext levé hierarchie. */
   onFocusIdsSpecification?: (specification: IdsProjectSpecification | null) => void;
+  onFocusRequirementGroup?: (group: RequirementItemGroup | null) => void;
   focusedIdsSpecificationId?: string;
+  onSaveIdsSpecification?: (specification: IdsProjectSpecification) => void;
+  onDuplicateIdsSpecification?: (specificationId: string) => void;
+  onDeleteIdsSpecification?: (specificationId: string) => void;
+  onConvertProjectGroupToIds?: (group: RequirementItemGroup) => void;
+  onAssignIdsGroup?: (
+    group: RequirementItemGroup,
+    objectCodes: string[],
+    mode: "new-specification" | "reassign-source",
+  ) => void;
   onSaveEnumAsCodeList: (opts: { objectCode: string; propertyId: string; name: string; values: string[]; link: boolean }) => void;
   /** Přidat vybranou entitu/PredefinedType do IFC hierarchie projektu (když není v hierarchii) */
   /** Přidá objekt (podle object.code) do IFC hierarchie – bez duplikátu, zůstane stejný objekt. */
@@ -2121,7 +2131,13 @@ export const ObjectDetail: React.FC<Props> = ({
   classificationSystemEntries,
   project,
   onFocusIdsSpecification,
+  onFocusRequirementGroup,
   focusedIdsSpecificationId,
+  onSaveIdsSpecification,
+  onDuplicateIdsSpecification,
+  onDeleteIdsSpecification,
+  onConvertProjectGroupToIds,
+  onAssignIdsGroup,
   onSaveEnumAsCodeList,
   onAddToIfcHierarchy,
   onCopyObject,
@@ -2178,6 +2194,7 @@ export const ObjectDetail: React.FC<Props> = ({
     }
     return "object";
   });
+  const [editIdsSpecificationId, setEditIdsSpecificationId] = useState<string | null>(null);
   const selectedPredefinedType = object.predefinedType.mode === "ENUM"
     ? object.predefinedType.value
     : undefined;
@@ -4082,6 +4099,7 @@ export const ObjectDetail: React.FC<Props> = ({
             }`}
             onClick={() => {
               setRequirementsViewMode("object");
+              onFocusRequirementGroup?.(null);
               try {
                 localStorage.setItem("infoReqApp_requirementsViewMode", "object");
               } catch {
@@ -4100,6 +4118,7 @@ export const ObjectDetail: React.FC<Props> = ({
             }`}
             onClick={() => {
               setRequirementsViewMode("specifications");
+              onFocusRequirementGroup?.(null);
               try {
                 localStorage.setItem("infoReqApp_requirementsViewMode", "specifications");
               } catch {
@@ -4262,6 +4281,10 @@ export const ObjectDetail: React.FC<Props> = ({
           predefinedType={selectedPredefinedType}
           onFocusSpecification={onFocusIdsSpecification}
           focusedSpecificationId={focusedIdsSpecificationId}
+          editSpecificationId={editIdsSpecificationId}
+          onSaveSpecification={onSaveIdsSpecification}
+          onDuplicateSpecification={onDuplicateIdsSpecification}
+          onDeleteSpecification={onDeleteIdsSpecification}
         />
       )}
 
@@ -8894,12 +8917,28 @@ export const ObjectDetail: React.FC<Props> = ({
             return (
               <RequirementGroupsPanel
                 project={project as Project}
+                ifcEntity={object.ifcEntity}
+                predefinedType={selectedPredefinedType}
                 selectedFingerprint={selectedItemGroup?.fingerprint}
-                onSelectGroup={(fp, kind) => setSelectedItemGroup(fp && kind ? { kind, fingerprint: fp } : null)}
+                onSelectGroup={(fp, kind, group) => {
+                  setSelectedItemGroup(fp && kind ? { kind, fingerprint: fp } : null);
+                  onFocusRequirementGroup?.(group ?? null);
+                }}
                 onAssignGroupToObjects={onAssignGroupToObjects}
                 onMoveGroupToKind={onMoveGroupToKind}
+                onEditIdsGroup={(group) => {
+                  const specificationId = group.idsReference?.specificationId;
+                  if (!specificationId) return;
+                  setEditIdsSpecificationId(specificationId);
+                  setRequirementsViewMode("specifications");
+                  onFocusIdsSpecification?.(
+                    project.idsSpecifications?.find((item) => item.id === specificationId) ?? null,
+                  );
+                }}
+                onAssignIdsGroup={onAssignIdsGroup}
+                onConvertProjectGroupToIds={onConvertProjectGroupToIds}
               >
-                {selectedItemGroup && selectedItemGroupData && (
+                {selectedItemGroup && selectedItemGroupData?.origin === "project" && (
                   <>
                     <div className="px-4 py-1.5 text-xs text-slate-600 border-b border-slate-200 bg-amber-50/50">
                       Změny se aplikují na {selectedItemGroupData.objectCodes.length} objektů.
@@ -8923,6 +8962,22 @@ export const ObjectDetail: React.FC<Props> = ({
               />
               {requirementsViewMode === "object" && idsProjectedRequirementCount > 0 && (
                 <div className="border-b border-violet-200 bg-violet-50 px-4 py-2 text-xs text-violet-900">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    {entityIdsSpecifications.map((specification, index) => (
+                      <button
+                        type="button"
+                        key={specification.id}
+                        className="rounded border border-violet-300 bg-white px-2 py-1 text-[10px] font-semibold text-violet-800 hover:bg-violet-100"
+                        onClick={() => {
+                          setEditIdsSpecificationId(specification.id);
+                          setRequirementsViewMode("specifications");
+                          onFocusIdsSpecification?.(specification);
+                        }}
+                      >
+                        Upravit IDS #{index + 1}: {specification.name || specification.identifier}
+                      </button>
+                    ))}
+                  </div>
                   <span className="font-semibold">
                     IDS: {idsProjectedRequirementCount} odvozených facetů
                   </span>

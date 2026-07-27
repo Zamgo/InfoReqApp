@@ -248,6 +248,33 @@ export interface IdsValueConstraint {
 
 export type IdsFacetCardinality = "required" | "prohibited" | "optional";
 
+/**
+ * Interní rozsah platnosti používaný authoring aplikací. Není součástí IDS XML.
+ * Prázdný rozsah znamená „všude“, facet bez scope dědí scope specifikace.
+ */
+export interface IdsAuthoringScope {
+  phaseIds?: string[];
+  useCaseMode?: UseCaseMode;
+  useCaseIds?: string[];
+}
+
+/** Interní authoring údaje, které standardní IDS 1.0 neumí přenést. */
+export interface IdsAuthoringMetadata {
+  scope?: IdsAuthoringScope;
+  translations?: Record<string, string>;
+  description?: string;
+  note?: string;
+  examples?: string;
+  unit?: string;
+}
+
+/** Údaje pro bezpečný třícestný reimport IDS. */
+export interface IdsImportTracking {
+  sourceKey: string;
+  lastAcceptedHash: string;
+  lastSeenHash?: string;
+}
+
 interface IdsProjectFacetBase {
   /** Stabilní ID facetu v rámci projektu. */
   id: string;
@@ -255,6 +282,8 @@ interface IdsProjectFacetBase {
   cardinality?: IdsFacetCardinality;
   instructions?: string;
   uri?: string;
+  /** Aplikační metadata; neexportují se do čistého IDS XML. */
+  authoring?: IdsAuthoringMetadata;
 }
 
 export interface IdsProjectEntityFacet extends IdsProjectFacetBase {
@@ -317,6 +346,10 @@ export interface IdsProjectSpecification extends IdsSpecMetadata {
   applicability: IdsProjectFacet[];
   requirements: IdsProjectFacet[];
   source: "imported" | "authored";
+  /** Aplikační metadata; neexportují se do čistého IDS XML. */
+  authoring?: IdsAuthoringMetadata;
+  /** Stabilní informace pro detekci konfliktů při opakovaném importu. */
+  importTracking?: IdsImportTracking;
 }
 
 /** Zachovaná vazba importovaných IDS facetů na původní specifikaci. */

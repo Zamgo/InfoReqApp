@@ -14,6 +14,47 @@ import type { ClassificationNode } from "../classification/types";
 import { ENUM_CODELIST_ID_KEY } from "../project/enumeration";
 import { collectLeaves, getPathToNode, findNodeByCode } from "../classification/parser";
 import { getIfcDocumentationBaseUrl, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
+import {
+  getIdsProjectedFacetId,
+  getIdsProjectedFacetSection,
+  projectIdsRequirementsForEntity,
+} from "../ids/requirementProjection";
+
+const withCanonicalIdsForExcel = (project: Project): Project => {
+  if (!(project.idsSpecifications?.length)) return project;
+  const objects = Object.fromEntries(Object.entries(project.objects).map(([code, object]) => {
+    const projected = projectIdsRequirementsForEntity(
+      project,
+      object.ifcEntity,
+      object.predefinedType.mode === "ENUM" ? object.predefinedType.value : undefined,
+    );
+    const merge = <T extends { id: string; extensions: Record<string, unknown> }>(
+      stored: T[],
+      canonical: T[],
+    ): T[] => {
+      const seen = new Set<string>();
+      return [...stored, ...canonical].filter((item) => {
+        const facetId = getIdsProjectedFacetId(item);
+        const section = getIdsProjectedFacetSection(item);
+        const key = facetId ? `${section}:${facetId}` : `project:${item.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+    return [code, {
+      ...object,
+      requirements: {
+        attributes: merge(object.requirements.attributes, projected.attributes),
+        properties: merge(object.requirements.properties, projected.properties),
+        relations: merge(object.requirements.relations, projected.relations),
+        classifications: merge(object.requirements.classifications, projected.classifications),
+        materials: merge(object.requirements.materials, projected.materials),
+      },
+    }];
+  }));
+  return { ...project, objects };
+};
 
 /**
  * Konvence pojmenování v exportu:
@@ -1447,6 +1488,7 @@ export const generateExcelWorkbook = async (
   selection: SheetSelection = DEFAULT_SHEET_SELECTION
 ): Promise<ExcelJS.Workbook> => {
   const workbook = new ExcelJS.Workbook();
+  const exportProject = withCanonicalIdsForExcel(project);
 
   // Set workbook properties
   workbook.creator = project.author || "InfoReqApp";
@@ -1479,7 +1521,7 @@ export const generateExcelWorkbook = async (
   if (selection.zdroj) {
     createZdrojSheet(
       workbook,
-      project,
+      exportProject,
       project.classificationSystemEntries ?? [],
       selection.zdrojExportAutorskeNastroje ?? false,
       selection.exportCzTranslations ?? false,

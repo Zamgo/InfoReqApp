@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "npm run ensure:schema && npm run sync:translations && vite",
     "build": "tsc && vite build",
-    "test": "tsx --test tests/ids-import.test.ts",
+    "test": "tsx --test tests/ids-import.test.ts tests/ids-authoring.test.ts",
     "preview": "vite preview",
     "build:schema": "tsx scripts/build_schema_index.ts 4x3",
     "build:schema:4": "tsx scripts/build_schema_index.ts 4",

@@ -16,6 +16,7 @@ import type {
 import { getIdsIfcVersion, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
 import { getEffectiveUseCaseIds, requirementAppliesToUseCase } from "../project/useCaseResolve";
 import { specificationReferencesEntity } from "../ids/specifications";
+import { filterSpecificationForScope } from "../ids/authoring";
 
 const IDS_NAMESPACE = "http://standards.buildingsmart.org/IDS";
 const XS_NAMESPACE = "http://www.w3.org/2001/XMLSchema";
@@ -809,7 +810,9 @@ export const generateIDS = (options: IDSExportOptions): string => {
     .filter((specification) => canonicalMatchesOccurrence(specification, occurrenceFilter))
     .filter((specification) =>
       canonicalMatchesObjectSelection(specification, project, objectCodes)
-    );
+    )
+    .map((specification) => filterSpecificationForScope(specification, phaseId, options.useCaseId))
+    .filter((specification): specification is IdsProjectSpecification => Boolean(specification));
   const specifications: string[] = canonicalSpecifications.map(generateCanonicalSpecification);
   const legacyObjectsToExport = (project.idsSpecifications?.length ?? 0) > 0
     ? objectsToExport.filter((object) =>

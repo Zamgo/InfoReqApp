@@ -30,6 +30,11 @@ import {
 import { buildClassificationFromSchemaFiltered } from "../classification/ifcTree";
 import { collectLeaves } from "../classification/parser";
 import type { ClassificationData } from "../classification/types";
+import {
+  hashIdsStandardSpecification,
+  type IdsReimportChoice,
+  type IdsReimportConflict,
+} from "../ids/authoring";
 
 const IDS_NS = "http://standards.buildingsmart.org/IDS";
 const XS_NS = "http://www.w3.org/2001/XMLSchema";
@@ -198,6 +203,8 @@ export interface IdsCatalogResolution {
 
 export interface IdsImportOptions {
   catalogResolutions?: IdsCatalogResolution[];
+  /** Volby pro specifikace změněné lokálně i v nově importovaném souboru. */
+  reimportResolutions?: Record<string, IdsReimportChoice>;
   /** Výchozí true: validní IFC alternativy se po potvrzení importu přidají do IFC stromu. */
   addImportedIfcEntitiesToHierarchy?: boolean;
 }
@@ -209,6 +216,7 @@ export interface IdsImportReport {
   importedIfcCodes: number;
   expandedEntityAlternatives: number;
   warnings: string[];
+  reimportConflicts: IdsReimportConflict[];
 }
 
 export interface IdsImportResult {
@@ -1390,7 +1398,7 @@ function buildCanonicalSpecifications(
 
   return parsed.specifications.map((spec, index) => {
     const id = getSpecGroupId(spec, index);
-    return {
+    const specification: IdsProjectSpecification = {
       id,
       name: spec.name,
       ifcVersion: spec.ifcVersion as IdsProjectSpecification["ifcVersion"],
@@ -1403,6 +1411,13 @@ function buildCanonicalSpecifications(
       requirements: toFacets(spec, "requirements", id),
       source: "imported",
     };
+    const hash = hashIdsStandardSpecification(specification);
+    specification.importTracking = {
+      sourceKey: id,
+      lastAcceptedHash: hash,
+      lastSeenHash: hash,
+    };
+    return specification;
   });
 }
 
@@ -1578,14 +1593,142 @@ export function mergeIdsIntoProjectWithReport(
     systemEntryIdFor,
     unresolvedUsageKeys,
   );
+  const existingSpecifications = existingProject?.idsSpecifications ?? [];
   const specificationsById = new Map(
-    (existingProject?.idsSpecifications ?? []).map((specification) => [
-      specification.id,
-      specification,
-    ]),
+    existingSpecifications.map((specification) => [specification.id, specification]),
   );
-  importedSpecifications.forEach((specification) => {
-    specificationsById.set(specification.id, specification);
+  const existingBySourceKey = new Map(
+    existingSpecifications
+      .filter((specification) => specification.importTracking?.sourceKey || specification.id.startsWith("ids:"))
+      .map((specification) => [
+        specification.importTracking?.sourceKey ?? specification.id,
+        specification,
+      ]),
+  );
+  const reimportConflicts: IdsReimportConflict[] = [];
+  const usedIdentifiers = new Set(
+    existingSpecifications.map((specification) => specification.identifier).filter(Boolean),
+  );
+  const uniqueIncomingIdentifier = (raw: string | undefined): string | undefined => {
+    if (!raw) return undefined;
+    let candidate = `${raw}-imported`;
+    let suffix = 2;
+    while (usedIdentifiers.has(candidate)) {
+      candidate = `${raw}-imported-${suffix}`;
+      suffix += 1;
+    }
+    usedIdentifiers.add(candidate);
+    return candidate;
+  };
+  const preserveAuthoring = (
+    incoming: IdsProjectSpecification,
+    existing: IdsProjectSpecification,
+  ): IdsProjectSpecification => {
+    const facetAuthoring = new Map(
+      [...existing.applicability, ...existing.requirements]
+        .filter((facet) => facet.authoring)
+        .map((facet) => [facet.id, facet.authoring]),
+    );
+    const withFacetAuthoring = (facet: IdsProjectFacet): IdsProjectFacet => ({
+      ...facet,
+      authoring: facetAuthoring.get(facet.id) ?? facet.authoring,
+    });
+    return {
+      ...incoming,
+      authoring: existing.authoring ?? incoming.authoring,
+      applicability: incoming.applicability.map(withFacetAuthoring),
+      requirements: incoming.requirements.map(withFacetAuthoring),
+    };
+  };
+  importedSpecifications.forEach((incoming) => {
+    const sourceKey = incoming.importTracking?.sourceKey ?? incoming.id;
+    const existing = existingBySourceKey.get(sourceKey);
+    const incomingHash = hashIdsStandardSpecification(incoming);
+    if (!existing) {
+      specificationsById.set(incoming.id, incoming);
+      return;
+    }
+    const localHash = hashIdsStandardSpecification(existing);
+    const lastAcceptedHash = existing.importTracking?.lastAcceptedHash ?? localHash;
+    const localChanged = localHash !== lastAcceptedHash;
+    const incomingChanged = incomingHash !== lastAcceptedHash;
+    const choice = options.reimportResolutions?.[sourceKey];
+
+    if (localHash === incomingHash || !localChanged) {
+      const accepted = preserveAuthoring(incoming, existing);
+      accepted.id = existing.id;
+      accepted.importTracking = {
+        sourceKey,
+        lastAcceptedHash: incomingHash,
+        lastSeenHash: incomingHash,
+      };
+      specificationsById.set(existing.id, accepted);
+      return;
+    }
+    if (localChanged && !incomingChanged) {
+      specificationsById.set(existing.id, {
+        ...existing,
+        importTracking: {
+          sourceKey,
+          lastAcceptedHash,
+          lastSeenHash: incomingHash,
+        },
+      });
+      return;
+    }
+
+    const conflict: IdsReimportConflict = {
+      sourceKey,
+      existingId: existing.id,
+      incomingId: incoming.id,
+      name: incoming.name || existing.name || incoming.identifier || existing.identifier || sourceKey,
+      localHash,
+      incomingHash,
+      lastAcceptedHash,
+    };
+    reimportConflicts.push(conflict);
+    if (choice === "accept-import") {
+      const accepted = preserveAuthoring(incoming, existing);
+      accepted.id = existing.id;
+      accepted.importTracking = {
+        sourceKey,
+        lastAcceptedHash: incomingHash,
+        lastSeenHash: incomingHash,
+      };
+      specificationsById.set(existing.id, accepted);
+    } else if (choice === "duplicate-both") {
+      specificationsById.set(existing.id, {
+        ...existing,
+        importTracking: {
+          sourceKey,
+          lastAcceptedHash,
+          lastSeenHash: incomingHash,
+        },
+      });
+      const duplicateId = makeId();
+      specificationsById.set(duplicateId, {
+        ...incoming,
+        id: duplicateId,
+        name: `${incoming.name || "IDS specifikace"} – nová importovaná verze`,
+        identifier: uniqueIncomingIdentifier(incoming.identifier),
+        importTracking: {
+          sourceKey: `${sourceKey}:incoming:${incomingHash}`,
+          lastAcceptedHash: incomingHash,
+          lastSeenHash: incomingHash,
+        },
+      });
+    } else {
+      // Bez explicitní volby se data neztratí: dočasně ponechat lokální verzi
+      // a vrátit konflikt UI, které import dokončí druhým voláním.
+      specificationsById.set(existing.id, {
+        ...existing,
+        importTracking: {
+          sourceKey,
+          lastAcceptedHash,
+          lastSeenHash: incomingHash,
+        },
+      });
+    }
   });
 
   const objects: Record<string, ProjectObject> = { ...(existingProject?.objects ?? {}) };
@@ -1670,6 +1813,7 @@ export function mergeIdsIntoProjectWithReport(
       importedIfcCodes: entityCodes.size,
       expandedEntityAlternatives: analysis.entityAlternativeCount,
       warnings,
+      reimportConflicts,
     },
   };
 }

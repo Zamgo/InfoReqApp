@@ -14,6 +14,7 @@ import {
   getSpecificationsForEntity,
   idsConstraintAlternatives,
 } from "./specifications";
+import { effectiveIdsScope } from "./authoring";
 
 const PROJECTED_FACET_ID = "idsCanonicalFacetId";
 const PROJECTED_SPECIFICATION_ID = "idsCanonicalSpecificationId";
@@ -53,6 +54,27 @@ export function getIdsProjectedSpecificationName(
 ): string | undefined {
   const value = requirement?.extensions?.idsSpecificationName;
   return typeof value === "string" ? value : undefined;
+}
+
+export function getIdsProjectedSpecificationId(
+  requirement: Pick<RequirementBase, "extensions"> | null | undefined,
+): string | undefined {
+  const value = requirement?.extensions?.[PROJECTED_SPECIFICATION_ID];
+  return typeof value === "string" ? value : undefined;
+}
+
+export function getIdsProjectedFacetId(
+  requirement: Pick<RequirementBase, "extensions"> | null | undefined,
+): string | undefined {
+  const value = requirement?.extensions?.[PROJECTED_FACET_ID];
+  return typeof value === "string" ? value : undefined;
+}
+
+export function getIdsProjectedFacetSection(
+  requirement: Pick<RequirementBase, "extensions"> | null | undefined,
+): "applicability" | "requirements" | undefined {
+  const value = requirement?.extensions?.idsFacetSection;
+  return value === "applicability" || value === "requirements" ? value : undefined;
 }
 
 function occurrence(cardinality: IdsFacetCardinality | undefined): IdsFacetCardinality {
@@ -110,9 +132,12 @@ function projectionBase(
   section: "applicability" | "requirements",
   phaseIds: string[],
 ): ProjectedRequirement {
+  const scope = effectiveIdsScope(specification, facet);
   return {
     id: `ids-projection:${section}:${facet.id}`,
     phases: phaseIds,
+    useCaseMode: scope?.useCaseMode,
+    useCaseIds: scope?.useCaseIds ? [...scope.useCaseIds] : undefined,
     extensions: {
       [PROJECTED_FACET_ID]: facet.id,
       [PROJECTED_SPECIFICATION_ID]: specification.id,
@@ -188,7 +213,10 @@ function appendFacet(
         value: value.value,
         allowedValues: value.allowedValues,
         uri: facet.uri,
-        note: facet.instructions,
+        unit: facet.authoring?.unit,
+        popis: facet.authoring?.description,
+        note: facet.authoring?.note ?? facet.instructions,
+        priklady: facet.authoring?.examples,
         isApplicability,
       });
       return;
@@ -214,7 +242,10 @@ function appendFacet(
         value: value.value,
         allowedValues: value.allowedValues,
         uri: facet.uri,
-        note: facet.instructions,
+        unit: facet.authoring?.unit,
+        popis: facet.authoring?.description,
+        note: facet.authoring?.note ?? facet.instructions,
+        priklady: facet.authoring?.examples,
         isApplicability,
       });
       return;
@@ -230,7 +261,9 @@ function appendFacet(
         ...value,
         name: specification.name || system,
         uri: facet.uri,
-        note: facet.instructions,
+        description: facet.authoring?.description,
+        note: facet.authoring?.note ?? facet.instructions,
+        priklady: facet.authoring?.examples,
         readOnly: true,
         occurrence: facetOccurrence,
         isApplicability,
@@ -251,8 +284,9 @@ function appendFacet(
         entityPredefinedType: idsConstraintAlternatives(facet.entity.predefinedType)[0],
         occurrence: facetOccurrence,
         uri: facet.uri,
+        popis: facet.authoring?.description,
         note: [
-          facet.instructions,
+          facet.authoring?.note ?? facet.instructions,
           normalizedAlternatives.length > 1
             ? `IDS alternativy (OR): ${normalizedAlternatives.join(" | ")}`
             : undefined,
@@ -276,7 +310,9 @@ function appendFacet(
         value: value.value,
         required: facetOccurrence === "required",
         uri: facet.uri,
-        note: facet.instructions,
+        popis: facet.authoring?.description,
+        note: facet.authoring?.note ?? facet.instructions,
+        priklady: facet.authoring?.examples,
         isApplicability,
       });
     }
@@ -299,10 +335,12 @@ export function projectIdsRequirementsForEntity(
 
   for (const specification of getSpecificationsForEntity(project, ifcEntity, predefinedType)) {
     for (const facet of specification.applicability) {
-      appendFacet(output, specification, facet, "applicability", phaseIds, schema);
+      const scopedPhases = effectiveIdsScope(specification, facet)?.phaseIds ?? phaseIds;
+      appendFacet(output, specification, facet, "applicability", scopedPhases, schema);
     }
     for (const facet of specification.requirements) {
-      appendFacet(output, specification, facet, "requirements", phaseIds, schema);
+      const scopedPhases = effectiveIdsScope(specification, facet)?.phaseIds ?? phaseIds;
+      appendFacet(output, specification, facet, "requirements", scopedPhases, schema);
     }
   }
   return output;

@@ -1,7 +1,12 @@
 import React, { useMemo, useState, useCallback } from "react";
 import type { Project } from "../../project/types";
 import type { ClassificationNode } from "../../classification/types";
-import { groupRequirementsByItem, type RequirementItemGroup, type RequirementItemKind } from "../../project/requirementFingerprint";
+import {
+  groupRequirementsByItem,
+  requirementGroupMatchesEntity,
+  type RequirementItemGroup,
+  type RequirementItemKind,
+} from "../../project/requirementFingerprint";
 import { filterTree } from "../../classification/parser";
 import { applyRequestFilter, applyRequestSort } from "../../project/requestFilterEngine";
 import type { RequestFilter } from "../../project/requestFilterModel";
@@ -17,8 +22,14 @@ export const REQUIREMENT_EDITOR_SLOT_ID = "requirement-editor-portal-slot";
 
 interface Props {
   project: Project;
+  ifcEntity: string;
+  predefinedType?: string;
   selectedFingerprint?: string;
-  onSelectGroup: (fingerprint: string | undefined, kind: RequirementItemKind | undefined) => void;
+  onSelectGroup: (
+    fingerprint: string | undefined,
+    kind: RequirementItemKind | undefined,
+    group?: RequirementItemGroup,
+  ) => void;
   onAssignGroupToObjects?: (
     kind: RequirementItemKind,
     fingerprint: string,
@@ -31,6 +42,13 @@ interface Props {
     targetKind: RequirementItemKind,
     representativeItems: RequirementItemGroup["representativeItems"],
   ) => void;
+  onEditIdsGroup?: (group: RequirementItemGroup) => void;
+  onAssignIdsGroup?: (
+    group: RequirementItemGroup,
+    objectCodes: string[],
+    mode: "new-specification" | "reassign-source",
+  ) => void;
+  onConvertProjectGroupToIds?: (group: RequirementItemGroup) => void;
   children?: React.ReactNode;
 }
 
@@ -280,13 +298,20 @@ const GroupObjectsHierarchy: React.FC<{
 const AssignGroupToObjectsDialog: React.FC<{
   group: RequirementItemGroup;
   project: Project;
-  onConfirm: (objectCodes: string[]) => void;
+  onConfirm: (
+    objectCodes: string[],
+    mode: "project" | "new-specification" | "reassign-source",
+  ) => void;
   onClose: () => void;
 }> = ({ group, project, onConfirm, onClose }) => {
   const [draftCodes, setDraftCodes] = useState<string[]>(() => [...group.objectCodes].sort((a, b) => a.localeCompare(b)));
+  const [mode, setMode] = useState<"project" | "new-specification" | "reassign-source">(
+    group.origin === "ids" ? "new-specification" : "project",
+  );
 
   const handleConfirm = () => {
-    onConfirm(draftCodes);
+    if (group.origin === "ids" && draftCodes.length === 0) return;
+    onConfirm(draftCodes, mode);
     onClose();
   };
 
@@ -306,6 +331,18 @@ const AssignGroupToObjectsDialog: React.FC<{
           </p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {group.origin === "ids" && (
+            <div className="mb-3 space-y-2 rounded border border-violet-200 bg-violet-50 p-3">
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-800">
+                <input type="radio" checked={mode === "new-specification"} onChange={() => setMode("new-specification")} />
+                <span><strong>Nová specifikace z této skupiny</strong><br />Zkopíruje pouze vybrané facety; původní IDS se nezmění.</span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-800">
+                <input type="radio" checked={mode === "reassign-source"} onChange={() => setMode("reassign-source")} />
+                <span><strong>Přeřadit celou zdrojovou specifikaci</strong><br />Změní applicability celého zdroje a podle entit jej případně rozdělí.</span>
+              </label>
+            </div>
+          )}
           <GroupObjectsHierarchy
             project={project}
             selectedCodes={draftCodes}
@@ -322,8 +359,9 @@ const AssignGroupToObjectsDialog: React.FC<{
           </button>
           <button
             type="button"
-            className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500"
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
             onClick={handleConfirm}
+            disabled={group.origin === "ids" && draftCodes.length === 0}
           >
             Potvrdit ({draftCodes.length} objektů)
           </button>
@@ -343,10 +381,15 @@ const SORT_OPTIONS: { value: string; label: string; sort: RequestSort }[] = [
 
 export const RequirementGroupsPanel: React.FC<Props> = ({
   project,
+  ifcEntity,
+  predefinedType,
   selectedFingerprint,
   onSelectGroup,
   onAssignGroupToObjects,
   onMoveGroupToKind,
+  onEditIdsGroup,
+  onAssignIdsGroup,
+  onConvertProjectGroupToIds,
   children,
 }) => {
   const [filter, setFilter] = useState<RequestFilter>(null);
@@ -356,12 +399,23 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
   const [sortOptionKey, setSortOptionKey] = useState("objectCount-desc");
   const [assignDialogGroup, setAssignDialogGroup] = useState<RequirementItemGroup | null>(null);
   const [moveMenuFingerprint, setMoveMenuFingerprint] = useState<string | null>(null);
+  const [originFilter, setOriginFilter] = useState<"all" | "project" | "ids">("all");
+  const [scopeFilter, setScopeFilter] = useState<"entity" | "all">("entity");
 
   const groups = useMemo(() => groupRequirementsByItem(project), [project]);
+  const entityGroups = useMemo(
+    () => groups.filter((group) =>
+      requirementGroupMatchesEntity(group, project, ifcEntity, predefinedType)),
+    [groups, project, ifcEntity, predefinedType],
+  );
+  const scopedGroups = scopeFilter === "entity" ? entityGroups : groups;
+  const originGroups = originFilter === "all"
+    ? scopedGroups
+    : scopedGroups.filter((group) => group.origin === originFilter);
 
   const filteredGroups = useMemo(
-    () => applyRequestFilter(groups, filter),
-    [groups, filter],
+    () => applyRequestFilter(originGroups, filter),
+    [originGroups, filter],
   );
 
   const sortedGroups = useMemo(
@@ -376,10 +430,18 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
   }, []);
 
   const handleAssignGroupToObjects = useCallback(
-    (group: RequirementItemGroup, objectCodes: string[]) => {
-      onAssignGroupToObjects?.(group.kind, group.fingerprint, objectCodes, group.representativeItems);
+    (
+      group: RequirementItemGroup,
+      objectCodes: string[],
+      mode: "project" | "new-specification" | "reassign-source",
+    ) => {
+      if (group.origin === "ids" && mode !== "project") {
+        onAssignIdsGroup?.(group, objectCodes, mode);
+      } else {
+        onAssignGroupToObjects?.(group.kind, group.fingerprint, objectCodes, group.representativeItems);
+      }
     },
-    [onAssignGroupToObjects],
+    [onAssignGroupToObjects, onAssignIdsGroup],
   );
 
   return (
@@ -400,8 +462,59 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
           searchText={searchText}
           onSearchTextChange={setSearchText}
           filteredCount={filteredGroups.length}
-          totalCount={groups.length}
+          totalCount={originGroups.length}
         />
+        <div className="inline-flex w-fit rounded border border-violet-300 bg-white p-0.5">
+          <button
+            type="button"
+            className={`rounded px-2.5 py-1 text-[11px] font-semibold ${
+              scopeFilter === "entity" ? "bg-violet-100 text-violet-800" : "text-slate-600 hover:bg-slate-50"
+            }`}
+            onClick={() => {
+              setScopeFilter("entity");
+              onSelectGroup(undefined, undefined);
+            }}
+          >
+            Pro vybranou entitu ({entityGroups.length})
+          </button>
+          <button
+            type="button"
+            className={`rounded px-2.5 py-1 text-[11px] font-semibold ${
+              scopeFilter === "all" ? "bg-violet-100 text-violet-800" : "text-slate-600 hover:bg-slate-50"
+            }`}
+            onClick={() => {
+              setScopeFilter("all");
+              onSelectGroup(undefined, undefined);
+            }}
+          >
+            Všechny skupiny ({groups.length})
+          </button>
+        </div>
+        {scopeFilter === "all" && (
+          <div className="rounded border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-900">
+            Globální pohled: skupiny níže nejsou omezené aktuální entitou{" "}
+            <strong>{ifcEntity}{predefinedType ? `.${predefinedType}` : ""}</strong>.
+            Po výběru skupiny se levá hierarchie omezí na skutečně dotčené objekty.
+          </div>
+        )}
+        <div className="inline-flex w-fit rounded border border-slate-300 bg-white p-0.5">
+          {([
+            ["all", `Vše (${scopedGroups.length})`],
+            ["project", `Projektové (${scopedGroups.filter((group) => group.origin === "project").length})`],
+            ["ids", `IDS (${scopedGroups.filter((group) => group.origin === "ids").length})`],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={`rounded px-2 py-1 text-[10px] font-semibold ${
+                originFilter === value ? "bg-violet-100 text-violet-800" : "text-slate-600 hover:bg-slate-50"
+              }`}
+              onClick={() => setOriginFilter(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center gap-2">
           <label className="text-[11px] text-slate-600">Řazení:</label>
           <select
@@ -440,10 +553,25 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
               return (
                 <li key={group.fingerprint} className={isSelected ? "bg-red-50/50" : ""}>
                   <div className={`flex w-full items-center gap-1 px-3 py-2 text-left hover:bg-slate-50 ${isSelected ? "bg-red-50" : ""}`}>
-                    <button
-                      type="button"
+                    <div
+                      role="button"
+                      tabIndex={0}
                       className="flex flex-1 min-w-0 items-center gap-2"
-                      onClick={() => onSelectGroup(isSelected ? undefined : group.fingerprint, isSelected ? undefined : group.kind)}
+                      onClick={() => onSelectGroup(
+                        isSelected ? undefined : group.fingerprint,
+                        isSelected ? undefined : group.kind,
+                        isSelected ? undefined : group,
+                      )}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onSelectGroup(
+                            isSelected ? undefined : group.fingerprint,
+                            isSelected ? undefined : group.kind,
+                            isSelected ? undefined : group,
+                          );
+                        }
+                      }}
                       title={`${group.label} / Přiřazeno k: ${bound}`}
                     >
                       <span className="flex-shrink-0 text-slate-400" aria-hidden>
@@ -454,18 +582,18 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
                       <div className="relative">
                         <button
                           type="button"
-                          className={`inline-flex flex-shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${KIND_COLORS[group.kind]} ${onMoveGroupToKind ? "cursor-pointer hover:brightness-95" : "cursor-default"}`}
+                          className={`inline-flex flex-shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${KIND_COLORS[group.kind]} ${onMoveGroupToKind && group.origin === "project" ? "cursor-pointer hover:brightness-95" : "cursor-default"}`}
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            if (!onMoveGroupToKind) return;
+                            if (!onMoveGroupToKind || group.origin !== "project") return;
                             setMoveMenuFingerprint((prev) => (prev === group.fingerprint ? null : group.fingerprint));
                           }}
                           title={onMoveGroupToKind ? "Přesunout skupinu do jiné facety" : undefined}
                         >
                           {KIND_LABELS[group.kind]}
                         </button>
-                        {onMoveGroupToKind && moveMenuFingerprint === group.fingerprint && (
+                        {onMoveGroupToKind && group.origin === "project" && moveMenuFingerprint === group.fingerprint && (
                           <>
                             <div
                               className="fixed inset-0 z-40"
@@ -499,6 +627,11 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
                           </>
                         )}
                       </div>
+                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                        group.origin === "ids" ? "bg-violet-100 text-violet-800" : "bg-slate-100 text-slate-600"
+                      }`}>
+                        {group.origin === "ids" ? "IDS" : "Projekt"}
+                      </span>
                       <span className="inline-flex flex-shrink-0 items-center justify-center rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] font-semibold text-slate-700">
                         {count}
                       </span>
@@ -508,8 +641,8 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
                       <span className="flex-shrink-0 max-w-[30%] truncate text-left text-[10px] text-slate-400">
                         {bound}
                       </span>
-                    </button>
-                    {onAssignGroupToObjects && (
+                    </div>
+                    {(group.origin === "ids" ? onAssignIdsGroup : onAssignGroupToObjects) && (
                       <button
                         type="button"
                         className="flex-shrink-0 rounded p-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
@@ -522,6 +655,32 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                         </svg>
+                      </button>
+                    )}
+                    {group.origin === "ids" && onEditIdsGroup && (
+                      <button
+                        type="button"
+                        className="flex-shrink-0 rounded px-2 py-1 text-[10px] font-semibold text-violet-700 hover:bg-violet-100"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onEditIdsGroup(group);
+                        }}
+                      >
+                        Upravit zdroj
+                      </button>
+                    )}
+                    {group.origin === "project" && onConvertProjectGroupToIds && (
+                      <button
+                        type="button"
+                        className="flex-shrink-0 rounded px-2 py-1 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          if (window.confirm("Převést tuto projektovou skupinu do kanonických IDS specifikací a odstranit původní kopie?")) {
+                            onConvertProjectGroupToIds(group);
+                          }
+                        }}
+                      >
+                        Převést do IDS
                       </button>
                     )}
                   </div>
@@ -537,11 +696,11 @@ export const RequirementGroupsPanel: React.FC<Props> = ({
         )}
       </div>
 
-      {assignDialogGroup && onAssignGroupToObjects && (
+      {assignDialogGroup && (assignDialogGroup.origin === "ids" ? onAssignIdsGroup : onAssignGroupToObjects) && (
         <AssignGroupToObjectsDialog
           group={assignDialogGroup}
           project={project}
-          onConfirm={(objectCodes) => handleAssignGroupToObjects(assignDialogGroup, objectCodes)}
+          onConfirm={(objectCodes, mode) => handleAssignGroupToObjects(assignDialogGroup, objectCodes, mode)}
           onClose={() => setAssignDialogGroup(null)}
         />
       )}

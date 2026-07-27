@@ -8,6 +8,13 @@ import type {
   PropertyRequirement,
   RelationRequirement,
 } from "./types";
+import {
+  getIdsProjectedFacetId,
+  getIdsProjectedFacetSection,
+  getIdsProjectedSpecificationId,
+  projectIdsRequirementsForEntity,
+} from "../ids/requirementProjection";
+import { idsConstraintAlternatives, specificationReferencesEntity } from "../ids/specifications";
 
 const FINGERPRINT_VERSION = "v1";
 
@@ -213,9 +220,15 @@ export type RequirementItemKind = "pset" | "attribute" | "classification" | "mat
 
 export interface RequirementItemGroup {
   kind: RequirementItemKind;
+  origin: "project" | "ids";
   fingerprint: string;
   label: string;
   objectCodes: string[];
+  idsReference?: {
+    specificationId: string;
+    section: "applicability" | "requirements";
+    facetIds: string[];
+  };
   representativeItems:
     | PropertyRequirement[]
     | [AttributeRequirement]
@@ -258,7 +271,14 @@ const buildPsetLabel = (psetName: string, count: number): string => {
 };
 
 export const groupRequirementsByItem = (project: Project): RequirementItemGroup[] => {
-  const map = new Map<string, { kind: RequirementItemKind; label: string; codes: Set<string>; representative: RequirementItemGroup["representativeItems"] }>();
+  const map = new Map<string, {
+    kind: RequirementItemKind;
+    origin: "project" | "ids";
+    label: string;
+    codes: Set<string>;
+    representative: RequirementItemGroup["representativeItems"];
+    idsReference?: RequirementItemGroup["idsReference"];
+  }>();
 
   for (const [code, obj] of Object.entries(project.objects)) {
     const reqs = obj.requirements;
@@ -279,6 +299,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "pset",
+          origin: "project",
           label: buildPsetLabel(psetName, props.length),
           codes: new Set([code]),
           representative: props,
@@ -296,6 +317,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "attribute",
+          origin: "project",
           label: attr.attribute || "(bez názvu)",
           codes: new Set([code]),
           representative: [attr],
@@ -313,6 +335,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "classification",
+          origin: "project",
           label: cls.system || cls.name || "(bez názvu)",
           codes: new Set([code]),
           representative: [cls],
@@ -330,6 +353,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "material",
+          origin: "project",
           label: mat.category || mat.value || "(bez názvu)",
           codes: new Set([code]),
           representative: [mat],
@@ -347,6 +371,7 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
       } else {
         map.set(fp, {
           kind: "relation",
+          origin: "project",
           label: `${rel.relationType || ""} ${rel.entityType || ""}`.trim() || "(bez názvu)",
           codes: new Set([code]),
           representative: [rel],
@@ -355,14 +380,132 @@ export const groupRequirementsByItem = (project: Project): RequirementItemGroup[
     }
   }
 
+  // Kanonické IDS skupiny jsou odvozený index. Namespace obsahuje specifikaci
+  // a sekci, takže stejnojmenné Psety z různých specifikací se nikdy neslijí.
+  for (const specification of project.idsSpecifications ?? []) {
+    const objectCodes = Object.entries(project.objects)
+      .filter(([, object]) => specificationReferencesEntity(
+        specification,
+        object.ifcEntity,
+        object.predefinedType.mode === "ENUM" ? object.predefinedType.value : undefined,
+      ))
+      .map(([code]) => code)
+      .sort((a, b) => a.localeCompare(b));
+    const firstObject = objectCodes.length ? project.objects[objectCodes[0]] : undefined;
+    const entityFacet = specification.applicability.find((facet) => facet.kind === "entity");
+    const fallbackEntity = entityFacet?.kind === "entity"
+      ? idsConstraintAlternatives(entityFacet.name)[0]
+      : undefined;
+    const entity = firstObject?.ifcEntity || fallbackEntity;
+    if (!entity) continue;
+    const predefined = firstObject?.predefinedType.mode === "ENUM"
+      ? firstObject.predefinedType.value
+      : entityFacet?.kind === "entity"
+        ? idsConstraintAlternatives(entityFacet.predefinedType)[0]
+        : undefined;
+    const projection = projectIdsRequirementsForEntity(
+      { idsSpecifications: [specification], phases: project.phases },
+      entity,
+      predefined,
+    );
+    const addIdsGroup = (
+      kind: RequirementItemKind,
+      section: "applicability" | "requirements",
+      facetIds: string[],
+      label: string,
+      representative: RequirementItemGroup["representativeItems"],
+    ) => {
+      if (!facetIds.length) return;
+      const fp = `ids:${specification.id}:${section}:${kind}:${facetIds.join(",")}`;
+      map.set(fp, {
+        kind,
+        origin: "ids",
+        label: `${specification.name || specification.identifier || "IDS"} · ${label}`,
+        codes: new Set(objectCodes),
+        representative,
+        idsReference: { specificationId: specification.id, section, facetIds },
+      });
+    };
+
+    const projectedProperties = projection.properties.filter(
+      (item) => getIdsProjectedSpecificationId(item) === specification.id,
+    );
+    const psetBuckets = new Map<string, PropertyRequirement[]>();
+    projectedProperties.forEach((item) => {
+      const section = getIdsProjectedFacetSection(item) ?? "requirements";
+      const key = `${section}\u0000${item.psetName}`;
+      psetBuckets.set(key, [...(psetBuckets.get(key) ?? []), item]);
+    });
+    psetBuckets.forEach((items, key) => {
+      const [section, psetName] = key.split("\u0000") as ["applicability" | "requirements", string];
+      addIdsGroup(
+        "pset",
+        section,
+        items.map(getIdsProjectedFacetId).filter((id): id is string => Boolean(id)),
+        buildPsetLabel(psetName, items.length),
+        items,
+      );
+    });
+
+    const addSingles = <T extends AttributeRequirement | ClassificationRequirement | MaterialRequirement | RelationRequirement>(
+      kind: Exclude<RequirementItemKind, "pset">,
+      items: T[],
+      label: (item: T) => string,
+    ) => {
+      items.forEach((item) => {
+        const section = getIdsProjectedFacetSection(item) ?? "requirements";
+        const facetId = getIdsProjectedFacetId(item);
+        if (!facetId) return;
+        addIdsGroup(kind, section, [facetId], label(item), [item] as RequirementItemGroup["representativeItems"]);
+      });
+    };
+    addSingles("attribute", projection.attributes, (item) => item.attribute || "(bez názvu)");
+    addSingles("classification", projection.classifications, (item) => item.system || item.name || "(bez názvu)");
+    addSingles("material", projection.materials, (item) => item.category || item.value || "(bez názvu)");
+    addSingles("relation", projection.relations, (item) =>
+      `${item.relationType || ""} ${item.entityType || ""}`.trim() || "(bez názvu)");
+  }
+
   return Array.from(map.entries())
-    .map(([fingerprint, { kind, label, codes, representative }]) => ({
+    .map(([fingerprint, { kind, origin, label, codes, representative, idsReference }]) => ({
       kind,
+      origin,
       fingerprint,
       label,
       objectCodes: Array.from(codes).sort((a, b) => a.localeCompare(b)),
       representativeItems: representative,
+      idsReference,
     }))
     .sort((a, b) => b.objectCodes.length - a.objectCodes.length || a.label.localeCompare(b.label));
 };
 
+/** Zda se skupina týká právě zvolené entity. U IDS rozhoduje zdrojová
+ * specification applicability, u projektových skupin jejich skutečná přiřazení. */
+export const requirementGroupMatchesEntity = (
+  group: RequirementItemGroup,
+  project: Project,
+  ifcEntity: string,
+  predefinedType?: string,
+): boolean => {
+  if (!ifcEntity) return true;
+  if (group.origin === "ids" && group.idsReference) {
+    const specification = (project.idsSpecifications ?? []).find(
+      (item) => item.id === group.idsReference?.specificationId,
+    );
+    return specification
+      ? specificationReferencesEntity(specification, ifcEntity, predefinedType)
+      : false;
+  }
+  const normalizedEntity = ifcEntity.trim().toUpperCase();
+  const normalizedPredefined = predefinedType?.trim().toUpperCase();
+  return group.objectCodes.some((code) => {
+    const object = project.objects[code];
+    if (!object || object.ifcEntity.trim().toUpperCase() !== normalizedEntity) return false;
+    if (!normalizedPredefined) return true;
+    const objectPredefined =
+      object.predefinedType.mode === "ENUM" || object.predefinedType.mode === "USERDEFINED"
+        ? object.predefinedType.value?.trim().toUpperCase()
+        : "NOTDEFINED";
+    return (objectPredefined || "NOTDEFINED") === normalizedPredefined;
+  });
+};

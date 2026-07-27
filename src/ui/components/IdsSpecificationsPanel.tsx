@@ -11,6 +11,8 @@ import {
   getFacetSearchText,
   getSpecificationsForEntity,
 } from "../../ids/specifications";
+import { validateIdsSpecification } from "../../ids/authoring";
+import { IdsSpecificationEditor } from "./IdsSpecificationEditor";
 
 interface Props {
   project: Project;
@@ -18,6 +20,10 @@ interface Props {
   predefinedType?: string;
   onFocusSpecification?: (specification: IdsProjectSpecification | null) => void;
   focusedSpecificationId?: string | null;
+  editSpecificationId?: string | null;
+  onSaveSpecification?: (specification: IdsProjectSpecification) => void;
+  onDuplicateSpecification?: (specificationId: string) => void;
+  onDeleteSpecification?: (specificationId: string) => void;
 }
 
 const FACET_LABELS: Record<IdsProjectFacet["kind"], string> = {
@@ -163,10 +169,16 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
   predefinedType,
   onFocusSpecification,
   focusedSpecificationId,
+  editSpecificationId,
+  onSaveSpecification,
+  onDuplicateSpecification,
+  onDeleteSpecification,
 }) => {
   const [search, setSearch] = useState("");
   const [scope, setScope] = useState<"entity" | "all">("entity");
   const [openSpecificationId, setOpenSpecificationId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<IdsProjectSpecification | null>(null);
+  const [validationMessages, setValidationMessages] = useState<{ errors: string[]; warnings: string[] } | null>(null);
   const openSpecificationIdRef = useRef<string | null>(null);
   const catalogsById = useMemo(
     () => new Map((project.classificationSystemEntries ?? []).map((entry) => [entry.id, entry])),
@@ -204,6 +216,17 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
     openSpecificationIdRef.current = nextId;
     setOpenSpecificationId(nextId);
   }, [focusedSpecificationId]);
+
+  useEffect(() => {
+    if (!editSpecificationId) return;
+    const source = allSpecifications.find((item) => item.id === editSpecificationId);
+    if (!source) return;
+    setScope("all");
+    setOpenSpecificationId(source.id);
+    openSpecificationIdRef.current = source.id;
+    setDraft(structuredClone(source));
+    setValidationMessages(null);
+  }, [editSpecificationId, allSpecifications]);
 
   useEffect(() => {
     if (
@@ -296,6 +319,15 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
               ...specification.applicability,
               ...specification.requirements,
             ].filter((facet) => facet.kind === "classification" && facet.unresolved).length;
+            const isEditing = draft?.id === specification.id;
+            const affectedObjects = Object.values(project.objects).filter((object) => {
+              const predefined = object.predefinedType.mode === "ENUM" ? object.predefinedType.value : undefined;
+              return getSpecificationsForEntity(
+                { idsSpecifications: [draft ?? specification] } as Project,
+                object.ifcEntity,
+                predefined,
+              ).length > 0;
+            }).length;
             return (
               <details
                 key={specification.id}
@@ -361,6 +393,89 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
                   </svg>
                 </summary>
                 <div className="border-t border-slate-200 bg-slate-50/60 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+                    {!isEditing && onSaveSpecification && (
+                      <button
+                        type="button"
+                        className="rounded border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-800 hover:bg-violet-100"
+                        onClick={() => {
+                          setDraft(structuredClone(specification));
+                          setValidationMessages(null);
+                        }}
+                      >
+                        Upravit zdroj
+                      </button>
+                    )}
+                    {!isEditing && onDuplicateSpecification && (
+                      <button
+                        type="button"
+                        className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100"
+                        onClick={() => onDuplicateSpecification(specification.id)}
+                      >
+                        Duplikovat
+                      </button>
+                    )}
+                    {!isEditing && onDeleteSpecification && (
+                      <button
+                        type="button"
+                        className="rounded border border-red-200 bg-white px-3 py-1.5 text-xs text-red-700 hover:bg-red-50"
+                        onClick={() => {
+                          if (window.confirm(`Opravdu smazat IDS specifikaci „${specification.name || specification.id}“?`)) {
+                            onDeleteSpecification(specification.id);
+                          }
+                        }}
+                      >
+                        Smazat
+                      </button>
+                    )}
+                  </div>
+                  {isEditing && draft ? (
+                    <div className="space-y-3">
+                      <div className="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-lg border border-violet-300 bg-white/95 p-2 shadow-md backdrop-blur">
+                        <span className="mr-auto text-xs text-slate-700">
+                          Koncept · dopad odvozený z Entity/PredefinedType: <strong>{affectedObjects} definic objektů</strong>
+                        </span>
+                        <button
+                          type="button"
+                          className="rounded border border-slate-300 px-3 py-1.5 text-xs text-slate-700"
+                          onClick={() => {
+                            setDraft(null);
+                            setValidationMessages(null);
+                          }}
+                        >
+                          Zrušit
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-800"
+                          onClick={() => {
+                            const result = validateIdsSpecification(project, draft);
+                            setValidationMessages(result);
+                            if (result.errors.length) return;
+                            if (
+                              result.warnings.length &&
+                              !window.confirm(`${result.warnings.join("\n\n")}\n\nPřesto uložit změnu zdrojové specifikace?`)
+                            ) return;
+                            onSaveSpecification?.(draft);
+                            setDraft(null);
+                            setValidationMessages(null);
+                          }}
+                        >
+                          Uložit
+                        </button>
+                      </div>
+                      {validationMessages && (validationMessages.errors.length > 0 || validationMessages.warnings.length > 0) && (
+                        <div className={`rounded border px-3 py-2 text-xs ${
+                          validationMessages.errors.length ? "border-red-300 bg-red-50 text-red-800" : "border-amber-300 bg-amber-50 text-amber-800"
+                        }`}>
+                          {validationMessages.errors.map((message) => <div key={`e:${message}`}>Chyba: {message}</div>)}
+                          {validationMessages.warnings.map((message) => <div key={`w:${message}`}>Upozornění: {message}</div>)}
+                        </div>
+                      )}
+                      <IdsSpecificationEditor project={project} value={draft} onChange={setDraft} />
+                    </div>
+                  ) : (
+                  <>
                   {specification.identifier && (
                     <div className="mb-3 text-[11px] text-slate-500">
                       <span className="font-semibold text-slate-600">IDS identifier:</span>{" "}
@@ -386,6 +501,8 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
                       catalogsById={catalogsById}
                     />
                   </div>
+                  </>
+                  )}
                 </div>
               </details>
             );

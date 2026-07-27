@@ -7,6 +7,7 @@ import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
 import { IdsImportDialog } from "./ui/components/IdsImportDialog";
+import { IdsReimportConflictDialog } from "./ui/components/IdsReimportConflictDialog";
 import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode, addNodeAsSibling, updateLeafMappedValue, updateLeafIfcEntityPredefinedType, updateNodeDescriptionByCode } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import {
@@ -46,6 +47,16 @@ import { makeId } from "./utils/id";
 import { parseAuthoringValues, joinAuthoringValues } from "./project/authoring";
 import { computePsetFingerprint, computeAttributeItemFingerprint, computeClassificationItemFingerprint, computeMaterialItemFingerprint, computeRelationItemFingerprint, type RequirementItemKind } from "./project/requirementFingerprint";
 import { migrateProject } from "./project/migration";
+import {
+  convertProjectGroupToIds,
+  createSpecificationFromIdsGroup,
+  deleteIdsSpecification,
+  duplicateIdsSpecification,
+  reassignIdsSpecification,
+  saveIdsSpecification,
+  type IdsReimportChoice,
+} from "./ids/authoring";
+import type { RequirementItemGroup } from "./project/requirementFingerprint";
 
 const applyCodeListPropagation = (project: Project, list: CodeList): Project => {
   // Update all properties that are linked to this code list
@@ -84,6 +95,10 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
   const [selectedCode, setSelectedCode] = useState<string>();
   const [selectedObject, setSelectedObject] = useState<ProjectObject | null>(null);
   const [focusedIdsSpecificationId, setFocusedIdsSpecificationId] = useState<string>();
+  const [focusedRequirementGroup, setFocusedRequirementGroup] = useState<{
+    label: string;
+    objectCodes: string[];
+  } | null>(null);
   const [status, setStatus] = useState<string>("");
   const [isProjectDetailsOpen, setIsProjectDetailsOpen] = useState<boolean>(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
@@ -95,6 +110,10 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     fileName: string;
     parsed: IdsParsed;
     analysis: IdsClassificationImportAnalysis;
+  } | null>(null);
+  const [pendingIdsReimport, setPendingIdsReimport] = useState<{
+    catalogResolutions: IdsCatalogResolution[];
+    conflicts: import("./ids/authoring").IdsReimportConflict[];
   } | null>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const importMenuRef = useRef<HTMLDivElement>(null);
@@ -136,6 +155,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     setSelectedCode(undefined);
     setSelectedObject(null);
     setFocusedIdsSpecificationId(undefined);
+    setFocusedRequirementGroup(null);
     setStatus("");
   }, []);
 
@@ -150,9 +170,19 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
   const onFocusIdsSpecification = useCallback(
     (specification: IdsProjectSpecification | null) => {
       setFocusedIdsSpecificationId(specification?.id);
+      if (specification) setFocusedRequirementGroup(null);
     },
     [],
   );
+
+  const onFocusRequirementGroup = useCallback((group: RequirementItemGroup | null) => {
+    setFocusedRequirementGroup(
+      group
+        ? { label: group.label, objectCodes: [...group.objectCodes] }
+        : null,
+    );
+    if (group) setFocusedIdsSpecificationId(undefined);
+  }, []);
 
   useEffect(() => {
     if (focusedIdsSpecificationId && !focusedIdsSpecification) {
@@ -963,6 +993,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
         parsed,
         project?.classificationSystemEntries ?? [],
       );
+      setPendingIdsReimport(null);
       setPendingIdsImport({ fileName: file.name, parsed, analysis });
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Import IDS se nezdařil");
@@ -970,7 +1001,10 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     }
   };
 
-  const completeIdsImport = (resolutions: IdsCatalogResolution[]) => {
+  const completeIdsImport = (
+    resolutions: IdsCatalogResolution[],
+    reimportResolutions?: Record<string, IdsReimportChoice>,
+  ) => {
     if (!pendingIdsImport) return;
     try {
       const { project: merged, report } = mergeIdsIntoProjectWithReport(
@@ -979,9 +1013,17 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
         schemaIndex ?? null,
         {
           catalogResolutions: resolutions,
+          reimportResolutions,
           addImportedIfcEntitiesToHierarchy: true,
         },
       );
+      if (report.reimportConflicts.length > 0 && !reimportResolutions) {
+        setPendingIdsReimport({
+          catalogResolutions: resolutions,
+          conflicts: report.reimportConflicts,
+        });
+        return;
+      }
       historyRef.current = [JSON.parse(JSON.stringify(merged))];
       historyIndexRef.current = 0;
       setProject(merged);
@@ -1007,6 +1049,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
         `${linked}\n${auxiliary}${warningText}`,
       );
       setPendingIdsImport(null);
+      setPendingIdsReimport(null);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Import IDS se nezdařil");
     }
@@ -1015,6 +1058,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
 
   const cancelIdsImport = () => {
     setPendingIdsImport(null);
+    setPendingIdsReimport(null);
     if (importIdsInputRef.current) importIdsInputRef.current.value = "";
   };
 
@@ -1460,6 +1504,62 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     };
     updateProjectWithHistory(next);
   };
+
+  const onSaveIdsSpecification = useCallback((specification: IdsProjectSpecification) => {
+    if (!project) return;
+    updateProjectWithHistory(saveIdsSpecification(project, specification));
+    setFocusedIdsSpecificationId(specification.id);
+    setStatus("IDS specifikace byla uložena; všechny entitní projekce byly aktualizovány.");
+  }, [project]);
+
+  const onDuplicateIdsSpecification = useCallback((specificationId: string) => {
+    if (!project) return;
+    const result = duplicateIdsSpecification(project, specificationId);
+    updateProjectWithHistory(result.project);
+    setFocusedIdsSpecificationId(result.specificationId);
+    setStatus("IDS specifikace byla duplikována jako nový authored zdroj.");
+  }, [project]);
+
+  const onDeleteIdsSpecification = useCallback((specificationId: string) => {
+    if (!project) return;
+    updateProjectWithHistory(deleteIdsSpecification(project, specificationId));
+    if (focusedIdsSpecificationId === specificationId) setFocusedIdsSpecificationId(undefined);
+    setStatus("IDS specifikace byla odstraněna.");
+  }, [project, focusedIdsSpecificationId]);
+
+  const onConvertProjectGroupToIds = useCallback((group: RequirementItemGroup) => {
+    if (!project) return;
+    const result = convertProjectGroupToIds(project, group);
+    if (result.error) {
+      setStatus(result.error);
+      return;
+    }
+    updateProjectWithHistory(result.project);
+    setFocusedIdsSpecificationId(result.createdIds[0]);
+    setStatus(`Projektová skupina byla atomicky převedena do ${result.createdIds.length} IDS specifikací.`);
+  }, [project]);
+
+  const onAssignIdsGroup = useCallback((
+    group: RequirementItemGroup,
+    objectCodes: string[],
+    mode: "new-specification" | "reassign-source",
+  ) => {
+    if (!project || !group.idsReference) return;
+    const result = mode === "new-specification"
+      ? createSpecificationFromIdsGroup(project, group, objectCodes)
+      : reassignIdsSpecification(project, group.idsReference.specificationId, objectCodes);
+    if (result.error) {
+      setStatus(result.error);
+      return;
+    }
+    updateProjectWithHistory(result.project);
+    setFocusedIdsSpecificationId(result.createdIds[0]);
+    setStatus(
+      mode === "new-specification"
+        ? `Z vybrané IDS skupiny vzniklo ${result.createdIds.length} nových specifikací.`
+        : `Zdrojová IDS specifikace byla přeřazena a rozdělena na ${result.createdIds.length} částí.`,
+    );
+  }, [project]);
 
   // Undo/Redo functions
   const updateProjectWithHistory = (newProject: Project) => {
@@ -2610,6 +2710,9 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
             onAddIfcClassificationSystem={onAddIfcClassificationSystem}
             idsSpecification={focusedIdsSpecification}
             onClearIdsSpecificationFocus={() => setFocusedIdsSpecificationId(undefined)}
+            focusedObjectCodes={focusedRequirementGroup?.objectCodes}
+            focusedContextLabel={focusedRequirementGroup?.label}
+            onClearFocusedContext={() => setFocusedRequirementGroup(null)}
           />
         </div>
         
@@ -2657,7 +2760,13 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
               classificationSystemEntries={project?.classificationSystemEntries ?? []}
               project={project}
               onFocusIdsSpecification={onFocusIdsSpecification}
+              onFocusRequirementGroup={onFocusRequirementGroup}
               focusedIdsSpecificationId={focusedIdsSpecificationId}
+              onSaveIdsSpecification={onSaveIdsSpecification}
+              onDuplicateIdsSpecification={onDuplicateIdsSpecification}
+              onDeleteIdsSpecification={onDeleteIdsSpecification}
+              onConvertProjectGroupToIds={onConvertProjectGroupToIds}
+              onAssignIdsGroup={onAssignIdsGroup}
               onSaveEnumAsCodeList={onSaveEnumAsCodeList}
               onAddToIfcHierarchy={onAddToIfcHierarchy}
               onCopyObject={onCopyObject}
@@ -2707,12 +2816,19 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
         />
       )}
 
-      {pendingIdsImport && (
+      {pendingIdsImport && !pendingIdsReimport && (
         <IdsImportDialog
           fileName={pendingIdsImport.fileName}
           analysis={pendingIdsImport.analysis}
           catalogs={project?.classificationSystemEntries ?? []}
           onConfirm={completeIdsImport}
+          onCancel={cancelIdsImport}
+        />
+      )}
+      {pendingIdsImport && pendingIdsReimport && (
+        <IdsReimportConflictDialog
+          conflicts={pendingIdsReimport.conflicts}
+          onConfirm={(choices) => completeIdsImport(pendingIdsReimport.catalogResolutions, choices)}
           onCancel={cancelIdsImport}
         />
       )}
