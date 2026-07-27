@@ -27,6 +27,10 @@ import {
 } from "../src/import/ids.ts";
 import type { SchemaIndex } from "../src/schema/types.ts";
 import { generateIDS } from "../src/export/ids.ts";
+import {
+  hasProjectObjectIdsDefinition,
+  projectObjectToIdsSpecificationPreview,
+} from "../src/ids/projectDefinition.ts";
 
 const projectBase = (): Project => ({
   projectId: "project",
@@ -150,6 +154,82 @@ test("entity-scoped groups exclude IDS requirements for unrelated entities", () 
   assert.deepEqual(
     matchingGroups.map((group) => group.idsReference?.specificationId),
     ["actuator-spec"],
+  );
+});
+
+test("project IDS definition is derived without persisting and respects phase, use-case and occurrence", () => {
+  const project = projectBase();
+  addObject(project, "terminal", "IfcWasteTerminal", "FLOORTRAP");
+  const object = project.objects.terminal;
+  object.ifcEntityPhases = ["phase-a"];
+  object.predefinedTypePhases = ["phase-a"];
+  object.requirements.attributes.push({
+    id: "attribute-a",
+    attribute: "Name",
+    required: true,
+    occurrence: "required",
+    constraint: "FILLED",
+    phases: ["phase-a"],
+    useCaseMode: "custom",
+    useCaseIds: ["use-a"],
+    extensions: {},
+  });
+  object.requirements.properties.push({
+    id: "property-b",
+    source: "PSET",
+    psetName: "Pset_Test",
+    propertyName: "Reference",
+    dataType: "IfcLabel",
+    required: false,
+    occurrence: "optional",
+    constraint: "FILLED",
+    phases: ["phase-b"],
+    useCaseMode: "inherit",
+    extensions: {},
+  });
+
+  const matching = projectObjectToIdsSpecificationPreview(project, object, {
+    phaseId: "phase-a",
+    useCaseId: "use-a",
+    occurrence: "required",
+  });
+  assert.equal(hasProjectObjectIdsDefinition(project, object), true);
+  assert.equal(matching?.applicability[0]?.kind, "entity");
+  assert.equal(matching?.requirements.length, 1);
+  assert.equal(matching?.requirements[0]?.kind, "attribute");
+  assert.equal(project.idsSpecifications?.length, 0);
+
+  const otherUseCase = projectObjectToIdsSpecificationPreview(project, object, {
+    phaseId: "phase-a",
+    useCaseId: "use-b",
+    occurrence: "required",
+  });
+  assert.equal(otherUseCase?.requirements.length, 0);
+
+  const inactivePhase = projectObjectToIdsSpecificationPreview(project, object, {
+    phaseId: "phase-b",
+  });
+  assert.equal(inactivePhase, null);
+
+  const canonicalOnly = projectBase();
+  addObject(canonicalOnly, "canonical-object", "IfcWall");
+  canonicalOnly.idsSpecifications = [specification("canonical-spec", "IFCWALL")];
+  canonicalOnly.objects["canonical-object"].requirements.classifications.push({
+    id: "primary-classification",
+    classificationId: "primary",
+    systemEntryId: "primary",
+    system: "Primary",
+    identification: "WALL",
+    value: "WALL",
+    name: "Wall",
+    readOnly: true,
+    occurrence: "required",
+    isApplicability: true,
+    extensions: {},
+  });
+  assert.equal(
+    hasProjectObjectIdsDefinition(canonicalOnly, canonicalOnly.objects["canonical-object"]),
+    false,
   );
 });
 

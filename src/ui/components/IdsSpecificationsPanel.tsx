@@ -4,6 +4,7 @@ import type {
   IdsProjectFacet,
   IdsProjectSpecification,
   Project,
+  ProjectObject,
 } from "../../project/types";
 import {
   buildIdsSpecificationOrdinalIndex,
@@ -12,12 +13,25 @@ import {
   getSpecificationsForEntity,
 } from "../../ids/specifications";
 import { validateIdsSpecification } from "../../ids/authoring";
+import {
+  hasProjectObjectIdsDefinition,
+  projectObjectToIdsSpecificationPreview,
+  type ProjectDefinitionOccurrence,
+} from "../../ids/projectDefinition";
 import { IdsSpecificationEditor } from "./IdsSpecificationEditor";
 
 interface Props {
   project: Project;
+  object: ProjectObject;
   ifcEntity: string;
   predefinedType?: string;
+  selectedPhaseId: string | null;
+  onSelectedPhaseIdChange: (phaseId: string | null) => void;
+  selectedUseCaseId: string | null;
+  onSelectedUseCaseIdChange: (useCaseId: string | null) => void;
+  occurrenceFilter: ProjectDefinitionOccurrence;
+  onOccurrenceFilterChange: (occurrence: ProjectDefinitionOccurrence) => void;
+  onOpenProjectDefinition?: () => void;
   onFocusSpecification?: (specification: IdsProjectSpecification | null) => void;
   focusedSpecificationId?: string | null;
   editSpecificationId?: string | null;
@@ -163,10 +177,186 @@ const FacetList: React.FC<{
   </section>
 );
 
+const ProjectDefinitionCard: React.FC<{
+  project: Project;
+  object: ProjectObject;
+  specification: IdsProjectSpecification | null;
+  catalogsById: Map<string, ClassificationSystemEntry>;
+  selectedPhaseId: string | null;
+  onSelectedPhaseIdChange: (phaseId: string | null) => void;
+  selectedUseCaseId: string | null;
+  onSelectedUseCaseIdChange: (useCaseId: string | null) => void;
+  occurrenceFilter: ProjectDefinitionOccurrence;
+  onOccurrenceFilterChange: (occurrence: ProjectDefinitionOccurrence) => void;
+  onOpenProjectDefinition?: () => void;
+}> = ({
+  project,
+  object,
+  specification,
+  catalogsById,
+  selectedPhaseId,
+  onSelectedPhaseIdChange,
+  selectedUseCaseId,
+  onSelectedUseCaseIdChange,
+  occurrenceFilter,
+  onOccurrenceFilterChange,
+  onOpenProjectDefinition,
+}) => {
+  const entityPhaseIds = object.ifcEntityPhases ?? object.entityPhases;
+  const availablePhases = entityPhaseIds?.length
+    ? project.phases.filter((phase) => entityPhaseIds.includes(phase.id))
+    : project.phases;
+  const useCases = project.purposeOfUseEntries ?? [];
+  const filterClass = (active: boolean, activeClass = "border-red-300 bg-red-50 text-red-700") =>
+    `rounded border px-2.5 py-1 text-xs font-semibold ${
+      active
+        ? activeClass
+        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+    }`;
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-amber-300 bg-white shadow-sm">
+      <div className="border-b border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-bold text-slate-800">
+                Projektová IDS definice: {object.description || object.code}
+              </span>
+              <span className="rounded bg-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                odvozená
+              </span>
+              <span className="rounded bg-white px-2 py-0.5 text-[10px] text-slate-600">
+                {object.ifcEntity}
+                {object.predefinedType.mode === "ENUM" && object.predefinedType.value
+                  ? `.${object.predefinedType.value}`
+                  : ""}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-slate-600">
+              Zdroj je uložený u projektového objektu. Výběr níže pouze skládá efektivní IDS
+              náhled; nevytváří druhou kopii v seznamu zdrojových specifikací.
+            </p>
+          </div>
+          {onOpenProjectDefinition && (
+            <button
+              type="button"
+              onClick={onOpenProjectDefinition}
+              className="rounded border border-amber-400 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              Otevřít náhled a upravit
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-3 border-b border-slate-200 px-4 py-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-24 shrink-0 text-xs font-semibold text-slate-500">Milník:</span>
+          <button
+            type="button"
+            onClick={() => onSelectedPhaseIdChange(null)}
+            className={filterClass(selectedPhaseId === null)}
+          >
+            Vše
+          </button>
+          {availablePhases.map((phase) => (
+            <button
+              type="button"
+              key={phase.id}
+              onClick={() => onSelectedPhaseIdChange(phase.id)}
+              className={filterClass(selectedPhaseId === phase.id)}
+              title={phase.name}
+            >
+              {phase.code || phase.name}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-24 shrink-0 text-xs font-semibold text-slate-500">Účel užití:</span>
+          <button
+            type="button"
+            onClick={() => onSelectedUseCaseIdChange(null)}
+            className={filterClass(selectedUseCaseId === null)}
+          >
+            Vše
+          </button>
+          {useCases.map((useCase) => (
+            <button
+              type="button"
+              key={useCase.id}
+              onClick={() => onSelectedUseCaseIdChange(useCase.id)}
+              className={filterClass(selectedUseCaseId === useCase.id)}
+              title={useCase.description ?? useCase.name}
+            >
+              {useCase.name}
+            </button>
+          ))}
+          {!useCases.length && (
+            <span className="ml-1 text-xs text-amber-700">
+              Projekt nemá definované účely užití.
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="w-24 shrink-0 text-xs font-semibold text-slate-500">Výskyt:</span>
+          {([
+            ["all", "Vše", "border-slate-600 bg-slate-700 text-white"],
+            ["required", "Požadované", "border-emerald-600 bg-emerald-600 text-white"],
+            ["prohibited", "Zakázané", "border-red-600 bg-red-600 text-white"],
+            ["optional", "Možné", "border-amber-500 bg-amber-500 text-white"],
+          ] as const).map(([value, label, activeClass]) => (
+            <button
+              type="button"
+              key={value}
+              onClick={() => onOccurrenceFilterChange(value)}
+              className={filterClass(occurrenceFilter === value, activeClass)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="p-4">
+        {specification ? (
+          <div className="grid gap-4 xl:grid-cols-2">
+            <FacetList
+              title="Použitelnost"
+              facets={specification.applicability}
+              emptyText="Chybí použitelnost."
+              catalogsById={catalogsById}
+            />
+            <FacetList
+              title="Požadavky"
+              facets={specification.requirements}
+              emptyText="Pro vybraný rozsah nejsou definované žádné požadavky."
+              catalogsById={catalogsById}
+            />
+          </div>
+        ) : (
+          <div className="rounded border border-dashed border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            Objekt v tomto milníku nemá aktivní IFC entitu, proto pro něj nevzniká IDS
+            specifikace.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
+
 export const IdsSpecificationsPanel: React.FC<Props> = ({
   project,
+  object,
   ifcEntity,
   predefinedType,
+  selectedPhaseId,
+  onSelectedPhaseIdChange,
+  selectedUseCaseId,
+  onSelectedUseCaseIdChange,
+  occurrenceFilter,
+  onOccurrenceFilterChange,
+  onOpenProjectDefinition,
   onFocusSpecification,
   focusedSpecificationId,
   editSpecificationId,
@@ -175,7 +365,7 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
   onDeleteSpecification,
 }) => {
   const [search, setSearch] = useState("");
-  const [scope, setScope] = useState<"entity" | "all">("entity");
+  const [scope, setScope] = useState<"object" | "all">("object");
   const [openSpecificationId, setOpenSpecificationId] = useState<string | null>(null);
   const [draft, setDraft] = useState<IdsProjectSpecification | null>(null);
   const [validationMessages, setValidationMessages] = useState<{ errors: string[]; warnings: string[] } | null>(null);
@@ -187,6 +377,15 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
   const entitySpecifications = useMemo(
     () => getSpecificationsForEntity(project, ifcEntity, predefinedType),
     [project, ifcEntity, predefinedType],
+  );
+  const hasProjectDefinition = hasProjectObjectIdsDefinition(project, object);
+  const projectDefinition = useMemo(
+    () => projectObjectToIdsSpecificationPreview(project, object, {
+      phaseId: selectedPhaseId ?? undefined,
+      useCaseId: selectedUseCaseId ?? undefined,
+      occurrence: occurrenceFilter,
+    }),
+    [project, object, selectedPhaseId, selectedUseCaseId, occurrenceFilter],
   );
   const allSpecifications = project.idsSpecifications ?? [];
   const specificationOrdinalById = useMemo(
@@ -253,29 +452,36 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
           <div>
             <h2 className="text-lg font-bold text-slate-800">
               {scope === "all"
-                ? "Všechny IDS specifikace"
-                : `IDS specifikace pro ${ifcEntity}${predefinedType ? `.${predefinedType}` : ""}`}
+                ? "Všechny zdrojové IDS specifikace"
+                : `IDS pro objekt ${object.description || object.code}`}
             </h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Jedna karta je jedna původní specifikace. Alternativy uvnitř facetu jsou OR,
-              jednotlivé facety jsou AND.
+              Projektová definice se odvozuje z objektu a zvoleného rozsahu. Zdrojové IDS
+              zůstávají samostatné; jednotlivé facety uvnitř specifikace platí současně (AND).
             </p>
           </div>
-          <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
-            {scopedSpecifications.length} specifikací
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {scope === "object" && hasProjectDefinition && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                1 projektová
+              </span>
+            )}
+            <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
+              {scopedSpecifications.length} zdrojových
+            </span>
+          </div>
         </div>
         <div className="mt-3 inline-flex rounded-md border border-slate-300 bg-slate-50 p-0.5">
           <button
             type="button"
-            onClick={() => setScope("entity")}
+            onClick={() => setScope("object")}
             className={`rounded px-3 py-1.5 text-xs font-semibold ${
-              scope === "entity"
+              scope === "object"
                 ? "bg-white text-red-700 shadow-sm"
                 : "text-slate-600 hover:text-slate-800"
             }`}
           >
-            Pro vybranou entitu ({entitySpecifications.length})
+            Vybraný objekt ({hasProjectDefinition ? 1 : 0} projektová · {entitySpecifications.length} zdrojových)
           </button>
           <button
             type="button"
@@ -286,7 +492,7 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
                 : "text-slate-600 hover:text-slate-800"
             }`}
           >
-            Všechny IDS specifikace ({allSpecifications.length})
+            Všechny zdrojové IDS ({allSpecifications.length})
           </button>
         </div>
         <input
@@ -299,13 +505,44 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
       </div>
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+        {scope === "object" && hasProjectDefinition && (
+          <ProjectDefinitionCard
+            project={project}
+            object={object}
+            specification={projectDefinition}
+            catalogsById={catalogsById}
+            selectedPhaseId={selectedPhaseId}
+            onSelectedPhaseIdChange={onSelectedPhaseIdChange}
+            selectedUseCaseId={selectedUseCaseId}
+            onSelectedUseCaseIdChange={onSelectedUseCaseIdChange}
+            occurrenceFilter={occurrenceFilter}
+            onOccurrenceFilterChange={onOccurrenceFilterChange}
+            onOpenProjectDefinition={onOpenProjectDefinition}
+          />
+        )}
+        {scope === "object" && (
+          <div className="flex flex-wrap items-center justify-between gap-2 px-1 pb-1 pt-3">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">
+                Zdrojové IDS související s entitou
+              </h3>
+              <p className="text-xs text-slate-500">
+                Jde o kandidáty podle IFC entity a PredefinedType. Další applicability facety
+                mohou jejich platnost ještě zúžit.
+              </p>
+            </div>
+            <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-semibold text-violet-800">
+              {entitySpecifications.length}
+            </span>
+          </div>
+        )}
         {visibleSpecifications.length === 0 ? (
           <div className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
             {scopedSpecifications.length
               ? "Filtru neodpovídá žádná specifikace."
               : scope === "all"
-                ? "V projektu nejsou uložené žádné IDS specifikace."
-                : "Pro tuto entitu nejsou v projektu uložené canonical IDS specifikace."}
+                ? "V projektu nejsou uložené žádné zdrojové IDS specifikace."
+                : "Pro tuto entitu nejsou uložené žádné zdrojové IDS specifikace. Projektová definice výše je přesto plnohodnotným podkladem pro IDS export."}
           </div>
         ) : (
           visibleSpecifications.map((specification) => {

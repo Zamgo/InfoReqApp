@@ -29,6 +29,7 @@ import { RequirementGroupsPanel } from "./RequirementGroupsPanel";
 import { groupRequirementsByItem, type RequirementItemKind, type RequirementItemGroup } from "../../project/requirementFingerprint";
 import { IdsSpecificationsPanel } from "./IdsSpecificationsPanel";
 import { getSpecificationsForEntity } from "../../ids/specifications";
+import { hasProjectObjectIdsDefinition } from "../../ids/projectDefinition";
 import {
   getIdsProjectedSpecificationName,
   isIdsProjectedRequirement,
@@ -2202,6 +2203,7 @@ export const ObjectDetail: React.FC<Props> = ({
     () => getSpecificationsForEntity(project, object.ifcEntity, selectedPredefinedType),
     [project, object.ifcEntity, selectedPredefinedType],
   );
+  const projectIdsDefinitionCount = hasProjectObjectIdsDefinition(project, object) ? 1 : 0;
   const [selectedItemGroup, setSelectedItemGroup] = useState<{ kind: RequirementItemKind; fingerprint: string } | null>(null);
   /** Stabilní identifikátor vybrané skupiny (kind + id reprezentativního požadavku), aby po uložení změn (změna fingerprintu) zůstal záznam otevřený. */
   const selectedGroupStableRef = useRef<{ kind: RequirementItemKind; representativeId: string } | null>(null);
@@ -4126,7 +4128,7 @@ export const ObjectDetail: React.FC<Props> = ({
               }
             }}
           >
-            IDS specifikace ({entityIdsSpecifications.length})
+            IDS ({projectIdsDefinitionCount} projektová · {entityIdsSpecifications.length} zdrojových)
           </button>
           <button
             type="button"
@@ -4277,8 +4279,20 @@ export const ObjectDetail: React.FC<Props> = ({
       {requirementsViewMode === "specifications" && project && (
         <IdsSpecificationsPanel
           project={project}
+          object={object}
           ifcEntity={object.ifcEntity}
           predefinedType={selectedPredefinedType}
+          selectedPhaseId={selectedPhaseId}
+          onSelectedPhaseIdChange={setSelectedPhaseId}
+          selectedUseCaseId={selectedUseCaseId}
+          onSelectedUseCaseIdChange={setSelectedUseCaseId}
+          occurrenceFilter={occurrenceFilter}
+          onOccurrenceFilterChange={setOccurrenceFilter}
+          onOpenProjectDefinition={() => {
+            setRequirementsViewMode("object");
+            setActiveTab("ids");
+            onFocusIdsSpecification?.(null);
+          }}
           onFocusSpecification={onFocusIdsSpecification}
           focusedSpecificationId={focusedIdsSpecificationId}
           editSpecificationId={editIdsSpecificationId}
