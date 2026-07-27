@@ -6,6 +6,13 @@ import type {
   Project,
 } from "../project/types";
 
+/** Stabilní pořadí specifikací v rámci projektového seznamu, nezávislé na následném filtrování UI. */
+export function buildIdsSpecificationOrdinalIndex(
+  specifications: readonly Pick<IdsProjectSpecification, "id">[],
+): Map<string, number> {
+  return new Map(specifications.map((specification, index) => [specification.id, index + 1]));
+}
+
 export function idsConstraintAlternatives(value: IdsValueConstraint | undefined): string[] {
   if (!value) return [];
   if (value.enumerations?.length) {

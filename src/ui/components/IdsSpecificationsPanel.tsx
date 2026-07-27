@@ -6,6 +6,7 @@ import type {
   Project,
 } from "../../project/types";
 import {
+  buildIdsSpecificationOrdinalIndex,
   formatIdsConstraint,
   getFacetSearchText,
   getSpecificationsForEntity,
@@ -176,6 +177,10 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
     [project, ifcEntity, predefinedType],
   );
   const allSpecifications = project.idsSpecifications ?? [];
+  const specificationOrdinalById = useMemo(
+    () => buildIdsSpecificationOrdinalIndex(allSpecifications),
+    [allSpecifications],
+  );
   const scopedSpecifications = scope === "all" ? allSpecifications : entitySpecifications;
   const visibleSpecifications = useMemo(() => {
     const query = search.trim().toLocaleLowerCase();
@@ -282,6 +287,11 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
         ) : (
           visibleSpecifications.map((specification) => {
             const occurrence = occurrenceLabel(specification);
+            const ordinal = specificationOrdinalById.get(specification.id);
+            const description = specification.description?.trim();
+            const hasDistinctDescription = Boolean(
+              description && description !== (specification.name ?? "").trim(),
+            );
             const unresolvedCount = [
               ...specification.applicability,
               ...specification.requirements,
@@ -310,6 +320,11 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
+                      {ordinal !== undefined && (
+                        <span className="shrink-0 text-xs font-bold text-violet-700">
+                          #{ordinal}
+                        </span>
+                      )}
                       <span className="text-sm font-semibold text-slate-800">
                         {specification.name || "Specifikace bez názvu"}
                       </span>
@@ -330,11 +345,9 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
                         </span>
                       )}
                     </div>
-                    {(specification.identifier || specification.description) && (
+                    {hasDistinctDescription && (
                       <div className="mt-1 truncate text-xs text-slate-500">
-                        {specification.identifier && <span>{specification.identifier}</span>}
-                        {specification.identifier && specification.description && <span> · </span>}
-                        {specification.description}
+                        {description}
                       </div>
                     )}
                   </div>
@@ -348,6 +361,12 @@ export const IdsSpecificationsPanel: React.FC<Props> = ({
                   </svg>
                 </summary>
                 <div className="border-t border-slate-200 bg-slate-50/60 p-4">
+                  {specification.identifier && (
+                    <div className="mb-3 text-[11px] text-slate-500">
+                      <span className="font-semibold text-slate-600">IDS identifier:</span>{" "}
+                      <code className="break-all">{specification.identifier}</code>
+                    </div>
+                  )}
                   {specification.instructions && (
                     <div className="mb-3 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
                       {specification.instructions}

@@ -20,6 +20,7 @@ import {
   filterHierarchyByObjectCodes,
   getIdsSpecificationObjectCodes,
 } from "../src/ids/hierarchyContext.ts";
+import { buildIdsSpecificationOrdinalIndex } from "../src/ids/specifications.ts";
 
 const schema: SchemaIndex = {
   entities: {
@@ -44,6 +45,18 @@ const schema: SchemaIndex = {
   qtos: {},
   dataTypes: [],
 };
+
+test("IDS specification ordinals remain tied to the original project order after filtering", () => {
+  const ordinals = buildIdsSpecificationOrdinalIndex([
+    { id: "spec-a" },
+    { id: "spec-b" },
+    { id: "spec-c" },
+  ]);
+  const filteredIds = ["spec-c"];
+
+  assert.equal(ordinals.get(filteredIds[0]!), 3);
+  assert.equal(ordinals.get("spec-a"), 1);
+});
 
 const parsed: IdsParsed = {
   info: { title: "Test IDS" },
