@@ -230,6 +230,107 @@ export interface IdsSpecMetadata {
   instructions?: string;
 }
 
+/** Bezeztrátově uložená hodnota idsValue. Jednotlivé položky enumeration jsou logické OR. */
+export interface IdsValueConstraint {
+  /** Původní xs:restriction base, např. xs:string nebo xs:double. */
+  base?: string;
+  simpleValue?: string;
+  enumerations?: string[];
+  pattern?: string;
+  minInclusive?: string;
+  maxInclusive?: string;
+  minExclusive?: string;
+  maxExclusive?: string;
+  length?: number;
+  minLength?: number;
+  maxLength?: number;
+}
+
+export type IdsFacetCardinality = "required" | "prohibited" | "optional";
+
+interface IdsProjectFacetBase {
+  /** Stabilní ID facetu v rámci projektu. */
+  id: string;
+  kind: "entity" | "attribute" | "classification" | "property" | "material" | "partOf";
+  cardinality?: IdsFacetCardinality;
+  instructions?: string;
+  uri?: string;
+}
+
+export interface IdsProjectEntityFacet extends IdsProjectFacetBase {
+  kind: "entity";
+  name: IdsValueConstraint;
+  predefinedType?: IdsValueConstraint;
+}
+
+export interface IdsProjectAttributeFacet extends IdsProjectFacetBase {
+  kind: "attribute";
+  name: IdsValueConstraint;
+  value?: IdsValueConstraint;
+}
+
+export interface IdsProjectClassificationFacet extends IdsProjectFacetBase {
+  kind: "classification";
+  system: IdsValueConstraint;
+  value?: IdsValueConstraint;
+  /** Propojený katalog, pokud byl při importu jednoznačně vybrán. */
+  systemEntryId?: string;
+  /** True znamená, že je systém zachován jen pomocnou aspektovou strukturou. */
+  unresolved?: boolean;
+}
+
+export interface IdsProjectPropertyFacet extends IdsProjectFacetBase {
+  kind: "property";
+  propertySet: IdsValueConstraint;
+  baseName: IdsValueConstraint;
+  value?: IdsValueConstraint;
+  dataType?: string;
+}
+
+export interface IdsProjectMaterialFacet extends IdsProjectFacetBase {
+  kind: "material";
+  value?: IdsValueConstraint;
+}
+
+export interface IdsProjectPartOfFacet extends IdsProjectFacetBase {
+  kind: "partOf";
+  relation?: string;
+  entity: IdsProjectEntityFacet;
+}
+
+export type IdsProjectFacet =
+  | IdsProjectEntityFacet
+  | IdsProjectAttributeFacet
+  | IdsProjectClassificationFacet
+  | IdsProjectPropertyFacet
+  | IdsProjectMaterialFacet
+  | IdsProjectPartOfFacet;
+
+/**
+ * Canonical IDS specifikace. Applicability i requirements jsou samostatné AND seznamy;
+ * OR alternativy zůstávají uvnitř jednotlivých IdsValueConstraint.
+ */
+export interface IdsProjectSpecification extends IdsSpecMetadata {
+  id: string;
+  minOccurs: number;
+  maxOccurs: number | "unbounded";
+  applicability: IdsProjectFacet[];
+  requirements: IdsProjectFacet[];
+  source: "imported" | "authored";
+}
+
+/** Zachovaná vazba importovaných IDS facetů na původní specifikaci. */
+export interface ImportedIdsSpecificationGroup extends IdsSpecMetadata {
+  /** Stabilní identifikátor skupiny použitý také v extensions jednotlivých požadavků. */
+  groupId: string;
+  /** IFC alternativy uvedené v jednom entity facetu applicability. */
+  entityAlternatives: string[];
+  /** ID facetů, které tvoří jednu applicability; všechny platí současně (AND). */
+  applicabilityRequirementIds: string[];
+  /** ID požadavků náležejících do stejné IDS specifikace. */
+  requirementIds: string[];
+}
+
 export interface ProjectObject {
   code: string;
   description: string;
@@ -259,6 +360,8 @@ export interface ProjectObject {
   authoringClassifications?: AuthoringClassification[];
   /** Metadata specifikace pro IDS export (dle buildingSMART ids-metadata.md). Klíč: `${phaseId}|${occurrence}` pro kombinaci fáze a výskytu. */
   idsSpecMetadata?: Record<string, IdsSpecMetadata>;
+  /** Skupiny zachované při importu IDS; brání sloučení applicability z různých specifikací do jedné AND skupiny. */
+  importedIdsSpecificationGroups?: ImportedIdsSpecificationGroup[];
   /** Výchozí use-case IDs pro sekce (dědičnost při useCaseMode === 'inherit'). */
   sectionUseCaseDefaults?: Partial<Record<RequirementSectionKey, string[]>>;
   /** Výchozí use-case IDs pro vlastnosti podle psetu (pouze pro requirements.properties). Klíč = psetName. */
@@ -295,6 +398,12 @@ export interface ClassificationSystemEntry {
   name: string;
   /** Optional URI/link to the classification system specification */
   uri?: string;
+  /** Optional external identifier used for unambiguous catalog matching. */
+  externalId?: string;
+  /** Optional catalog version/edition used for unambiguous catalog matching. */
+  version?: string;
+  /** Explicit IDS system-name aliases. Unlike a plain name match, these are trusted mappings. */
+  idsAliases?: string[];
   /** Optional description */
   description?: string;
   /** Hierarchical structure of classification items */
@@ -315,6 +424,8 @@ export interface ClassificationSystemEntry {
   isIfcSystem?: boolean;
   /** Typ třídění: IFC / Autorský nástroj / Klasifikační systém. Pouze „classification“ jde do požadavků na klasifikaci. */
   systemKind?: "ifc" | "authoring" | "classification";
+  /** Pomocná aspektová struktura vytvořená z IDS bez dostupného skutečného katalogu. */
+  isAuxiliaryAspectSystem?: boolean;
 }
 
 /** Režim překladů IFC názvů: vypnuto, bSDD, vlastní z Excelu */
@@ -376,4 +487,9 @@ export interface Project {
   classificationSystemEntries?: ClassificationSystemEntry[];
   /** Metadata celého IDS souboru (ids:info) – dle buildingSMART ids-metadata.md */
   idsMetadata?: IdsMetadata;
+  /**
+   * Canonical IDS specifikace. Entitní a skupinové pohledy jsou pouze odvozené indexy
+   * nad tímto polem, takže se jedna specifikace nekopíruje do více objektů.
+   */
+  idsSpecifications?: IdsProjectSpecification[];
 }

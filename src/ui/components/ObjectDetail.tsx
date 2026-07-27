@@ -21,12 +21,20 @@ import {
 import { makeId } from "../../utils/id";
 import { generateHumanReadable, filterObjectByPhase, matchesOccurrenceFilter } from "../../utils/humanReadableIds";
 import { getEffectiveUseCaseIds, requirementAppliesToUseCase } from "../../project/useCaseResolve";
-import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsSpecMetadata, MaterialRequirement, ObjectRequirements, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
+import type { ClassificationSystemEntry, CodeList, IdsMetadata, IdsProjectSpecification, IdsSpecMetadata, MaterialRequirement, ObjectRequirements, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "../../project/types";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues, parseEnumValues } from "../../project/enumeration";
 import { DocLink } from "./DocLink";
 import { EntitySelect } from "./EntitySelect";
 import { RequirementGroupsPanel } from "./RequirementGroupsPanel";
 import { groupRequirementsByItem, type RequirementItemKind, type RequirementItemGroup } from "../../project/requirementFingerprint";
+import { IdsSpecificationsPanel } from "./IdsSpecificationsPanel";
+import { getSpecificationsForEntity } from "../../ids/specifications";
+import {
+  getIdsProjectedSpecificationName,
+  isIdsProjectedRequirement,
+  projectIdsRequirementsForEntity,
+  withoutIdsProjectedRequirements,
+} from "../../ids/requirementProjection";
 import { fetchPsetOrQtoPropertyDefinitions, fetchSinglePropertyDefinition } from "../../translation/translators/BsddTranslator";
 import { getBsddUrl } from "../../translation/getBsddUrl";
 import { translate } from "../../translation/TranslationService";
@@ -706,6 +714,9 @@ interface Props {
   classificationSystemEntries: ClassificationSystemEntry[];
   /** Projekt – pro metadata při exportu IDS z náhledu */
   project?: Project | null;
+  /** Otevřená canonical IDS specifikace řídí dočasný kontext levé hierarchie. */
+  onFocusIdsSpecification?: (specification: IdsProjectSpecification | null) => void;
+  focusedIdsSpecificationId?: string;
   onSaveEnumAsCodeList: (opts: { objectCode: string; propertyId: string; name: string; values: string[]; link: boolean }) => void;
   /** Přidat vybranou entitu/PredefinedType do IFC hierarchie projektu (když není v hierarchii) */
   /** Přidá objekt (podle object.code) do IFC hierarchie – bez duplikátu, zůstane stejný objekt. */
@@ -2109,6 +2120,8 @@ export const ObjectDetail: React.FC<Props> = ({
   codeLists,
   classificationSystemEntries,
   project,
+  onFocusIdsSpecification,
+  focusedIdsSpecificationId,
   onSaveEnumAsCodeList,
   onAddToIfcHierarchy,
   onCopyObject,
@@ -2156,15 +2169,22 @@ export const ObjectDetail: React.FC<Props> = ({
   const predefinedTypeContainerRef = useRef<HTMLDivElement>(null);
   const [predefinedTypePanelAnchor, setPredefinedTypePanelAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  const [requirementsViewMode, setRequirementsViewMode] = useState<"object" | "groups">(() => {
+  const [requirementsViewMode, setRequirementsViewMode] = useState<"object" | "specifications" | "groups">(() => {
     try {
       const stored = localStorage.getItem("infoReqApp_requirementsViewMode");
-      if (stored === "groups" || stored === "object") return stored;
+      if (stored === "groups" || stored === "object" || stored === "specifications") return stored;
     } catch {
       /* ignore */
     }
     return "object";
   });
+  const selectedPredefinedType = object.predefinedType.mode === "ENUM"
+    ? object.predefinedType.value
+    : undefined;
+  const entityIdsSpecifications = useMemo(
+    () => getSpecificationsForEntity(project, object.ifcEntity, selectedPredefinedType),
+    [project, object.ifcEntity, selectedPredefinedType],
+  );
   const [selectedItemGroup, setSelectedItemGroup] = useState<{ kind: RequirementItemKind; fingerprint: string } | null>(null);
   /** Stabilní identifikátor vybrané skupiny (kind + id reprezentativního požadavku), aby po uložení změn (změna fingerprintu) zůstal záznam otevřený. */
   const selectedGroupStableRef = useRef<{ kind: RequirementItemKind; representativeId: string } | null>(null);
@@ -2305,6 +2325,27 @@ export const ObjectDetail: React.FC<Props> = ({
   }, [isLocked, node.code, node.description, object, onChange, titleDraft]);
 
   const effectiveRequirements: ObjectRequirements = useMemo(() => {
+    if (requirementsViewMode === "object") {
+      const predefinedType =
+        (object.predefinedType.mode === "ENUM" || object.predefinedType.mode === "USERDEFINED") &&
+        object.predefinedType.value &&
+        object.predefinedType.value !== "NOTDEFINED"
+          ? object.predefinedType.value
+          : undefined;
+      const projected = projectIdsRequirementsForEntity(
+        project,
+        object.ifcEntity,
+        predefinedType,
+        schema,
+      );
+      return {
+        attributes: [...object.requirements.attributes, ...projected.attributes],
+        properties: [...object.requirements.properties, ...projected.properties],
+        relations: [...object.requirements.relations, ...projected.relations],
+        classifications: [...object.requirements.classifications, ...projected.classifications],
+        materials: [...object.requirements.materials, ...projected.materials],
+      };
+    }
     if (requirementsViewMode !== "groups" || !selectedItemGroupData) return object.requirements;
     const empty: ObjectRequirements = { attributes: [], properties: [], relations: [], classifications: [], materials: [] };
     const items = selectedItemGroupData.representativeItems;
@@ -2322,7 +2363,27 @@ export const ObjectDetail: React.FC<Props> = ({
       default:
         return object.requirements;
     }
-  }, [requirementsViewMode, selectedItemGroupData, object.requirements]);
+  }, [
+    requirementsViewMode,
+    selectedItemGroupData,
+    object.requirements,
+    object.ifcEntity,
+    object.predefinedType.mode,
+    object.predefinedType.value,
+    project,
+    schema,
+  ]);
+  const idsProjectedRequirementCount = useMemo(
+    () =>
+      [
+        ...effectiveRequirements.attributes,
+        ...effectiveRequirements.properties,
+        ...effectiveRequirements.relations,
+        ...effectiveRequirements.classifications,
+        ...effectiveRequirements.materials,
+      ].filter(isIdsProjectedRequirement).length,
+    [effectiveRequirements],
+  );
 
   // Při rozbalení skupiny v režimu „všechny požadavky“ nastavit kartu na první s obsahem (vlastnosti → atributy → …).
   useEffect(() => {
@@ -2645,7 +2706,10 @@ export const ObjectDetail: React.FC<Props> = ({
 
   const updateObject = useCallback((partial: Partial<ProjectObject>) => {
     if (isLocked) return;
-    pendingUpdatesRef.current = { ...pendingUpdatesRef.current, ...partial };
+    const safePartial = partial.requirements
+      ? { ...partial, requirements: withoutIdsProjectedRequirements(partial.requirements) }
+      : partial;
+    pendingUpdatesRef.current = { ...pendingUpdatesRef.current, ...safePartial };
     onChangeRef.current({ ...objectRef.current, ...pendingUpdatesRef.current });
   }, [isLocked]);
 
@@ -2732,7 +2796,9 @@ export const ObjectDetail: React.FC<Props> = ({
     (groupKeyValue: string) => {
       const group = propertyGroups.find((g) => g.key === groupKeyValue);
       if (!group) return false;
-      return group.properties.some((p) => p.groupLocked === true);
+      return group.properties.some(
+        (p) => !isIdsProjectedRequirement(p) && p.groupLocked === true,
+      );
     },
     [propertyGroups],
   );
@@ -4023,7 +4089,25 @@ export const ObjectDetail: React.FC<Props> = ({
               }
             }}
           >
-            Zobrazení po objektech
+            Detail entity
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1 rounded-full ${
+              requirementsViewMode === "specifications"
+                ? "bg-white text-red-700 shadow-sm border border-red-200"
+                : "text-slate-600 hover:text-slate-800"
+            }`}
+            onClick={() => {
+              setRequirementsViewMode("specifications");
+              try {
+                localStorage.setItem("infoReqApp_requirementsViewMode", "specifications");
+              } catch {
+                /* ignore */
+              }
+            }}
+          >
+            IDS specifikace ({entityIdsSpecifications.length})
           </button>
           <button
             type="button"
@@ -4041,7 +4125,7 @@ export const ObjectDetail: React.FC<Props> = ({
               }
             }}
           >
-            Zobrazení všech požadavků
+            Skupiny požadavků
           </button>
         </div>
       </div>
@@ -4076,7 +4160,7 @@ export const ObjectDetail: React.FC<Props> = ({
               ) : (
                 <span className="truncate">
                   {isIfcPrimary && object.ifcEntity
-                    ? `${object.ifcEntity}.${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? object.predefinedType.value : "NOTDEFINED"}`
+                    ? `${object.ifcEntity}${object.predefinedType.mode === "ENUM" && object.predefinedType.value ? `.${object.predefinedType.value}` : ""}`
                     : (object.description || node.description || node.code)}
                 </span>
               )}
@@ -4170,6 +4254,15 @@ export const ObjectDetail: React.FC<Props> = ({
             <span className="text-sm text-slate-400 font-normal">— úpravy se aplikují na všechny objekty ve skupině</span>
           </div>
         </div>
+      )}
+      {requirementsViewMode === "specifications" && project && (
+        <IdsSpecificationsPanel
+          project={project}
+          ifcEntity={object.ifcEntity}
+          predefinedType={selectedPredefinedType}
+          onFocusSpecification={onFocusIdsSpecification}
+          focusedSpecificationId={focusedIdsSpecificationId}
+        />
       )}
 
       {/* Sekce v pořadí dle sectionOrder (flex order).
@@ -4806,6 +4899,7 @@ export const ObjectDetail: React.FC<Props> = ({
       </CollapsibleSection>
       )}
 
+      {requirementsViewMode !== "specifications" && (
       <CollapsibleSection
         title={SECTION_LABELS.pozadavky}
         isExpanded={sectionVisibility.pozadavky}
@@ -5012,6 +5106,7 @@ export const ObjectDetail: React.FC<Props> = ({
                   </thead>
                   <tbody>
                     {visibleAttributes.map((attr) => {
+                      const isIdsProjected = isIdsProjectedRequirement(attr);
                       const dataType = attr.dataType ?? getAttributeDefinition(attr.attribute)?.dataType ?? ATTRIBUTE_DATA_TYPES_FALLBACK[attr.attribute] ?? "IfcLabel";
                       const isDisabled = attr.constraint === "FILLED" || attr.constraint === undefined;
                       const isPattern = attr.constraint === "PATTERN";
@@ -5028,7 +5123,21 @@ export const ObjectDetail: React.FC<Props> = ({
                       const showAttrWarning = attrNotForEntity || hasInvalidEnumValues;
                       
                       return (
-                        <tr key={attr.id} className={`border-t border-slate-200 ${showAttrWarning ? "bg-red-50/50" : ""}`}>
+                        <tr
+                          key={attr.id}
+                          className={`border-t border-slate-200 ${
+                            isIdsProjected
+                              ? "pointer-events-none bg-violet-50/70"
+                              : showAttrWarning
+                                ? "bg-red-50/50"
+                                : ""
+                          }`}
+                          title={
+                            isIdsProjected
+                              ? `Odvozeno z IDS specifikace: ${getIdsProjectedSpecificationName(attr) ?? ""}`
+                              : undefined
+                          }
+                        >
                           {!hiddenAttributeColumns.has(0) && (
                             <td className="px-2 py-2">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500" checked={selectedAttributes.has(attr.id)} onChange={() => toggleAttributeSelection(attr.id)} />
@@ -5565,7 +5674,11 @@ export const ObjectDetail: React.FC<Props> = ({
               <div className="space-y-3 pr-1">
                 {propertyGroups.map((group) => {
                 const expanded = expandedGroups[group.key] ?? true;
-                const isGroupLocked = isPropertyGroupLocked(group.key);
+                const isIdsOnlyGroup = group.properties.every(isIdsProjectedRequirement);
+                const idsSpecificationName = isIdsOnlyGroup
+                  ? getIdsProjectedSpecificationName(group.properties[0])
+                  : undefined;
+                const isGroupLocked = isIdsOnlyGroup || isPropertyGroupLocked(group.key);
                 const isSchemaBound = group.source !== "CUSTOM";
                 const schemaOptionsRaw = group.source === "PSET" ? allPsets : allQtos;
                 const schemaOptions = mergeAssignmentsByName(schemaOptionsRaw);
@@ -5624,10 +5737,11 @@ export const ObjectDetail: React.FC<Props> = ({
                       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                         <input
                           type="checkbox"
-                          className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500"
+                          className="h-4 w-4 shrink-0 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500 disabled:cursor-not-allowed disabled:opacity-50"
                           checked={selectedGroups.has(group.key)}
                           onChange={() => toggleGroupSelection(group.key)}
                           onClick={(e) => e.stopPropagation()}
+                          disabled={isIdsOnlyGroup}
                         />
                         <button
                           className="flex shrink-0 items-center justify-center rounded border border-slate-300 p-1.5 hover:bg-slate-50"
@@ -5655,8 +5769,8 @@ export const ObjectDetail: React.FC<Props> = ({
                               : "border-slate-300 text-slate-600 hover:bg-slate-50"
                           }`}
                           onClick={() => togglePropertyGroupLock(group.key)}
-                          disabled={isLocked}
-                          title={isGroupLocked ? "Odemknout skupinu vlastností" : "Zamknout skupinu vlastností"}
+                          disabled={isLocked || isIdsOnlyGroup}
+                          title={isIdsOnlyGroup ? "Odvozeno z canonical IDS specifikace" : isGroupLocked ? "Odemknout skupinu vlastností" : "Zamknout skupinu vlastností"}
                           aria-label={isGroupLocked ? "Odemknout skupinu vlastností" : "Zamknout skupinu vlastností"}
                         >
                           <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -5670,6 +5784,14 @@ export const ObjectDetail: React.FC<Props> = ({
                         <span className={`shrink-0 rounded px-2 py-1 text-[11px] font-semibold uppercase ${badgeClass}`}>
                           {group.source === "PSET" ? "Pset dle IFC" : group.source === "QTO" ? "Qto dle IFC" : "Vlastní"}
                         </span>
+                        {isIdsOnlyGroup && (
+                          <span
+                            className="shrink-0 rounded bg-violet-100 px-2 py-1 text-[11px] font-semibold text-violet-800"
+                            title={idsSpecificationName}
+                          >
+                            IDS · {idsSpecificationName}
+                          </span>
+                        )}
                         {isInvalidGroup && (
                           <span className="shrink-0 rounded bg-red-100 px-2 py-1 text-[11px] font-semibold uppercase text-red-800">
                             Neplatné pro PredefinedType
@@ -5943,7 +6065,19 @@ export const ObjectDetail: React.FC<Props> = ({
                                 </tr>
                               ) : (
                               group.properties.map((prop) => (
-                                <tr key={prop.id} className={`border-t border-slate-200 ${colors.rowBorder}`}>
+                                <tr
+                                  key={prop.id}
+                                  className={`border-t border-slate-200 ${colors.rowBorder} ${
+                                    isIdsProjectedRequirement(prop)
+                                      ? "pointer-events-none bg-violet-50/70"
+                                      : ""
+                                  }`}
+                                  title={
+                                    isIdsProjectedRequirement(prop)
+                                      ? `Odvozeno z IDS specifikace: ${getIdsProjectedSpecificationName(prop) ?? ""}`
+                                      : undefined
+                                  }
+                                >
                                   {!hiddenPropertyColumns.has(0) && (
                                     <td className="px-2 py-2">
                                       <input
@@ -7004,8 +7138,19 @@ export const ObjectDetail: React.FC<Props> = ({
                   </thead>
                   <tbody>
                     {effectiveRequirements.relations.map((rel) => {
+                      const isIdsProjected = isIdsProjectedRequirement(rel);
                       return (
-                        <tr key={rel.id} className="border-t border-slate-200">
+                        <tr
+                          key={rel.id}
+                          className={`border-t border-slate-200 ${
+                            isIdsProjected ? "pointer-events-none bg-violet-50/70" : ""
+                          }`}
+                          title={
+                            isIdsProjected
+                              ? `Odvozeno z IDS specifikace: ${getIdsProjectedSpecificationName(rel) ?? ""}`
+                              : undefined
+                          }
+                        >
                           {!hiddenPartOfColumns.has(0) && (
                             <td className="px-2 py-2">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500" checked={selectedRelations.has(rel.id)} onChange={() => toggleRelationSelection(rel.id)} />
@@ -7311,7 +7456,19 @@ export const ObjectDetail: React.FC<Props> = ({
                   </thead>
                   <tbody>
                     {effectiveRequirements.materials.map((mat) => (
-                      <tr key={mat.id} className="border-t border-slate-200">
+                      <tr
+                        key={mat.id}
+                        className={`border-t border-slate-200 ${
+                          isIdsProjectedRequirement(mat)
+                            ? "pointer-events-none bg-violet-50/70"
+                            : ""
+                        }`}
+                        title={
+                          isIdsProjectedRequirement(mat)
+                            ? `Odvozeno z IDS specifikace: ${getIdsProjectedSpecificationName(mat) ?? ""}`
+                            : undefined
+                        }
+                      >
                         {!hiddenMaterialColumns.has(0) && (
                           <td className="px-2 py-2">
                             <input type="checkbox" className="h-4 w-4 cursor-pointer rounded border-slate-300 text-red-600 focus:ring-red-500" checked={selectedMaterials.has(mat.id)} onChange={() => toggleMaterialSelection(mat.id)} />
@@ -7982,16 +8139,34 @@ export const ObjectDetail: React.FC<Props> = ({
                   </thead>
                   <tbody>
                     {classificationsWithoutIfc.map((cls) => (
-                      <tr key={cls.id} className="border-t border-slate-200">
+                      <tr
+                        key={cls.id}
+                        className={`border-t border-slate-200 ${
+                          isIdsProjectedRequirement(cls)
+                            ? "pointer-events-none bg-violet-50/70"
+                            : ""
+                        }`}
+                        title={
+                          isIdsProjectedRequirement(cls)
+                            ? `Odvozeno z IDS specifikace: ${getIdsProjectedSpecificationName(cls) ?? ""}`
+                            : undefined
+                        }
+                      >
                         {!hiddenClassificationColumns.has(0) && (
                           <td className="px-2 py-2">
-                            <input type="checkbox" className={`h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 ${cls.readOnly ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`} checked={selectedClassifications.has(cls.id)} onChange={() => !cls.readOnly && toggleClassificationSelection(cls.id)} disabled={cls.readOnly} title={cls.readOnly ? "Primární klasifikace - nelze vybrat" : ""} />
+                            <input type="checkbox" className={`h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500 ${cls.readOnly ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`} checked={selectedClassifications.has(cls.id)} onChange={() => !cls.readOnly && toggleClassificationSelection(cls.id)} disabled={cls.readOnly} title={cls.readOnly ? (isIdsProjectedRequirement(cls) ? "Odvozeno z IDS - nelze upravit" : "Primární klasifikace - nelze vybrat") : ""} />
                           </td>
                         )}
                         {!hiddenClassificationColumns.has(1) && (
                           <td className="px-2 py-2">
                           {cls.readOnly ? (
-                            <span className="text-xs font-medium text-slate-700">Požadované</span>
+                            <span className="text-xs font-medium text-slate-700">
+                              {cls.occurrence === "prohibited"
+                                ? "Zakázané"
+                                : cls.occurrence === "optional"
+                                  ? "Možné"
+                                  : "Požadované"}
+                            </span>
                           ) : (
                             <select
                               className="w-full min-w-[100px] rounded border border-slate-300 px-2 py-1 text-sm"
@@ -8011,6 +8186,11 @@ export const ObjectDetail: React.FC<Props> = ({
                         )}
                         {!hiddenClassificationColumns.has(2) && (
                           <td className="px-2 py-2">
+                          {isIdsProjectedRequirement(cls) && (
+                            <div className="mb-1 rounded bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-900">
+                              {cls.system}
+                            </div>
+                          )}
                             <select
                               className={`w-full rounded border border-slate-300 px-2 py-1 text-sm ${cls.readOnly ? "bg-slate-100 text-slate-400 cursor-not-allowed" : ""}`}
                               value={cls.systemEntryId ?? ""}
@@ -8205,14 +8385,14 @@ export const ObjectDetail: React.FC<Props> = ({
                             <input
                               type="checkbox"
                               className={`h-4 w-4 rounded border-slate-300 text-green-600 focus:ring-green-500 ${cls.readOnly ? "cursor-not-allowed" : "cursor-pointer"}`}
-                              checked={cls.readOnly ? true : (cls.isApplicability ?? false)}
+                              checked={isIdsProjectedRequirement(cls) ? (cls.isApplicability ?? false) : cls.readOnly ? true : (cls.isApplicability ?? false)}
                             onChange={(e) =>
                               updateRequirements((reqs) => {
                                 reqs.classifications = reqs.classifications.map((c) => (c.id === cls.id ? { ...c, isApplicability: e.target.checked } : c));
                               })
                             }
                             disabled={cls.readOnly}
-                            title={cls.readOnly ? "Primární klasifikace je vždy v části Použitelnost" : "Pokud je zaškrtnuto, klasifikace bude v části Použitelnost (applicability)"}
+                            title={cls.readOnly ? (isIdsProjectedRequirement(cls) ? "Zachovaná část původní IDS specifikace" : "Primární klasifikace je vždy v části Použitelnost") : "Pokud je zaškrtnuto, klasifikace bude v části Použitelnost (applicability)"}
                           />
                         </td>
                         )}
@@ -8224,8 +8404,8 @@ export const ObjectDetail: React.FC<Props> = ({
                             </button>
                           )}
                           {cls.readOnly && (
-                            <span className="text-xs text-slate-400" title="Tato klasifikace je z primárního systému a nelze ji odebrat">
-                              Primární
+                            <span className="text-xs text-slate-400" title={isIdsProjectedRequirement(cls) ? getIdsProjectedSpecificationName(cls) : "Tato klasifikace je z primárního systému a nelze ji odebrat"}>
+                              {isIdsProjectedRequirement(cls) ? "IDS" : "Primární"}
                             </span>
                             )}
                           </td>
@@ -8741,12 +8921,23 @@ export const ObjectDetail: React.FC<Props> = ({
                 activeTab={activeTab}
                 onTabChange={setActiveTab}
               />
+              {requirementsViewMode === "object" && idsProjectedRequirementCount > 0 && (
+                <div className="border-b border-violet-200 bg-violet-50 px-4 py-2 text-xs text-violet-900">
+                  <span className="font-semibold">
+                    IDS: {idsProjectedRequirementCount} odvozených facetů
+                  </span>
+                  {" · "}
+                  Jsou promítnuté do běžných záložek podle vybrané entity, zachovávají
+                  Použitelnost/Požadavky a zde jsou pouze pro čtení. Zdrojové IDS se tím neduplikuje.
+                </div>
+              )}
               {editorBlock}
             </>
           );
         })()}
       </div>
       </CollapsibleSection>
+      )}
 
       {/* Dialog pro duplikaci požadavků (atributy, klasifikace, materiál, součásti) do jiných objektů – mimo karty, aby byl dostupný ze všech záložek */}
       {duplicateToObjectsDialogType && project && (() => {

@@ -6,6 +6,7 @@ import { SettingsDialog } from "./ui/components/SettingsDialog";
 import { TranslationProvider } from "./translation/TranslationContext";
 import { IDSExportDialog } from "./ui/components/IDSExportDialog";
 import { ExcelExportDialog, type SheetSelection } from "./ui/components/ExcelExportDialog";
+import { IdsImportDialog } from "./ui/components/IdsImportDialog";
 import { parseClassificationTsv, parseClassificationSimpleList, detectClassificationFormat, collectLeaves, findNodeByCode, removeNodeByCode, addNodeAsSibling, updateLeafMappedValue, updateLeafIfcEntityPredefinedType, updateNodeDescriptionByCode } from "./classification/parser";
 import { parseClassificationXlsx } from "./classification/sampleXlsx";
 import {
@@ -18,7 +19,7 @@ import {
 import type { ClassificationData, ClassificationNode } from "./classification/types";
 import { SchemaProvider, useSchema } from "./schema/SchemaProvider";
 import { normalizeIfcSchemaVersion } from "./schema/ifcVersionConfig";
-import type { AttributeRequirement, ClassificationRequirement, ClassificationSystemEntry, CodeList, MaterialRequirement, ObjectRequirements, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "./project/types";
+import type { AttributeRequirement, ClassificationRequirement, ClassificationSystemEntry, CodeList, IdsProjectSpecification, MaterialRequirement, ObjectRequirements, Phase, Project, ProjectObject, PropertyRequirement, RelationRequirement } from "./project/types";
 import {
   createEmptyProject,
   clearAllAppDataOnReset,
@@ -28,7 +29,14 @@ import {
   loadProjectFromStorage,
   saveProjectToStorage,
 } from "./project/storage";
-import { parseIdsXml, mergeIdsIntoProject } from "./import/ids";
+import {
+  analyzeIdsClassificationImport,
+  mergeIdsIntoProjectWithReport,
+  parseIdsXml,
+  type IdsCatalogResolution,
+  type IdsClassificationImportAnalysis,
+  type IdsParsed,
+} from "./import/ids";
 import { importProjectFromExcel } from "./import/excel";
 import { ensurePhaseList, ensureProjectPhases, removePhaseFromProject } from "./project/phases";
 import { ENUM_CODELIST_ID_KEY, formatEnumValues } from "./project/enumeration";
@@ -96,6 +104,7 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
   const [classification, setClassification] = useState<ClassificationData | null>(null);
   const [selectedCode, setSelectedCode] = useState<string>();
   const [selectedObject, setSelectedObject] = useState<ProjectObject | null>(null);
+  const [focusedIdsSpecificationId, setFocusedIdsSpecificationId] = useState<string>();
   const [status, setStatus] = useState<string>("");
   const [isProjectDetailsOpen, setIsProjectDetailsOpen] = useState<boolean>(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState<boolean>(false);
@@ -103,6 +112,11 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
   const [isIDSExportOpen, setIsIDSExportOpen] = useState<boolean>(false);
   const [isExcelExportOpen, setIsExcelExportOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
+  const [pendingIdsImport, setPendingIdsImport] = useState<{
+    fileName: string;
+    parsed: IdsParsed;
+    analysis: IdsClassificationImportAnalysis;
+  } | null>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const importMenuRef = useRef<HTMLDivElement>(null);
   const importJsonInputRef = useRef<HTMLInputElement>(null);
@@ -142,8 +156,30 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     setClassification(null);
     setSelectedCode(undefined);
     setSelectedObject(null);
+    setFocusedIdsSpecificationId(undefined);
     setStatus("");
   }, []);
+
+  const focusedIdsSpecification = useMemo<IdsProjectSpecification | null>(
+    () =>
+      project?.idsSpecifications?.find(
+        (specification) => specification.id === focusedIdsSpecificationId,
+      ) ?? null,
+    [project?.idsSpecifications, focusedIdsSpecificationId],
+  );
+
+  const onFocusIdsSpecification = useCallback(
+    (specification: IdsProjectSpecification | null) => {
+      setFocusedIdsSpecificationId(specification?.id);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (focusedIdsSpecificationId && !focusedIdsSpecification) {
+      setFocusedIdsSpecificationId(undefined);
+    }
+  }, [focusedIdsSpecificationId, focusedIdsSpecification]);
 
   /** Vrátí IFC mapování (entity + predefinedType) z primárního klasifikačního systému pro daný kód (z mappedValues). */
   const getIfcMappingFromPrimary = useCallback((proj: Project, code: string): { entity: string; predefinedType?: string } | null => {
@@ -944,7 +980,29 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
     try {
       const xmlString = await file.text();
       const parsed = parseIdsXml(xmlString);
-      const merged = mergeIdsIntoProject(parsed, project, schemaIndex ?? null);
+      const analysis = analyzeIdsClassificationImport(
+        parsed,
+        project?.classificationSystemEntries ?? [],
+      );
+      setPendingIdsImport({ fileName: file.name, parsed, analysis });
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Import IDS se nezdařil");
+      if (importIdsInputRef.current) importIdsInputRef.current.value = "";
+    }
+  };
+
+  const completeIdsImport = (resolutions: IdsCatalogResolution[]) => {
+    if (!pendingIdsImport) return;
+    try {
+      const { project: merged, report } = mergeIdsIntoProjectWithReport(
+        pendingIdsImport.parsed,
+        project,
+        schemaIndex ?? null,
+        {
+          catalogResolutions: resolutions,
+          addImportedIfcEntitiesToHierarchy: true,
+        },
+      );
       historyRef.current = [JSON.parse(JSON.stringify(merged))];
       historyIndexRef.current = 0;
       setProject(merged);
@@ -957,10 +1015,27 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
       const firstCode = leaves[0]?.code;
       if (firstCode) setSelectedCode(firstCode);
       saveProjectToStorage(merged);
-      setStatus(project ? "IDS sloučen do projektu (přidány nové entity)" : "IDS importován, projekt vytvořen");
+      const linked = report.linkedSystems.length > 0
+        ? `Propojené klasifikace: ${report.linkedSystems.map((item) => `${item.name} → ${item.catalogName}`).join(", ")}.`
+        : "Propojené klasifikace: žádné.";
+      const auxiliary = report.auxiliarySystems.length > 0
+        ? `Pomocné/nevyřešené aspekty: ${report.auxiliarySystems.join(", ")}.`
+        : "Pomocné/nevyřešené aspekty: žádné.";
+      const warningText = report.warnings.length > 0 ? `\nUpozornění: ${report.warnings.join(" ")}` : "";
+      setStatus(
+        `IDS import dokončen. IFC kódy v hierarchii: ${report.importedIfcCodes}. ` +
+        `Zachovaná klasifikační pravidla/patterny: ${report.preservedClassificationRules}.\n` +
+        `${linked}\n${auxiliary}${warningText}`,
+      );
+      setPendingIdsImport(null);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Import IDS se nezdařil");
     }
+    if (importIdsInputRef.current) importIdsInputRef.current.value = "";
+  };
+
+  const cancelIdsImport = () => {
+    setPendingIdsImport(null);
     if (importIdsInputRef.current) importIdsInputRef.current.value = "";
   };
 
@@ -2579,6 +2654,8 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
             onDeleteClassificationSystemEntry={onDeleteClassificationSystemEntry}
             schemaIndex={schemaIndex}
             onAddIfcClassificationSystem={onAddIfcClassificationSystem}
+            idsSpecification={focusedIdsSpecification}
+            onClearIdsSpecificationFocus={() => setFocusedIdsSpecificationId(undefined)}
           />
         </div>
         
@@ -2625,6 +2702,8 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
               codeLists={project?.codeLists ?? []}
               classificationSystemEntries={project?.classificationSystemEntries ?? []}
               project={project}
+              onFocusIdsSpecification={onFocusIdsSpecification}
+              focusedIdsSpecificationId={focusedIdsSpecificationId}
               onSaveEnumAsCodeList={onSaveEnumAsCodeList}
               onAddToIfcHierarchy={onAddToIfcHierarchy}
               onCopyObject={onCopyObject}
@@ -2671,6 +2750,16 @@ const AppInner: React.FC<AppInnerProps> = ({ project, setProject }) => {
           isOpen={isExcelExportOpen}
           onClose={() => setIsExcelExportOpen(false)}
           onExport={(selection) => void handleExcelExport(selection)}
+        />
+      )}
+
+      {pendingIdsImport && (
+        <IdsImportDialog
+          fileName={pendingIdsImport.fileName}
+          analysis={pendingIdsImport.analysis}
+          catalogs={project?.classificationSystemEntries ?? []}
+          onConfirm={completeIdsImport}
+          onCancel={cancelIdsImport}
         />
       )}
 

@@ -75,10 +75,12 @@ flowchart LR
 
 **IDS:**
 
-1. Uživatel nahraje IDS soubor. App parsuje přes import/ids (parseIdsFile).
-2. App volá `mergeIdsIntoProject(parsed, project, schemaIndex ?? null)`. Merge potřebuje schemaIndex pro normalizaci kódů a pro buildClassificationFromSchemaFiltered.
-3. Výsledek je nový/upravený projekt; App nastaví setProject(merged) a saveProjectToStorage(merged).
-4. Před mergem App volá `migrateProject(imported)` z project vrstvy na načtený projekt z importu (podle kontextu volání).
+1. Uživatel nahraje IDS soubor. App parsuje přes `parseIdsXml`.
+2. `analyzeIdsClassificationImport` porovná klasifikační facety s katalogy projektu. URI nebo explicitní alias jsou jistá shoda; samotný název vyžaduje potvrzení.
+3. Předimportní dialog umožní propojit dostupný katalog, použít pomocnou aspektovou strukturu, nebo import zrušit.
+4. `mergeIdsIntoProjectWithReport` rozbalí entity `xs:enumeration` na logické alternativy, zachová AND skupiny applicability a přidá validní IFC kódy do stromu.
+5. Pro nedostupné katalogy vznikne označená pomocná struktura provider → aspekt → doslovné pravidlo. Nejde o skutečnou katalogovou hierarchii.
+6. App uloží projekt a zobrazí souhrn propojených a pomocných klasifikací i zachovaných pravidel.
 
 **Excel:**
 

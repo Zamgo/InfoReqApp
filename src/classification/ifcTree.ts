@@ -136,8 +136,9 @@ export function buildClassificationFromSchemaFiltered(
           children: [],
         });
       }
-      // IDS import: entita bez predefined type má v selectedCodes jen "IfcDoor" – přidáme list s kódem entity, aby se zobrazila v hierarchii
-      if (children.length === 0 && selectedCodes.has(entityName)) {
+      // IDS import: obecná entita a její konkrétní PredefinedType jsou nezávislé alternativy.
+      // Obecný list proto zachováme i tehdy, když už strom obsahuje typované děti stejné entity.
+      if (selectedCodes.has(entityName) && !children.some((child) => child.code === entityName)) {
         children.push({
           code: entityName,
           description: entityName,

@@ -45,6 +45,7 @@ export const createEmptyProject = (classification: ClassificationData): Project 
     primaryClassificationId: primary.id,
     phases: getDefaultPhases(),
     objects: {},
+    idsSpecifications: [],
     codeLists: [],
     classificationSystemEntries: [],
   };
@@ -106,6 +107,7 @@ export const loadProjectFromStorage = (): Project | null => {
     const version = normalizeIfcSchemaVersion(parsed.ifcSchemaVersion);
     const normalized: Project = {
       ...ensureProjectPhases(parsed),
+      idsSpecifications: parsed.idsSpecifications ?? [],
       ifcSchemaVersion: version,
       ifcSchemaVersionDisplay: getDisplayLabel(version),
       ifcDocumentationUrl: getIfcDocumentationBaseUrl(version),
@@ -158,6 +160,7 @@ export const importProjectFile = async (file: File): Promise<Project> => {
   const version = normalizeIfcSchemaVersion(parsed.ifcSchemaVersion);
   const normalized: Project = {
     ...ensureProjectPhases(parsed),
+    idsSpecifications: parsed.idsSpecifications ?? [],
     ifcSchemaVersion: version,
     ifcSchemaVersionDisplay: getDisplayLabel(version),
     ifcDocumentationUrl: getIfcDocumentationBaseUrl(version),

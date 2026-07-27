@@ -6,11 +6,21 @@ import {
   getHierarchyNodesForView,
 } from "../../classification/hierarchyView";
 import type { ClassificationData, ClassificationNode } from "../../classification/types";
-import type { ClassificationSystemEntry, CodeList, Phase, ProjectObject, PurposeOfUseEntry } from "../../project/types";
+import type { ClassificationSystemEntry, CodeList, IdsProjectSpecification, Phase, ProjectObject, PurposeOfUseEntry } from "../../project/types";
+import {
+  filterHierarchyByObjectCodes,
+  getIdsSpecificationObjectCodes,
+} from "../../ids/hierarchyContext";
+import { formatIdsConstraint, idsConstraintAlternatives } from "../../ids/specifications";
 import { PhaseManager } from "./PhaseManager";
 import { PurposeOfUseManager } from "./PurposeOfUseManager";
 import { CodeListManager } from "./CodeListManager";
 import { ClassificationSystemsManager } from "./ClassificationSystemsManager";
+
+type PanelHierarchyViewMode =
+  | HierarchyViewMode
+  | "ids:entities"
+  | "ids:classifications";
 
 /**
  * Get maximum depth of the tree
@@ -357,6 +367,9 @@ interface Props {
   onDeleteClassificationSystemEntry: (id: string) => void;
   schemaIndex?: import("../../schema/types").SchemaIndex | null;
   onAddIfcClassificationSystem?: (onAdded?: (entry: ClassificationSystemEntry) => void) => void;
+  /** Dočasný filtr levé hierarchie podle specifikace otevřené v pravém panelu. */
+  idsSpecification?: IdsProjectSpecification | null;
+  onClearIdsSpecificationFocus?: () => void;
 }
 
 const TreeItem: React.FC<{
@@ -504,10 +517,12 @@ export const ClassificationPanel: React.FC<Props> = ({
   onDeleteClassificationSystemEntry,
   schemaIndex,
   onAddIfcClassificationSystem,
+  idsSpecification,
+  onClearIdsSpecificationFocus,
 }) => {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<"hierarchy" | "phases" | "useCases" | "codelists" | "classificationsystems">("hierarchy");
-  const [viewMode, setViewMode] = useState<HierarchyViewMode>("classification");
+  const [viewMode, setViewMode] = useState<PanelHierarchyViewMode>("classification");
   const [expandLevel, setExpandLevel] = useState<number | null>(null);
   const [expandTrigger, setExpandTrigger] = useState(0);
 
@@ -516,22 +531,118 @@ export const ClassificationPanel: React.FC<Props> = ({
     return classificationSystemEntries.find((s) => s.isPrimary);
   }, [classificationSystemEntries]);
 
-  const hierarchyViewOptions = useMemo(
+  const baseHierarchyViewOptions = useMemo(
     () => getHierarchyViewOptions(classification, primarySystem, classificationSystemEntries, objects ?? {}),
     [classification, primarySystem, classificationSystemEntries, objects]
   );
 
+  const idsClassificationFacets = useMemo(
+    () =>
+      idsSpecification
+        ? [
+            ...idsSpecification.applicability
+              .filter((facet) => facet.kind === "classification")
+              .map((facet) => ({ facet, section: "Použitelnost" as const })),
+            ...idsSpecification.requirements
+              .filter((facet) => facet.kind === "classification")
+              .map((facet) => ({ facet, section: "Požadavky" as const })),
+          ]
+        : [],
+    [idsSpecification],
+  );
+
+  const hierarchyViewOptions = useMemo(() => {
+    if (!idsSpecification) return baseHierarchyViewOptions;
+    return [
+      { value: "ids:entities" as PanelHierarchyViewMode, label: "IDS – dotčené entity" },
+      ...(idsClassificationFacets.length
+        ? [{ value: "ids:classifications" as PanelHierarchyViewMode, label: "IDS – klasifikační pravidla" }]
+        : []),
+      ...baseHierarchyViewOptions,
+    ];
+  }, [baseHierarchyViewOptions, idsSpecification, idsClassificationFacets.length]);
+
+  const idsObjectCodes = useMemo(
+    () =>
+      idsSpecification
+        ? getIdsSpecificationObjectCodes(idsSpecification, objects ?? {})
+        : new Set<string>(),
+    [idsSpecification, objects],
+  );
+
+  const sourceViewMode: HierarchyViewMode =
+    viewMode === "ids:entities"
+      ? primarySystem?.isIfcSystem
+        ? "classification"
+        : "ifc"
+      : viewMode === "ids:classifications"
+        ? "classification"
+        : viewMode;
+
+  const unfilteredViewNodes = useMemo(
+    () =>
+      viewMode === "ids:classifications"
+        ? []
+        : getHierarchyNodesForView(
+            sourceViewMode,
+            classification,
+            primarySystem,
+            classificationSystemEntries,
+            objects ?? {},
+          ),
+    [
+      viewMode,
+      sourceViewMode,
+      classification,
+      primarySystem,
+      classificationSystemEntries,
+      objects,
+    ],
+  );
+
   const baseNodes = useMemo(
     () =>
-      getHierarchyNodesForView(
-        viewMode,
-        classification,
-        primarySystem,
-        classificationSystemEntries,
-        objects ?? {}
-      ),
-    [viewMode, classification, primarySystem, classificationSystemEntries, objects]
+      idsSpecification
+        ? filterHierarchyByObjectCodes(unfilteredViewNodes, idsObjectCodes)
+        : unfilteredViewNodes,
+    [idsSpecification, unfilteredViewNodes, idsObjectCodes],
   );
+
+  const idsEntitySummary = useMemo(() => {
+    const labels = (idsSpecification?.applicability ?? [])
+      .filter((facet) => facet.kind === "entity")
+      .flatMap((facet) => {
+        const entities = idsConstraintAlternatives(facet.name);
+        const values = entities.length ? entities : [formatIdsConstraint(facet.name)];
+        const predefinedType = facet.predefinedType
+          ? formatIdsConstraint(facet.predefinedType)
+          : undefined;
+        return values.map((entity) =>
+          predefinedType ? `${entity}.${predefinedType}` : entity,
+        );
+      });
+    return {
+      visible: labels.slice(0, 4),
+      hiddenCount: Math.max(0, labels.length - 4),
+    };
+  }, [idsSpecification]);
+
+  const visibleIdsClassificationFacets = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase();
+    if (!query) return idsClassificationFacets;
+    return idsClassificationFacets.filter(({ facet, section }) =>
+      [
+        section,
+        formatIdsConstraint(facet.system),
+        formatIdsConstraint(facet.value, ""),
+        facet.instructions,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLocaleLowerCase()
+        .includes(query),
+    );
+  }, [idsClassificationFacets, search]);
 
   const filteredNodes = useMemo(() => {
     if (!baseNodes.length) return [];
@@ -540,12 +651,17 @@ export const ClassificationPanel: React.FC<Props> = ({
 
   // Objekty mimo hierarchii (existují v projektu, ale nejsou listem ve stromu) – zobrazíme je zvlášť se zvýrazněním
   const codesInTree = useMemo(
-    () => new Set(collectLeaves(baseNodes).map((n) => n.code)),
-    [baseNodes],
+    () => new Set(collectLeaves(unfilteredViewNodes).map((n) => n.code)),
+    [unfilteredViewNodes],
   );
   const orphanObjectCodes = useMemo(
-    () => Object.keys(objects ?? {}).filter((code) => !codesInTree.has(code)),
-    [objects, codesInTree],
+    () =>
+      Object.keys(objects ?? {}).filter(
+        (code) =>
+          !codesInTree.has(code) &&
+          (!idsSpecification || idsObjectCodes.has(code)),
+      ),
+    [objects, codesInTree, idsSpecification, idsObjectCodes],
   );
   const filteredOrphanCodes = useMemo(() => {
     if (!search.trim() || orphanObjectCodes.length === 0) return orphanObjectCodes;
@@ -559,7 +675,7 @@ export const ClassificationPanel: React.FC<Props> = ({
 
   // V pohledu „klasifikace“: badge IFC třída.PredefinedType (z uzlu nebo z mappedValues u pure systému) – u položek mimo hierarchii se badge nezobrazuje
   const getIfcBadgeLabel = useMemo((): ((node: ClassificationNode) => string | undefined) | undefined => {
-    if (viewMode !== "classification") return undefined;
+    if (viewMode !== "classification" && viewMode !== "ids:entities") return undefined;
     const ifcSystemId = primarySystem?.mappedSystemIds?.find((sid) =>
       classificationSystemEntries.some((e) => e.id === sid && e.isIfcSystem)
     );
@@ -576,6 +692,22 @@ export const ClassificationPanel: React.FC<Props> = ({
       return undefined;
     };
   }, [viewMode, primarySystem, classificationSystemEntries]);
+
+  useEffect(() => {
+    if (idsSpecification) {
+      setActiveTab("hierarchy");
+      setViewMode("ids:entities");
+      setSearch("");
+      setExpandLevel(null);
+      setExpandTrigger((value) => value + 1);
+      return;
+    }
+    setViewMode((current) =>
+      current === "ids:entities" || current === "ids:classifications"
+        ? "classification"
+        : current,
+    );
+  }, [idsSpecification?.id]);
 
   // Pokud aktuální pohled už není v seznamu (např. změna primárního systému), přepni na hlavní klasifikaci
   useEffect(() => {
@@ -627,7 +759,7 @@ export const ClassificationPanel: React.FC<Props> = ({
             <div className="flex items-center gap-2">
               <select
                 value={viewMode}
-                onChange={(e) => setViewMode(e.target.value as HierarchyViewMode)}
+                onChange={(e) => setViewMode(e.target.value as PanelHierarchyViewMode)}
                 className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
               >
                 {hierarchyViewOptions.map((opt) => (
@@ -638,6 +770,44 @@ export const ClassificationPanel: React.FC<Props> = ({
               </select>
             </div>
           </div>
+          {idsSpecification && (
+            <div className="rounded-md border border-violet-300 bg-violet-50 px-2.5 py-2 text-xs text-violet-950">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold">IDS kontext</div>
+                  <div className="mt-0.5 break-words">
+                    {idsSpecification.name || idsSpecification.identifier || "Specifikace bez názvu"}
+                  </div>
+                </div>
+                {onClearIdsSpecificationFocus && (
+                  <button
+                    type="button"
+                    onClick={onClearIdsSpecificationFocus}
+                    className="shrink-0 rounded border border-violet-300 bg-white px-2 py-1 text-[11px] font-semibold text-violet-800 hover:bg-violet-100"
+                  >
+                    Zrušit
+                  </button>
+                )}
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {idsEntitySummary.visible.map((label) => (
+                  <span key={label} className="max-w-full truncate rounded bg-white px-1.5 py-0.5 text-[10px] text-violet-800" title={label}>
+                    {label}
+                  </span>
+                ))}
+                {idsEntitySummary.hiddenCount > 0 && (
+                  <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-semibold text-violet-800">
+                    +{idsEntitySummary.hiddenCount} dalších entit
+                  </span>
+                )}
+                <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-800">
+                  {idsObjectCodes.size === 1
+                    ? "1 objekt v projektu"
+                    : `${idsObjectCodes.size} objektů v projektu`}
+                </span>
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -672,7 +842,7 @@ export const ClassificationPanel: React.FC<Props> = ({
           {classification && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
               <span className="text-[11px] text-slate-500">
-                Zdroj: {primarySystem?.name ?? classification.sourceName}
+                Zdroj: {viewMode === "ids:classifications" ? "canonical IDS specifikace" : primarySystem?.name ?? classification.sourceName}
               </span>
               <span className="ml-auto text-[11px] text-slate-400">
                 Pohled: {hierarchyViewOptions.find((o) => o.value === viewMode)?.label ?? viewMode}
@@ -680,12 +850,59 @@ export const ClassificationPanel: React.FC<Props> = ({
             </div>
           )}
           <div className="flex-1 overflow-auto rounded border border-slate-200 bg-slate-50 p-2">
-            {!classification && (
+            {viewMode === "ids:classifications" && idsSpecification && (
+              <div className="space-y-2">
+                {visibleIdsClassificationFacets.length > 0 ? (
+                  visibleIdsClassificationFacets.map(({ facet, section }, index) => (
+                    <div
+                      key={`${facet.id}:${section}`}
+                      className="overflow-hidden rounded-md border border-violet-200 bg-white"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5 border-b border-violet-100 bg-violet-50 px-2.5 py-2">
+                        <span className="text-xs font-semibold text-violet-950">
+                          {formatIdsConstraint(facet.system)}
+                        </span>
+                        {facet.unresolved && (
+                          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800">
+                            katalog nepřipojen
+                          </span>
+                        )}
+                      </div>
+                      <div className="ml-3 border-l-2 border-violet-200 px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-slate-600">
+                            {section}
+                          </span>
+                          <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">
+                            {index > 0 ? "AND" : "pravidlo"}
+                          </span>
+                        </div>
+                        <div className="mt-1 break-all font-mono text-xs text-slate-800">
+                          {formatIdsConstraint(facet.value, "existence klasifikace")}
+                        </div>
+                        {facet.instructions && (
+                          <div className="mt-1 text-[11px] italic text-slate-500">
+                            {facet.instructions}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded border border-dashed border-slate-300 bg-white px-3 py-4 text-sm text-slate-500">
+                    {idsClassificationFacets.length
+                      ? "Filtru neodpovídá žádné klasifikační pravidlo."
+                      : "Specifikace neobsahuje klasifikační facet."}
+                  </div>
+                )}
+              </div>
+            )}
+            {!classification && viewMode !== "ids:classifications" && (
               <div className="text-sm text-slate-500">
                 Není načtena klasifikace. Přejděte do záložky „Třídění a mapování prvků“ a nahrajte soubor (TXT nebo XLSX) nebo přidejte třídící systém (IFC / čistý).
               </div>
             )}
-            {classification &&
+            {classification && viewMode !== "ids:classifications" &&
               (filteredNodes.length > 0 || filteredOrphanCodes.length > 0 ? (
                 <>
                   {filteredNodes.map((node) => (

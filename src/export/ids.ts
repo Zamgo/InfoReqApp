@@ -9,9 +9,13 @@ import type {
   RelationRequirement,
   IdsMetadata,
   IdsSpecMetadata,
+  IdsProjectFacet,
+  IdsProjectSpecification,
+  IdsValueConstraint,
 } from "../project/types";
 import { getIdsIfcVersion, normalizeIfcSchemaVersion } from "../schema/ifcVersionConfig";
 import { getEffectiveUseCaseIds, requirementAppliesToUseCase } from "../project/useCaseResolve";
+import { specificationReferencesEntity } from "../ids/specifications";
 
 const IDS_NAMESPACE = "http://standards.buildingsmart.org/IDS";
 const XS_NAMESPACE = "http://www.w3.org/2001/XMLSchema";
@@ -78,6 +82,151 @@ const escapeXml = (str: string): string => {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+};
+
+const generateCanonicalIdsValue = (
+  value: IdsValueConstraint,
+  indent: string,
+): string => {
+  if (value.simpleValue !== undefined) {
+    return `${indent}<ids:simpleValue>${escapeXml(value.simpleValue)}</ids:simpleValue>`;
+  }
+  const restrictionFacets: string[] = [];
+  value.enumerations?.forEach((item) => {
+    restrictionFacets.push(`${indent}  <xs:enumeration value="${escapeXml(item)}"/>`);
+  });
+  if (value.pattern !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:pattern value="${escapeXml(value.pattern)}"/>`);
+  }
+  if (value.minInclusive !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:minInclusive value="${escapeXml(value.minInclusive)}"/>`);
+  }
+  if (value.maxInclusive !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:maxInclusive value="${escapeXml(value.maxInclusive)}"/>`);
+  }
+  if (value.minExclusive !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:minExclusive value="${escapeXml(value.minExclusive)}"/>`);
+  }
+  if (value.maxExclusive !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:maxExclusive value="${escapeXml(value.maxExclusive)}"/>`);
+  }
+  if (value.length !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:length value="${value.length}"/>`);
+  }
+  if (value.minLength !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:minLength value="${value.minLength}"/>`);
+  }
+  if (value.maxLength !== undefined) {
+    restrictionFacets.push(`${indent}  <xs:maxLength value="${value.maxLength}"/>`);
+  }
+  if (!restrictionFacets.length) return "";
+  const inferredBase = value.base ??
+    (
+      value.minInclusive !== undefined ||
+      value.maxInclusive !== undefined ||
+      value.minExclusive !== undefined ||
+      value.maxExclusive !== undefined
+        ? "xs:double"
+        : "xs:string"
+    );
+  return `${indent}<xs:restriction base="${escapeXml(inferredBase)}">\n${restrictionFacets.join("\n")}\n${indent}</xs:restriction>`;
+};
+
+const generateCanonicalValueElement = (
+  name: string,
+  value: IdsValueConstraint | undefined,
+  indent: string,
+): string[] => {
+  if (!value) return [];
+  const content = generateCanonicalIdsValue(value, `${indent}  `);
+  if (!content) return [];
+  return [
+    `${indent}<ids:${name}>`,
+    content,
+    `${indent}</ids:${name}>`,
+  ];
+};
+
+const canonicalFacetAttributes = (
+  facet: IdsProjectFacet,
+  isApplicability: boolean,
+): string => {
+  const attributes: string[] = [];
+  if (!isApplicability && facet.cardinality) {
+    attributes.push(`cardinality="${facet.cardinality}"`);
+  }
+  if (facet.kind === "partOf" && facet.relation) {
+    attributes.push(`relation="${escapeXml(facet.relation)}"`);
+  }
+  if (facet.uri) attributes.push(`uri="${escapeXml(facet.uri)}"`);
+  if (facet.instructions) attributes.push(`instructions="${escapeXml(facet.instructions)}"`);
+  return attributes.length ? ` ${attributes.join(" ")}` : "";
+};
+
+const generateCanonicalEntity = (
+  facet: Extract<IdsProjectFacet, { kind: "entity" }>,
+  indent: string,
+  attributes = "",
+): string => {
+  const lines = [`${indent}<ids:entity${attributes}>`];
+  lines.push(...generateCanonicalValueElement("name", facet.name, `${indent}  `));
+  lines.push(...generateCanonicalValueElement("predefinedType", facet.predefinedType, `${indent}  `));
+  lines.push(`${indent}</ids:entity>`);
+  return lines.join("\n");
+};
+
+const generateCanonicalFacet = (
+  facet: IdsProjectFacet,
+  indent: string,
+  isApplicability: boolean,
+): string => {
+  const attributes = canonicalFacetAttributes(facet, isApplicability);
+  if (facet.kind === "entity") {
+    return generateCanonicalEntity(facet, indent, attributes);
+  }
+  const lines = [`${indent}<ids:${facet.kind}${attributes}${facet.kind === "property" && facet.dataType ? ` dataType="${escapeXml(facet.dataType)}"` : ""}>`];
+  if (facet.kind === "attribute") {
+    lines.push(...generateCanonicalValueElement("name", facet.name, `${indent}  `));
+    lines.push(...generateCanonicalValueElement("value", facet.value, `${indent}  `));
+  } else if (facet.kind === "classification") {
+    lines.push(...generateCanonicalValueElement("value", facet.value, `${indent}  `));
+    lines.push(...generateCanonicalValueElement("system", facet.system, `${indent}  `));
+  } else if (facet.kind === "property") {
+    lines.push(...generateCanonicalValueElement("propertySet", facet.propertySet, `${indent}  `));
+    lines.push(...generateCanonicalValueElement("baseName", facet.baseName, `${indent}  `));
+    lines.push(...generateCanonicalValueElement("value", facet.value, `${indent}  `));
+  } else if (facet.kind === "material") {
+    lines.push(...generateCanonicalValueElement("value", facet.value, `${indent}  `));
+  } else if (facet.kind === "partOf") {
+    lines.push(generateCanonicalEntity(facet.entity, `${indent}  `));
+  }
+  lines.push(`${indent}</ids:${facet.kind}>`);
+  return lines.join("\n");
+};
+
+const generateCanonicalSpecification = (
+  specification: IdsProjectSpecification,
+): string => {
+  const attributes = [
+    `name="${escapeXml(specification.name ?? "")}"`,
+    specification.ifcVersion ? `ifcVersion="${escapeXml(specification.ifcVersion)}"` : "",
+    specification.identifier ? `identifier="${escapeXml(specification.identifier)}"` : "",
+    specification.description ? `description="${escapeXml(specification.description)}"` : "",
+    specification.instructions ? `instructions="${escapeXml(specification.instructions)}"` : "",
+  ].filter(Boolean).join(" ");
+  const lines = [`    <ids:specification ${attributes}>`];
+  lines.push(`      <ids:applicability minOccurs="${specification.minOccurs}" maxOccurs="${specification.maxOccurs}">`);
+  specification.applicability.forEach((facet) => {
+    lines.push(generateCanonicalFacet(facet, "        ", true));
+  });
+  lines.push(`      </ids:applicability>`);
+  lines.push(`      <ids:requirements>`);
+  specification.requirements.forEach((facet) => {
+    lines.push(generateCanonicalFacet(facet, "        ", false));
+  });
+  lines.push(`      </ids:requirements>`);
+  lines.push(`    </ids:specification>`);
+  return lines.join("\n");
 };
 
 /**
@@ -582,6 +731,51 @@ const hasEmptyRequirements = (specXml: string): boolean => {
   return match != null && match[1].trim() === "";
 };
 
+const canonicalMatchesOccurrence = (
+  specification: IdsProjectSpecification,
+  occurrence: OccurrenceFilter,
+): boolean => {
+  if (occurrence === "all") return true;
+  if (occurrence === "prohibited") return specification.maxOccurs === 0;
+  if (occurrence === "required") return specification.minOccurs > 0;
+  return specification.minOccurs === 0 && specification.maxOccurs !== 0;
+};
+
+const canonicalMatchesObjectSelection = (
+  specification: IdsProjectSpecification,
+  project: Project,
+  objectCodes: string[] | undefined,
+): boolean => {
+  if (!objectCodes?.length) return true;
+  return objectCodes.some((code) => {
+    const object = project.objects[code];
+    if (object?.ifcEntity) {
+      const predefinedType = object.predefinedType.mode === "ENUM"
+        ? object.predefinedType.value
+        : undefined;
+      return specificationReferencesEntity(specification, object.ifcEntity, predefinedType);
+    }
+    const [entity, predefinedType] = code.split("::");
+    return specificationReferencesEntity(specification, entity ?? code, predefinedType);
+  });
+};
+
+const hasAuthoredObjectContent = (
+  object: ProjectObject,
+  classificationSystemEntries: ClassificationSystemEntry[],
+): boolean => {
+  const classifications = excludeIfcClassifications(
+    object.requirements.classifications.filter((item) => !item.readOnly),
+    classificationSystemEntries,
+  );
+  return !!object.idsSpecMetadata ||
+    object.requirements.attributes.length > 0 ||
+    object.requirements.properties.length > 0 ||
+    object.requirements.relations.length > 0 ||
+    object.requirements.materials.length > 0 ||
+    classifications.length > 0;
+};
+
 /**
  * Generate complete IDS XML document
  */
@@ -611,8 +805,18 @@ export const generateIDS = (options: IDSExportOptions): string => {
 
   const classificationSystemEntries = project.classificationSystemEntries ?? [];
   const ifcVersion = getIdsIfcVersion(normalizeIfcSchemaVersion(project.ifcSchemaVersion));
-  const specifications: string[] = [];
-  for (const obj of objectsToExport) {
+  const canonicalSpecifications = (project.idsSpecifications ?? [])
+    .filter((specification) => canonicalMatchesOccurrence(specification, occurrenceFilter))
+    .filter((specification) =>
+      canonicalMatchesObjectSelection(specification, project, objectCodes)
+    );
+  const specifications: string[] = canonicalSpecifications.map(generateCanonicalSpecification);
+  const legacyObjectsToExport = (project.idsSpecifications?.length ?? 0) > 0
+    ? objectsToExport.filter((object) =>
+        hasAuthoredObjectContent(object, classificationSystemEntries)
+      )
+    : objectsToExport;
+  for (const obj of legacyObjectsToExport) {
     for (const occ of occurrenceTypes) {
       const spec = generateSpecification(obj, phaseId, phase.name, phaseCode, occ, classificationSystemEntries, ifcVersion, options.useCaseId);
       if (spec) {

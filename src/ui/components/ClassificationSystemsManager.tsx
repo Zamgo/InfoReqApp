@@ -439,6 +439,14 @@ export const ClassificationSystemsManager: React.FC<Props> = ({
                                 Primární
                               </span>
                             )}
+                            {sys.isAuxiliaryAspectSystem && (
+                              <span
+                                className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800"
+                                title="Pomocná struktura z IDS pravidel; nejde o skutečný klasifikační katalog."
+                              >
+                                IDS aspekty
+                              </span>
+                            )}
                           </div>
                           {sys.sourceName && (
                             <span className="text-[11px] text-slate-500">

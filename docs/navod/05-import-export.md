@@ -9,7 +9,7 @@ Tato kapitola popisuje, **co můžete importovat a exportovat** a kdy který for
 V horní liště je tlačítko **Import**. Po kliknutí se zobrazí výběr:
 
 - **JSON** – import celého projektu ze souboru JSON (dříve exportovaného z aplikace). Projekt se nahradí nebo sloučí s aktuálním.
-- **IDS** – import souboru IDS (Information Delivery Specification, formát buildingSMART). Aplikace soubor zpracuje a **sloučí** požadavky do aktuálního projektu (nebo vytvoří projekt, pokud žádný není). Kódy a entity se mapují podle načteného IFC schématu.
+- **IDS** – import souboru IDS (Information Delivery Specification, formát buildingSMART). Před dokončením importu se zobrazí přehled klasifikačních systémů. Jisté shody se propojí podle URI nebo explicitního mapování, shodu pouze podle názvu musíte potvrdit. Bez katalogu lze pokračovat s pomocnou strukturou aspektů, která zachová pravidla a patterny, ale nevytváří smyšlené katalogové třídy ani vztahy.
 - **Excel** – import Excelu (.xlsx) ve struktuře, kterou aplikace očekává (listy PROJEKT, FÁZE, ČÍSELNÍKY, PRVKY, POŽADAVKY, KLASIFIKACE_* atd.). Slouží k načtení nebo doplnění projektu z tabulky. Viz také [docs/EXCEL_ROUNDTRIP.md](../EXCEL_ROUNDTRIP.md) pro detaily roundtripu.
 
 Po výběru souboru se import spustí; při chybě se zobrazí hláška ve statusu. Úspěšný import obvykle aktualizuje strom a kartu objektu.

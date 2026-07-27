@@ -15,6 +15,10 @@ import type {
   MaterialRequirement,
   ObjectRequirements,
   Phase,
+  IdsProjectSpecification,
+  IdsProjectFacet,
+  IdsProjectEntityFacet,
+  IdsValueConstraint,
 } from "../project/types";
 import { makeId } from "../utils/id";
 import { ensureProjectPhases, getDefaultPhases } from "../project/phases";
@@ -33,6 +37,8 @@ const XS_NS = "http://www.w3.org/2001/XMLSchema";
 // --- Parsed IDS types (from XML) ---
 
 export interface IdsValue {
+  /** Původní xs:restriction base, např. xs:string nebo xs:double. */
+  base?: string;
   simpleValue?: string;
   /** xs:restriction – výčet hodnot (ENUM) */
   enumerations?: string[];
@@ -52,10 +58,22 @@ export interface IdsValue {
 export interface IdsEntity {
   name: string;
   predefinedType?: string;
+  cardinality?: "required" | "prohibited" | "optional";
+  instructions?: string;
+  /** Původní idsValue pro název entity, včetně všech OR alternativ. */
+  nameRestriction?: IdsValue;
+  /** Původní idsValue pro PredefinedType, pokud je v IDS uveden. */
+  predefinedTypeRestriction?: IdsValue;
+  /** Logické alternativy z xs:enumeration; nikdy se neslučují do jednoho IFC názvu s "|". */
+  nameAlternatives?: string[];
+  /** Logické alternativy PredefinedType z xs:enumeration. */
+  predefinedTypeAlternatives?: string[];
 }
 
 export interface IdsClassification {
   system: string;
+  /** Plná restrikce názvu klasifikačního systému. */
+  systemRestriction?: IdsValue;
   value?: string;
   /** Plná restrikce z IDS (pro odvození constraint + value) */
   valueRestriction?: IdsValue;
@@ -66,7 +84,11 @@ export interface IdsClassification {
 
 export interface IdsProperty {
   propertySet: string;
+  /** Plná restrikce názvu property setu; např. pattern ".*" není vlastní název Psetu. */
+  propertySetRestriction?: IdsValue;
   baseName: string;
+  /** Plná restrikce názvu vlastnosti. */
+  baseNameRestriction?: IdsValue;
   value?: string;
   /** Plná restrikce z IDS (pro odvození constraint + value) */
   valueRestriction?: IdsValue;
@@ -78,6 +100,8 @@ export interface IdsProperty {
 
 export interface IdsAttribute {
   name: string;
+  /** Plná restrikce názvu atributu. */
+  nameRestriction?: IdsValue;
   value?: string;
   /** Plná restrikce z IDS (pro odvození constraint + value) */
   valueRestriction?: IdsValue;
@@ -125,6 +149,8 @@ export interface IdsSpecification {
   description?: string;
   identifier?: string;
   instructions?: string;
+  minOccurs?: number;
+  maxOccurs?: number | "unbounded";
   applicability: IdsApplicability;
   requirements?: IdsRequirements;
 }
@@ -143,6 +169,51 @@ export interface IdsInfo {
 export interface IdsParsed {
   info: IdsInfo;
   specifications: IdsSpecification[];
+}
+
+export type IdsCatalogMatchStatus = "exact" | "probable" | "unavailable";
+
+export interface IdsClassificationSystemUsage {
+  key: string;
+  name: string;
+  uris: string[];
+  rules: string[];
+  facetCount: number;
+  status: IdsCatalogMatchStatus;
+  matchedEntryId?: string;
+  matchReason?: "uri" | "externalId" | "explicitAlias" | "name";
+}
+
+export interface IdsClassificationImportAnalysis {
+  systems: IdsClassificationSystemUsage[];
+  specificationCount: number;
+  entityAlternativeCount: number;
+}
+
+export interface IdsCatalogResolution {
+  usageKey: string;
+  mode: "catalog" | "auxiliary";
+  catalogEntryId?: string;
+}
+
+export interface IdsImportOptions {
+  catalogResolutions?: IdsCatalogResolution[];
+  /** Výchozí true: validní IFC alternativy se po potvrzení importu přidají do IFC stromu. */
+  addImportedIfcEntitiesToHierarchy?: boolean;
+}
+
+export interface IdsImportReport {
+  linkedSystems: Array<{ name: string; catalogName: string }>;
+  auxiliarySystems: string[];
+  preservedClassificationRules: number;
+  importedIfcCodes: number;
+  expandedEntityAlternatives: number;
+  warnings: string[];
+}
+
+export interface IdsImportResult {
+  project: Project;
+  report: IdsImportReport;
 }
 
 // --- XML helpers ---
@@ -177,6 +248,7 @@ function parseIdsValue(parent: Element): IdsValue {
   }
   const restriction = parent.getElementsByTagNameNS(XS_NS, "restriction").item(0) as Element | null;
   if (!restriction) return {};
+  const base = restriction.getAttribute("base")?.trim() || undefined;
 
   const getAttr = (localName: string): string | undefined => {
     const el = restriction!.getElementsByTagNameNS(XS_NS, localName).item(0);
@@ -194,11 +266,12 @@ function parseIdsValue(parent: Element): IdsValue {
   const enums = getElements(restriction, "enumeration", XS_NS);
   if (enums.length > 0) {
     return {
+      base,
       enumerations: enums.map((e) => (e.getAttribute("value") ?? getText(e)).trim()).filter(Boolean),
     };
   }
   const patternVal = getAttr("pattern");
-  if (patternVal) return { pattern: patternVal };
+  if (patternVal) return { base, pattern: patternVal };
 
   const minInclusive = getAttr("minInclusive");
   const maxInclusive = getAttr("maxInclusive");
@@ -206,8 +279,9 @@ function parseIdsValue(parent: Element): IdsValue {
   const maxExclusive = getAttr("maxExclusive");
   if (minInclusive != null || maxInclusive != null || minExclusive != null || maxExclusive != null) {
     return {
-      minInclusive: minInclusive ?? minExclusive,
-      maxInclusive: maxInclusive ?? maxExclusive,
+      base,
+      minInclusive,
+      maxInclusive,
       minExclusive,
       maxExclusive,
     };
@@ -217,7 +291,7 @@ function parseIdsValue(parent: Element): IdsValue {
   const minLength = getNum("minLength");
   const maxLength = getNum("maxLength");
   if (length != null || minLength != null || maxLength != null) {
-    return { length, minLength, maxLength };
+    return { base, length, minLength, maxLength };
   }
 
   return {};
@@ -233,6 +307,27 @@ function valueToString(v: IdsValue): string {
   if (v.minLength != null || v.maxLength != null) return [v.minLength ?? "", v.maxLength ?? ""].filter((x) => x !== "").join("|");
   if (v.length != null) return String(v.length);
   return "";
+}
+
+function hasIdsValue(v: IdsValue): boolean {
+  return v.simpleValue !== undefined ||
+    !!v.enumerations?.length ||
+    v.pattern !== undefined ||
+    v.minInclusive !== undefined ||
+    v.maxInclusive !== undefined ||
+    v.minExclusive !== undefined ||
+    v.maxExclusive !== undefined ||
+    v.length !== undefined ||
+    v.minLength !== undefined ||
+    v.maxLength !== undefined;
+}
+
+/** Vrátí jednotlivé logické alternativy hodnoty bez jejich slučování do řetězce s "|". */
+export function idsValueAlternatives(v: IdsValue): string[] {
+  if (v.simpleValue !== undefined && v.simpleValue.trim() !== "") return [v.simpleValue.trim()];
+  if (v.enumerations?.length) return v.enumerations.map((value) => value.trim()).filter(Boolean);
+  const fallback = valueToString(v).trim();
+  return fallback ? [fallback] : [];
 }
 
 /** Z IdsValue odvodit typ omezení a hodnotu pro požadavky v aplikaci */
@@ -277,9 +372,17 @@ function parseEntity(el: Element): IdsEntity {
   const nameVal = nameEl ? parseIdsValue(nameEl) : {};
   const ptEl = getFirstElement(el, "predefinedType");
   const ptVal = ptEl ? parseIdsValue(ptEl) : {};
+  const nameAlternatives = idsValueAlternatives(nameVal);
+  const predefinedTypeAlternatives = idsValueAlternatives(ptVal);
   return {
-    name: valueToString(nameVal).trim() || "",
-    predefinedType: valueToString(ptVal).trim() || undefined,
+    name: nameAlternatives[0] ?? "",
+    predefinedType: predefinedTypeAlternatives[0],
+    nameRestriction: hasIdsValue(nameVal) ? nameVal : undefined,
+    predefinedTypeRestriction: hasIdsValue(ptVal) ? ptVal : undefined,
+    nameAlternatives,
+    predefinedTypeAlternatives,
+    cardinality: (el.getAttribute("cardinality") as IdsEntity["cardinality"]) ?? undefined,
+    instructions: el.getAttribute("instructions") ?? undefined,
   };
 }
 
@@ -293,6 +396,7 @@ function parseClassification(el: Element): IdsClassification {
     value: valueToString(valueVal).trim() || undefined,
     valueRestriction: hasRestriction ? valueVal : undefined,
     system: valueToString(systemVal).trim() || "",
+    systemRestriction: hasIdsValue(systemVal) ? systemVal : undefined,
     uri: el.getAttribute("uri") ?? undefined,
     cardinality: (el.getAttribute("cardinality") as IdsClassification["cardinality"]) ?? undefined,
     instructions: el.getAttribute("instructions") ?? undefined,
@@ -309,7 +413,9 @@ function parseProperty(el: Element): IdsProperty {
   const hasRestriction = !!(valueVal.enumerations?.length || valueVal.pattern || valueVal.minInclusive != null || valueVal.maxInclusive != null || valueVal.length != null || valueVal.minLength != null || valueVal.maxLength != null);
   return {
     propertySet: valueToString(psetVal).trim() || "",
+    propertySetRestriction: hasIdsValue(psetVal) ? psetVal : undefined,
     baseName: valueToString(baseVal).trim() || "",
+    baseNameRestriction: hasIdsValue(baseVal) ? baseVal : undefined,
     value: valueToString(valueVal).trim() || undefined,
     valueRestriction: hasRestriction ? valueVal : undefined,
     dataType: el.getAttribute("dataType") ?? undefined,
@@ -327,6 +433,7 @@ function parseAttribute(el: Element): IdsAttribute {
   const hasRestriction = !!(valueVal.enumerations?.length || valueVal.pattern || valueVal.minInclusive != null || valueVal.maxInclusive != null || valueVal.length != null || valueVal.minLength != null || valueVal.maxLength != null);
   return {
     name: valueToString(nameVal).trim() || "",
+    nameRestriction: hasIdsValue(nameVal) ? nameVal : undefined,
     value: valueToString(valueVal).trim() || undefined,
     valueRestriction: hasRestriction ? valueVal : undefined,
     cardinality: (el.getAttribute("cardinality") as IdsAttribute["cardinality"]) ?? undefined,
@@ -371,13 +478,28 @@ function parseApplicability(el: Element): IdsApplicability {
 
 function parseRequirements(el: Element): IdsRequirements {
   return {
-    entity: getElements(el, "entity").map((e) => ({ ...parseEntity(e), instructions: e.getAttribute("instructions") ?? undefined })),
+    entity: getElements(el, "entity").map(parseEntity),
     partOf: getElements(el, "partOf").map(parsePartOf),
     classification: getElements(el, "classification").map(parseClassification),
     attribute: getElements(el, "attribute").map(parseAttribute),
     property: getElements(el, "property").map(parseProperty),
     material: getElements(el, "material").map(parseMaterial),
   };
+}
+
+function parseOccurs(value: string | null | undefined, fallback: number): number {
+  if (value == null || value.trim() === "") return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parseMaxOccurs(
+  value: string | null | undefined,
+  fallback: number | "unbounded",
+): number | "unbounded" {
+  if (value == null || value.trim() === "") return fallback;
+  if (value.trim().toLowerCase() === "unbounded") return "unbounded";
+  return parseOccurs(value, typeof fallback === "number" ? fallback : 0);
 }
 
 /**
@@ -419,6 +541,8 @@ export function parseIdsXml(xmlString: string): IdsParsed {
         description: se.getAttribute("description") ?? undefined,
         identifier: se.getAttribute("identifier") ?? undefined,
         instructions: se.getAttribute("instructions") ?? undefined,
+        minOccurs: parseOccurs(appEl?.getAttribute("minOccurs"), 0),
+        maxOccurs: parseMaxOccurs(appEl?.getAttribute("maxOccurs"), "unbounded"),
         applicability: appEl ? parseApplicability(appEl) : {
           partOf: [], classification: [], attribute: [], property: [], material: [],
         },
@@ -432,13 +556,174 @@ export function parseIdsXml(xmlString: string): IdsParsed {
 
 // --- Map IDS to Project ---
 
+function entityToCodes(entity: IdsEntity): string[] {
+  const names = entity.nameAlternatives?.length ? entity.nameAlternatives : [entity.name];
+  const predefinedTypes = entity.predefinedTypeAlternatives?.length
+    ? entity.predefinedTypeAlternatives
+    : entity.predefinedType
+      ? [entity.predefinedType]
+      : [];
+  const codes: string[] = [];
+  for (const rawName of names) {
+    const name = (rawName || "").trim();
+    if (!name) continue;
+    const normalized = name.toUpperCase().startsWith("IFC") ? name : `Ifc${name}`;
+    if (predefinedTypes.length === 0) {
+      codes.push(normalized);
+      continue;
+    }
+    for (const rawPredefinedType of predefinedTypes) {
+      const predefinedType = rawPredefinedType.trim();
+      if (predefinedType) codes.push(`${normalized}::${predefinedType.toUpperCase()}`);
+    }
+  }
+  return [...new Set(codes)];
+}
+
+/** Legacy single-code projection kept only for the old merge implementation below. */
 function entityToCode(entity: IdsEntity): string {
-  const name = (entity.name || "").trim();
-  if (!name) return "";
-  const normalized = name.toUpperCase().startsWith("IFC") ? name : `Ifc${name}`;
-  const pt = (entity.predefinedType || "").trim();
-  if (pt) return `${normalized}::${pt.toUpperCase()}`;
-  return normalized;
+  return entityToCodes(entity)[0] ?? "";
+}
+
+function normalizeMatchText(value: string | undefined): string {
+  return (value ?? "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase();
+}
+
+function normalizeUri(value: string | undefined): string {
+  return (value ?? "").trim().replace(/\/+$/, "").toLocaleLowerCase();
+}
+
+function classificationUsageKey(classification: IdsClassification): string {
+  const uri = normalizeUri(classification.uri);
+  return uri ? `uri:${uri}` : `name:${normalizeMatchText(classification.system)}`;
+}
+
+function classificationRuleLabel(classification: IdsClassification): string {
+  if (classification.valueRestriction?.pattern) return classification.valueRestriction.pattern;
+  if (classification.valueRestriction?.enumerations?.length) {
+    return classification.valueRestriction.enumerations.join(" | ");
+  }
+  return classification.value?.trim() || "(bez omezení hodnoty)";
+}
+
+function isCatalogEntry(entry: ClassificationSystemEntry): boolean {
+  const kind = entry.systemKind ?? (entry.isIfcSystem ? "ifc" : "classification");
+  return kind === "classification" && !entry.isIfcSystem && !entry.isAuxiliaryAspectSystem;
+}
+
+/**
+ * Předimportní přehled klasifikačních systémů.
+ * URI/externalId/explicitní alias jsou jisté shody; samotný název je vždy jen pravděpodobná shoda.
+ */
+export function analyzeIdsClassificationImport(
+  parsed: IdsParsed,
+  entries: ClassificationSystemEntry[],
+): IdsClassificationImportAnalysis {
+  const usages = new Map<string, {
+    name: string;
+    uris: Set<string>;
+    rules: Set<string>;
+    facetCount: number;
+  }>();
+  let entityAlternativeCount = 0;
+
+  for (const spec of parsed.specifications) {
+    const entity = spec.applicability.entity;
+    entityAlternativeCount += entity?.nameAlternatives?.length ?? (entity?.name ? 1 : 0);
+    const facets = [
+      ...(spec.applicability.classification ?? []),
+      ...(spec.requirements?.classification ?? []),
+    ];
+    for (const classification of facets) {
+      if (!classification.system.trim()) continue;
+      const key = classificationUsageKey(classification);
+      const usage = usages.get(key) ?? {
+        name: classification.system.trim(),
+        uris: new Set<string>(),
+        rules: new Set<string>(),
+        facetCount: 0,
+      };
+      if (classification.uri?.trim()) usage.uris.add(classification.uri.trim());
+      usage.rules.add(classificationRuleLabel(classification));
+      usage.facetCount += 1;
+      usages.set(key, usage);
+    }
+  }
+
+  const catalogs = entries.filter(isCatalogEntry);
+  const systems = [...usages.entries()].map(([key, usage]): IdsClassificationSystemUsage => {
+    const normalizedName = normalizeMatchText(usage.name);
+    const normalizedUris = [...usage.uris].map(normalizeUri).filter(Boolean);
+    const exactByUri = catalogs.find((entry) => {
+      const entryUri = normalizeUri(entry.uri);
+      return !!entryUri && normalizedUris.includes(entryUri);
+    });
+    if (exactByUri) {
+      return {
+        key,
+        name: usage.name,
+        uris: [...usage.uris],
+        rules: [...usage.rules],
+        facetCount: usage.facetCount,
+        status: "exact",
+        matchedEntryId: exactByUri.id,
+        matchReason: "uri",
+      };
+    }
+    const exactByExternalId = catalogs.find((entry) =>
+      !!entry.externalId && [...usage.uris].some(
+        (uri) => normalizeMatchText(uri) === normalizeMatchText(entry.externalId),
+      )
+    );
+    if (exactByExternalId) {
+      return {
+        key,
+        name: usage.name,
+        uris: [...usage.uris],
+        rules: [...usage.rules],
+        facetCount: usage.facetCount,
+        status: "exact",
+        matchedEntryId: exactByExternalId.id,
+        matchReason: "externalId",
+      };
+    }
+    const exactByAlias = catalogs.find((entry) =>
+      (entry.idsAliases ?? []).some((alias) => normalizeMatchText(alias) === normalizedName)
+    );
+    if (exactByAlias) {
+      return {
+        key,
+        name: usage.name,
+        uris: [...usage.uris],
+        rules: [...usage.rules],
+        facetCount: usage.facetCount,
+        status: "exact",
+        matchedEntryId: exactByAlias.id,
+        matchReason: "explicitAlias",
+      };
+    }
+    const probableByName = catalogs.find((entry) => normalizeMatchText(entry.name) === normalizedName);
+    return {
+      key,
+      name: usage.name,
+      uris: [...usage.uris],
+      rules: [...usage.rules],
+      facetCount: usage.facetCount,
+      status: probableByName ? "probable" : "unavailable",
+      matchedEntryId: probableByName?.id,
+      matchReason: probableByName ? "name" : undefined,
+    };
+  });
+
+  return {
+    systems: systems.sort((a, b) => a.name.localeCompare(b.name)),
+    specificationCount: parsed.specifications.length,
+    entityAlternativeCount,
+  };
 }
 
 /**
@@ -597,7 +882,7 @@ function mapIdsMaterialToRequirement(m: IdsMaterial, phaseIds: string[]): Materi
  * Merge IDS into project: add new objects (by IFC entity), IFC classification, other classifications, properties.
  * Existing objects are never overwritten; only new codes are added.
  */
-export function mergeIdsIntoProject(
+function mergeIdsIntoProjectLegacy(
   parsed: IdsParsed,
   existingProject: Project | null,
   schemaIndex: SchemaIndex | null,
@@ -883,3 +1168,521 @@ export function mergeIdsIntoProject(
 
   return project;
 }
+
+function splitAspectName(systemName: string): { provider: string; aspect: string } {
+  const parts = systemName.split(/\s+-\s+/, 2);
+  return parts.length === 2
+    ? { provider: parts[0]?.trim() || "IDS", aspect: parts[1]?.trim() || systemName }
+    : { provider: "IDS", aspect: systemName };
+}
+
+function buildAuxiliaryAspectNodes(usages: IdsClassificationSystemUsage[]): ClassificationData["nodes"] {
+  const byProvider = new Map<string, IdsClassificationSystemUsage[]>();
+  for (const usage of usages) {
+    const { provider } = splitAspectName(usage.name);
+    const list = byProvider.get(provider) ?? [];
+    list.push(usage);
+    byProvider.set(provider, list);
+  }
+  return [...byProvider.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([provider, systems], providerIndex) => ({
+      code: `IDS-AUX:${providerIndex + 1}:${provider}`,
+      description: `${provider} (organizační skupina aspektů)`,
+      level: 1,
+      children: systems
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((usage, systemIndex) => {
+          const { aspect } = splitAspectName(usage.name);
+          return {
+            code: `IDS-AUX:${providerIndex + 1}:${systemIndex + 1}:${usage.name}`,
+            description: aspect,
+            level: 2,
+            children: usage.rules.map((rule, ruleIndex) => ({
+              code: `IDS-AUX:${providerIndex + 1}:${systemIndex + 1}:${ruleIndex + 1}`,
+              description: rule,
+              level: 3,
+              children: [],
+            })),
+          };
+        }),
+    }));
+}
+
+function getSpecGroupId(spec: IdsSpecification, index: number): string {
+  const stablePart = spec.identifier?.trim() || `${index + 1}:${spec.name.trim()}`;
+  return `ids:${stablePart}`;
+}
+
+function cloneIdsValue(value: IdsValue): IdsValueConstraint {
+  return {
+    ...value,
+    enumerations: value.enumerations ? [...value.enumerations] : undefined,
+  };
+}
+
+function canonicalValue(
+  restriction: IdsValue | undefined,
+  fallback: string | undefined,
+  alternatives?: string[],
+): IdsValueConstraint | undefined {
+  if (restriction && hasIdsValue(restriction)) return cloneIdsValue(restriction);
+  const normalizedAlternatives = alternatives?.map((value) => value.trim()).filter(Boolean) ?? [];
+  if (normalizedAlternatives.length > 1) return { enumerations: normalizedAlternatives };
+  const value = normalizedAlternatives[0] ?? fallback?.trim();
+  return value ? { simpleValue: value } : undefined;
+}
+
+function canonicalEntityFacet(
+  entity: IdsEntity,
+  id: string,
+  cardinality?: IdsProjectEntityFacet["cardinality"],
+  instructions?: string,
+): IdsProjectEntityFacet {
+  return {
+    id,
+    kind: "entity",
+    name: canonicalValue(
+      entity.nameRestriction,
+      entity.name,
+      entity.nameAlternatives,
+    ) ?? {},
+    predefinedType: canonicalValue(
+      entity.predefinedTypeRestriction,
+      entity.predefinedType,
+      entity.predefinedTypeAlternatives,
+    ),
+    cardinality: cardinality ?? entity.cardinality,
+    instructions: instructions ?? entity.instructions,
+  };
+}
+
+function canonicalFacet(
+  facet:
+    | IdsEntity
+    | IdsAttribute
+    | IdsClassification
+    | IdsProperty
+    | IdsMaterial
+    | IdsPartOf,
+  kind: IdsProjectFacet["kind"],
+  id: string,
+  systemEntryIdFor: (classification: IdsClassification) => string | undefined,
+  unresolvedUsageKeys: Set<string>,
+): IdsProjectFacet {
+  if (kind === "entity") {
+    const entity = facet as IdsEntity;
+    return canonicalEntityFacet(entity, id, entity.cardinality, entity.instructions);
+  }
+  if (kind === "attribute") {
+    const attribute = facet as IdsAttribute;
+    return {
+      id,
+      kind,
+      name: canonicalValue(attribute.nameRestriction, attribute.name) ?? {},
+      value: canonicalValue(attribute.valueRestriction, attribute.value),
+      cardinality: attribute.cardinality,
+      instructions: attribute.instructions,
+    };
+  }
+  if (kind === "classification") {
+    const classification = facet as IdsClassification;
+    return {
+      id,
+      kind,
+      system: canonicalValue(
+        classification.systemRestriction,
+        classification.system,
+      ) ?? {},
+      value: canonicalValue(classification.valueRestriction, classification.value),
+      systemEntryId: systemEntryIdFor(classification),
+      unresolved: unresolvedUsageKeys.has(classificationUsageKey(classification)),
+      cardinality: classification.cardinality,
+      instructions: classification.instructions,
+      uri: classification.uri,
+    };
+  }
+  if (kind === "property") {
+    const property = facet as IdsProperty;
+    return {
+      id,
+      kind,
+      propertySet: canonicalValue(
+        property.propertySetRestriction,
+        property.propertySet,
+      ) ?? {},
+      baseName: canonicalValue(property.baseNameRestriction, property.baseName) ?? {},
+      value: canonicalValue(property.valueRestriction, property.value),
+      dataType: property.dataType,
+      cardinality: property.cardinality,
+      instructions: property.instructions,
+      uri: property.uri,
+    };
+  }
+  if (kind === "material") {
+    const material = facet as IdsMaterial;
+    return {
+      id,
+      kind,
+      value: canonicalValue(material.valueRestriction, material.value),
+      cardinality: material.cardinality,
+      instructions: material.instructions,
+      uri: material.uri,
+    };
+  }
+  const partOf = facet as IdsPartOf;
+  return {
+    id,
+    kind: "partOf",
+    relation: partOf.relation,
+    entity: canonicalEntityFacet(partOf.entity, `${id}:entity`),
+    cardinality: partOf.cardinality,
+    instructions: partOf.instructions,
+  };
+}
+
+function buildCanonicalSpecifications(
+  parsed: IdsParsed,
+  systemEntryIdFor: (classification: IdsClassification) => string | undefined,
+  unresolvedUsageKeys: Set<string>,
+): IdsProjectSpecification[] {
+  const toFacets = (
+    spec: IdsSpecification,
+    section: "applicability" | "requirements",
+    specId: string,
+  ): IdsProjectFacet[] => {
+    const source = section === "applicability" ? spec.applicability : spec.requirements;
+    if (!source) return [];
+    const facets: IdsProjectFacet[] = [];
+    const add = (
+      kind: IdsProjectFacet["kind"],
+      items: Array<IdsEntity | IdsAttribute | IdsClassification | IdsProperty | IdsMaterial | IdsPartOf>,
+    ) => {
+      items.forEach((facet, index) => {
+        facets.push(canonicalFacet(
+          facet,
+          kind,
+          `${specId}:${section}:${kind}:${index + 1}`,
+          systemEntryIdFor,
+          unresolvedUsageKeys,
+        ));
+      });
+    };
+    if (section === "applicability") {
+      const applicability = spec.applicability;
+      if (applicability.entity) add("entity", [applicability.entity]);
+      add("partOf", applicability.partOf);
+      add("classification", applicability.classification);
+      add("attribute", applicability.attribute);
+      add("property", applicability.property);
+      add("material", applicability.material);
+    } else {
+      const requirements = spec.requirements!;
+      add("entity", requirements.entity);
+      add("partOf", requirements.partOf);
+      add("classification", requirements.classification);
+      add("attribute", requirements.attribute);
+      add("property", requirements.property);
+      add("material", requirements.material);
+    }
+    return facets;
+  };
+
+  return parsed.specifications.map((spec, index) => {
+    const id = getSpecGroupId(spec, index);
+    return {
+      id,
+      name: spec.name,
+      ifcVersion: spec.ifcVersion as IdsProjectSpecification["ifcVersion"],
+      identifier: spec.identifier,
+      description: spec.description,
+      instructions: spec.instructions,
+      minOccurs: spec.minOccurs ?? 0,
+      maxOccurs: spec.maxOccurs ?? "unbounded",
+      applicability: toFacets(spec, "applicability", id),
+      requirements: toFacets(spec, "requirements", id),
+      source: "imported",
+    };
+  });
+}
+
+/** Odstraní pouze starou materializovanou projekci importovaného IDS; vlastní požadavky zachová. */
+function withoutImportedIdsProjection(requirements?: ObjectRequirements): ObjectRequirements {
+  const isImported = (requirement: { extensions?: Record<string, unknown> }) =>
+    typeof requirement.extensions?.idsSpecificationGroupId === "string";
+  return {
+    attributes: (requirements?.attributes ?? []).filter((item) => !isImported(item)),
+    properties: (requirements?.properties ?? []).filter((item) => !isImported(item)),
+    relations: (requirements?.relations ?? []).filter((item) => !isImported(item)),
+    classifications: (requirements?.classifications ?? []).filter((item) => !isImported(item)),
+    materials: (requirements?.materials ?? []).filter((item) => !isImported(item)),
+  };
+}
+
+function buildImportedIdsMetadata(info: IdsInfo): Project["idsMetadata"] | undefined {
+  return (info.title || info.copyright || info.version || info.description || info.author || info.date || info.purpose || info.milestone)
+    ? {
+        title: info.title,
+        copyright: info.copyright,
+        version: info.version,
+        description: info.description,
+        author: info.author,
+        date: info.date,
+        purpose: info.purpose,
+        milestone: info.milestone,
+      }
+    : undefined;
+}
+
+/**
+ * Import s reportem pro UI. Nové IFC alternativy jsou po potvrzení vloženy do stromu,
+ * zatímco nedostupné klasifikační katalogy vytvoří pouze označenou pomocnou strukturu.
+ */
+export function mergeIdsIntoProjectWithReport(
+  parsed: IdsParsed,
+  existingProject: Project | null,
+  schemaIndex: SchemaIndex | null,
+  options: IdsImportOptions = {},
+): IdsImportResult {
+  const phases: Phase[] = existingProject?.phases?.length ? existingProject.phases : getDefaultPhases();
+  const phaseIds = phases.map((phase) => phase.id);
+  const existingEntries = existingProject?.classificationSystemEntries ?? [];
+  const analysis = analyzeIdsClassificationImport(parsed, existingEntries);
+  const requestedResolution = new Map(
+    (options.catalogResolutions ?? []).map((resolution) => [resolution.usageKey, resolution]),
+  );
+  const warnings: string[] = [];
+
+  const entityCodes = new Set<string>();
+  parsed.specifications.forEach((spec) => {
+    const entity = spec.applicability.entity;
+    if (!entity?.name) return;
+    const rawCodes = entityToCodes(entity);
+    const normalizedCodes = rawCodes.map((code) => schemaIndex ? normalizeCodeToSchema(schemaIndex, code) : code);
+    for (const code of normalizedCodes) {
+      if (!code) continue;
+      entityCodes.add(code);
+    }
+  });
+
+  let ifcEntry: ClassificationSystemEntry | null =
+    existingEntries.find((entry) => entry.isIfcSystem) ?? null;
+  if (schemaIndex) {
+    const selectedCodes = ifcEntry
+      ? new Set(collectLeaves(ifcEntry.nodes ?? []).map((node) => node.code))
+      : new Set<string>();
+    if (options.addImportedIfcEntitiesToHierarchy !== false) {
+      entityCodes.forEach((code) => selectedCodes.add(code));
+    }
+    const ifcData = buildClassificationFromSchemaFiltered(schemaIndex, selectedCodes);
+    const builtCodes = new Set(collectLeaves(ifcData.nodes).map((node) => node.code));
+    const unmatched = [...entityCodes].filter((code) => !builtCodes.has(code));
+    if (unmatched.length > 0) {
+      warnings.push(`${unmatched.length} IFC kódů se nepodařilo zařadit do načteného schématu.`);
+    }
+    ifcEntry = ifcEntry
+      ? { ...ifcEntry, nodes: ifcData.nodes, hash: ifcData.hash }
+      : {
+          id: makeId(),
+          name: "Třídění dle IFC entit",
+          sourceName: "Třídění dle IFC entit",
+          nodes: ifcData.nodes,
+          hash: ifcData.hash,
+          isPrimary: true,
+          isIfcSystem: true,
+          systemKind: "ifc",
+        };
+  } else {
+    warnings.push("IFC schéma nebylo při importu dostupné; IFC objekty zůstaly mimo strom.");
+    ifcEntry ??= {
+      id: makeId(),
+      name: "Třídění dle IFC entit",
+      sourceName: "Třídění dle IFC entit",
+      nodes: [],
+      hash: "ids-empty",
+      isPrimary: true,
+      isIfcSystem: true,
+      systemKind: "ifc",
+    };
+  }
+
+  const resolvedCatalogIdByUsageKey = new Map<string, string>();
+  const linkedSystems: IdsImportReport["linkedSystems"] = [];
+  const auxiliaryUsages: IdsClassificationSystemUsage[] = [];
+  for (const usage of analysis.systems) {
+    const defaultResolution: IdsCatalogResolution =
+      usage.status === "exact" && usage.matchedEntryId
+        ? { usageKey: usage.key, mode: "catalog", catalogEntryId: usage.matchedEntryId }
+        : { usageKey: usage.key, mode: "auxiliary" };
+    const resolution = requestedResolution.get(usage.key) ?? defaultResolution;
+    const selectedCatalog = resolution.mode === "catalog"
+      ? existingEntries.find((entry) => entry.id === resolution.catalogEntryId && isCatalogEntry(entry))
+      : undefined;
+    if (selectedCatalog) {
+      resolvedCatalogIdByUsageKey.set(usage.key, selectedCatalog.id);
+      linkedSystems.push({ name: usage.name, catalogName: selectedCatalog.name });
+    } else {
+      if (resolution.mode === "catalog") {
+        warnings.push(`Katalog pro „${usage.name}“ nebyl nalezen; byla použita pomocná struktura.`);
+      }
+      auxiliaryUsages.push(usage);
+    }
+  }
+
+  const auxiliarySourceName = `IDS aspekty: ${parsed.info.title || "import"}`;
+  let auxiliaryEntry = auxiliaryUsages.length > 0
+    ? existingEntries.find((entry) =>
+        entry.isAuxiliaryAspectSystem && entry.sourceName === auxiliarySourceName
+      )
+    : undefined;
+  if (auxiliaryUsages.length > 0) {
+    const nodes = buildAuxiliaryAspectNodes(auxiliaryUsages);
+    auxiliaryEntry = {
+      ...(auxiliaryEntry ?? { id: makeId(), name: "Pomocné klasifikační aspekty z IDS" }),
+      description:
+        "Pomocná organizační struktura z pravidel IDS. Neobsahuje skutečné třídy, názvy ani vztahy katalogu.",
+      sourceName: auxiliarySourceName,
+      nodes,
+      hash: `ids-aux-${auxiliaryUsages.length}-${auxiliaryUsages.reduce((sum, usage) => sum + usage.rules.length, 0)}`,
+      isPrimary: false,
+      isPure: true,
+      systemKind: "classification",
+      isAuxiliaryAspectSystem: true,
+    };
+    auxiliaryUsages.forEach((usage) => resolvedCatalogIdByUsageKey.set(usage.key, auxiliaryEntry!.id));
+  }
+
+  const entries = existingEntries.map((entry): ClassificationSystemEntry => {
+    if (entry.id === ifcEntry?.id) return { ...ifcEntry, isPrimary: true };
+    if (entry.id === auxiliaryEntry?.id) return auxiliaryEntry;
+    return { ...entry, isPrimary: false };
+  });
+  if (ifcEntry && !entries.some((entry) => entry.id === ifcEntry!.id)) entries.push(ifcEntry);
+  if (auxiliaryEntry && !entries.some((entry) => entry.id === auxiliaryEntry!.id)) entries.push(auxiliaryEntry);
+
+  const primaryId = ifcEntry?.id ?? existingProject?.primaryClassificationId ?? makeId();
+  const primaryEntry = entries.find((entry) => entry.id === primaryId) ?? ifcEntry!;
+  const entriesWithPrimary = entries.map((entry) => ({ ...entry, isPrimary: entry.id === primaryId }));
+  const classificationData: ClassificationData = {
+    nodes: primaryEntry.nodes ?? [],
+    sourceName: primaryEntry.sourceName ?? primaryEntry.name,
+    hash: primaryEntry.hash,
+  };
+  const systemEntryIdFor = (classification: IdsClassification): string | undefined =>
+    resolvedCatalogIdByUsageKey.get(classificationUsageKey(classification));
+  const unresolvedUsageKeys = new Set(
+    auxiliaryUsages.map((usage) => usage.key),
+  );
+  const importedSpecifications = buildCanonicalSpecifications(
+    parsed,
+    systemEntryIdFor,
+    unresolvedUsageKeys,
+  );
+  const specificationsById = new Map(
+    (existingProject?.idsSpecifications ?? []).map((specification) => [
+      specification.id,
+      specification,
+    ]),
+  );
+  importedSpecifications.forEach((specification) => {
+    specificationsById.set(specification.id, specification);
+  });
+
+  const objects: Record<string, ProjectObject> = { ...(existingProject?.objects ?? {}) };
+  for (const code of entityCodes) {
+    const existingObject = objects[code];
+    const requirements = withoutImportedIdsProjection(existingObject?.requirements);
+    const [entityName, predefinedType] = code.includes("::") ? code.split("::") : [code, undefined];
+    if (!requirements.classifications.some((item) =>
+      item.readOnly && item.systemEntryId === ifcEntry?.id
+    )) {
+      requirements.classifications.push({
+        id: makeId(),
+        classificationId: primaryId,
+        systemEntryId: ifcEntry?.id,
+        system: primaryEntry.name,
+        identification: code,
+        value: code,
+        name: code,
+        readOnly: true,
+        occurrence: "required",
+        isApplicability: true,
+        extensions: {},
+        phases: phaseIds,
+      });
+    }
+
+    objects[code] = {
+      ...existingObject,
+      code,
+      description: existingObject?.description ||
+        (predefinedType ? `${entityName} – ${predefinedType}` : entityName || code),
+      ifcEntity: existingObject?.ifcEntity || entityName || code,
+      predefinedType: existingObject?.predefinedType ?? (
+        predefinedType ? { mode: "ENUM", value: predefinedType } : { mode: "NONE" }
+      ),
+      ifcEntityPhases: existingObject?.ifcEntityPhases ?? phaseIds,
+      predefinedTypePhases: existingObject?.predefinedTypePhases ?? phaseIds,
+      idsSpecMetadata: existingObject?.importedIdsSpecificationGroups?.length
+        ? undefined
+        : existingObject?.idsSpecMetadata,
+      importedIdsSpecificationGroups: undefined,
+      requirements,
+    };
+  }
+
+  const now = new Date().toISOString();
+  const importedIdsMetadata = buildImportedIdsMetadata(parsed.info);
+  const idsVersion = parsed.specifications.find((spec) => spec.ifcVersion)?.ifcVersion;
+  const ifcSchemaVersion = idsIfcVersionToSchemaVersion(idsVersion);
+  const common = {
+    idsMetadata: importedIdsMetadata ?? existingProject?.idsMetadata,
+    classification: classificationData,
+    classificationSystemEntries: entriesWithPrimary,
+    primaryClassificationId: primaryId,
+    objects,
+    idsSpecifications: [...specificationsById.values()],
+    ifcSchemaVersion,
+    ifcSchemaVersionDisplay: getDisplayLabel(ifcSchemaVersion),
+    ifcDocumentationUrl: getIfcDocumentationBaseUrl(ifcSchemaVersion),
+    updatedAt: now,
+  };
+  const project = existingProject
+    ? ensureProjectPhases({ ...existingProject, ...common })
+    : ensureProjectPhases({
+        projectId: makeId(),
+        name: parsed.info.title || "Projekt z IDS",
+        author: parsed.info.author ?? "",
+        description: parsed.info.description ?? undefined,
+        createdAt: now,
+        classifications: [],
+        phases,
+        codeLists: [],
+        ...common,
+      });
+
+  return {
+    project,
+    report: {
+      linkedSystems,
+      auxiliarySystems: auxiliaryUsages.map((usage) => usage.name),
+      preservedClassificationRules: analysis.systems.reduce((sum, usage) => sum + usage.rules.length, 0),
+      importedIfcCodes: entityCodes.size,
+      expandedEntityAlternatives: analysis.entityAlternativeCount,
+      warnings,
+    },
+  };
+}
+
+/** Compatibility wrapper for non-UI callers. */
+export function mergeIdsIntoProject(
+  parsed: IdsParsed,
+  existingProject: Project | null,
+  schemaIndex: SchemaIndex | null,
+  options: IdsImportOptions = {},
+): Project {
+  return mergeIdsIntoProjectWithReport(parsed, existingProject, schemaIndex, options).project;
+}
+
+// Keep the old implementation type-checked during the transition; it is intentionally not called.
+void mergeIdsIntoProjectLegacy;
